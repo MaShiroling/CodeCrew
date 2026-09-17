@@ -24,14 +24,30 @@ from app.agents.process import (
     ProcessStartError,
     ProcessStream,
 )
+from app.agents.registry import (
+    AgentAlreadyRegisteredError,
+    AgentAvailability,
+    AgentCompatibilityError,
+    AgentDescriptor,
+    AgentNotRegisteredError,
+    AgentRegistry,
+    AgentRegistryError,
+)
 
 __all__ = [
     "AgentAdapter",
     "AgentAdapterError",
+    "AgentAlreadyRegisteredError",
+    "AgentAvailability",
     "AgentCapability",
+    "AgentCompatibilityError",
+    "AgentDescriptor",
     "AgentEvent",
     "AgentEventType",
     "AgentExitReason",
+    "AgentNotRegisteredError",
+    "AgentRegistry",
+    "AgentRegistryError",
     "AgentRequest",
     "AgentResult",
     "AgentRole",
