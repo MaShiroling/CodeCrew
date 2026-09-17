@@ -2,6 +2,7 @@
 
 from app.agents.base import AgentAdapter, AgentAdapterError, AgentSessionNotFoundError
 from app.agents.claude import ClaudeCodeAdapter
+from app.agents.codex import CodexCliAdapter
 from app.agents.fake import FakeAgentAdapter, FakeAgentScenario, FakeEventSpec
 from app.agents.models import (
     AgentCapability,
@@ -57,6 +58,7 @@ __all__ = [
     "AgentSessionStatus",
     "AsyncProcessRunner",
     "ClaudeCodeAdapter",
+    "CodexCliAdapter",
     "FakeAgentAdapter",
     "FakeAgentScenario",
     "FakeEventSpec",

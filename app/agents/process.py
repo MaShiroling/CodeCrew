@@ -182,6 +182,7 @@ class AsyncProcessRunner:
                 *argv,
                 cwd=cwd,
                 env=process_env,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -194,4 +195,3 @@ class AsyncProcessRunner:
             terminate_grace_seconds=self._terminate_grace_seconds,
             queue_maxsize=self._queue_maxsize,
         )
-

@@ -124,3 +124,17 @@ async def test_arguments_are_not_interpreted_by_a_shell(tmp_path: Path) -> None:
     assert [chunk.text for chunk in chunks] == [f"{literal}\n"]
     assert not (tmp_path / "should-not-exist").exists()
 
+
+@pytest.mark.asyncio
+async def test_child_stdin_is_closed_for_non_interactive_execution(tmp_path: Path) -> None:
+    process = await AsyncProcessRunner().start(
+        [sys.executable, "-c", "import sys; print(sys.stdin.read() == '')"],
+        cwd=tmp_path,
+        timeout_seconds=5,
+    )
+
+    chunks = [chunk async for chunk in process.stream()]
+    result = await process.wait()
+
+    assert result.exit_code == 0
+    assert [chunk.text for chunk in chunks] == ["True\n"]
