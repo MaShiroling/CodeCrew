@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.coverage
+*.py[cod]
+*.db
+*.sqlite3
+.env
+dist/
+build/
+evals/results/*
+!evals/results/.gitkeep
+
