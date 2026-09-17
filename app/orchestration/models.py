@@ -61,11 +61,12 @@ class Task(BaseModel):
 
     def transition_to(self, target: TaskState) -> None:
         if target not in ALLOWED_TRANSITIONS[self.state]:
-            raise InvalidTaskTransition(f"cannot transition task from {self.state} to {target}")
+            raise InvalidTaskTransition(
+                f"cannot transition task from {self.state.value} to {target.value}"
+            )
         self.state = target
         self.updated_at = utc_now()
 
     @property
     def is_terminal(self) -> bool:
         return self.state in TERMINAL_STATES
-
