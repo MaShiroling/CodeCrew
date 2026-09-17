@@ -1,5 +1,6 @@
 """Provider-neutral agent models and adapters."""
 
+from app.agents.base import AgentAdapter, AgentAdapterError, AgentSessionNotFoundError
 from app.agents.models import (
     AgentCapability,
     AgentEvent,
@@ -15,6 +16,8 @@ from app.agents.models import (
 )
 
 __all__ = [
+    "AgentAdapter",
+    "AgentAdapterError",
     "AgentCapability",
     "AgentEvent",
     "AgentEventType",
@@ -23,8 +26,8 @@ __all__ = [
     "AgentResult",
     "AgentRole",
     "AgentSession",
+    "AgentSessionNotFoundError",
     "AgentSessionStatus",
     "PermissionMode",
     "TokenUsage",
 ]
-
