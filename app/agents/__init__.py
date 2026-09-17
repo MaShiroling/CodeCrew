@@ -14,6 +14,15 @@ from app.agents.models import (
     PermissionMode,
     TokenUsage,
 )
+from app.agents.process import (
+    AsyncProcessRunner,
+    ManagedProcess,
+    ProcessChunk,
+    ProcessResult,
+    ProcessRunnerError,
+    ProcessStartError,
+    ProcessStream,
+)
 
 __all__ = [
     "AgentAdapter",
@@ -28,6 +37,13 @@ __all__ = [
     "AgentSession",
     "AgentSessionNotFoundError",
     "AgentSessionStatus",
+    "AsyncProcessRunner",
+    "ManagedProcess",
     "PermissionMode",
+    "ProcessChunk",
+    "ProcessResult",
+    "ProcessRunnerError",
+    "ProcessStartError",
+    "ProcessStream",
     "TokenUsage",
 ]
