@@ -1,6 +1,7 @@
 """Provider-neutral agent models and adapters."""
 
 from app.agents.base import AgentAdapter, AgentAdapterError, AgentSessionNotFoundError
+from app.agents.fake import FakeAgentAdapter, FakeAgentScenario, FakeEventSpec
 from app.agents.models import (
     AgentCapability,
     AgentEvent,
@@ -38,6 +39,9 @@ __all__ = [
     "AgentSessionNotFoundError",
     "AgentSessionStatus",
     "AsyncProcessRunner",
+    "FakeAgentAdapter",
+    "FakeAgentScenario",
+    "FakeEventSpec",
     "ManagedProcess",
     "PermissionMode",
     "ProcessChunk",
