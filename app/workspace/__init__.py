@@ -7,6 +7,15 @@ from app.workspace.changes import (
     WorkspaceChangeError,
     WorkspaceChangeSet,
 )
+from app.workspace.commands import (
+    CommandExecutionError,
+    CommandExecutor,
+    CommandPolicy,
+    CommandRequest,
+    CommandResult,
+    CommandRule,
+    CommandStatus,
+)
 from app.workspace.permissions import (
     PathRole,
     PermissionGate,
@@ -31,6 +40,13 @@ from app.workspace.worktrees import (
 __all__ = [
     "ChangeKind",
     "ChangedFile",
+    "CommandExecutionError",
+    "CommandExecutor",
+    "CommandPolicy",
+    "CommandRequest",
+    "CommandResult",
+    "CommandRule",
+    "CommandStatus",
     "GitCommandError",
     "InvalidRepositoryError",
     "InvalidRevisionError",
