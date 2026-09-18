@@ -18,14 +18,22 @@ from app.messaging.models import (
     MailboxMessage,
     MailboxMessageStatus,
 )
+from app.messaging.service import (
+    ArtifactReferenceValidationError,
+    HandoffBatch,
+    HandoffService,
+)
 
 __all__ = [
     "HANDOFF_PROTOCOL_VERSION",
     "MAILBOX_MIGRATIONS",
     "MAX_HANDOFF_ARTIFACTS",
     "MAX_HANDOFF_PAYLOAD_BYTES",
+    "ArtifactReferenceValidationError",
+    "HandoffBatch",
     "HandoffEnvelope",
     "HandoffParty",
+    "HandoffService",
     "HandoffType",
     "IdempotencyConflictError",
     "InvalidAcknowledgementError",
