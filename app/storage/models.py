@@ -12,6 +12,7 @@ class ArtifactType(str, Enum):
     CHANGESET = "changeset"
     PERMISSION_REPORT = "permission_report"
     COMMAND_AUDIT = "command_audit"
+    COMPLETION_DECISION = "completion_decision"
     TEST_LOG = "test_log"
     VERIFICATION_REPORT = "verification_report"
     REVIEW_REPORT = "review_report"

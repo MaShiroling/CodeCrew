@@ -1,5 +1,16 @@
 """Deterministic verification and completion policy (milestone five)."""
 
+from app.verification.completion import (
+    CompletionCondition,
+    CompletionConditionKind,
+    CompletionDecision,
+    CompletionGuard,
+    CompletionGuardError,
+    ReviewIssue,
+    ReviewIssuePriority,
+    ReviewReport,
+    ReviewVerdict,
+)
 from app.verification.verifier import (
     VerificationCheck,
     VerificationCheckKind,
@@ -12,6 +23,15 @@ from app.verification.verifier import (
 )
 
 __all__ = [
+    "CompletionCondition",
+    "CompletionConditionKind",
+    "CompletionDecision",
+    "CompletionGuard",
+    "CompletionGuardError",
+    "ReviewIssue",
+    "ReviewIssuePriority",
+    "ReviewReport",
+    "ReviewVerdict",
     "VerificationCheck",
     "VerificationCheckKind",
     "VerificationCommand",
