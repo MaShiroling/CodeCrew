@@ -92,3 +92,16 @@ class HandoffEnvelope(BaseModel):
             raise ValueError("a message cannot cause itself")
         return self
 
+
+class MailboxMessage(BaseModel):
+    """Persisted delivery state for one handoff envelope."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    sequence: int = Field(gt=0)
+    envelope: HandoffEnvelope
+    status: MailboxMessageStatus = MailboxMessageStatus.PENDING
+    delivered_at: AwareDatetime | None = None
+    acknowledged_at: AwareDatetime | None = None
+    failed_at: AwareDatetime | None = None
+    failure_reason: str | None = Field(default=None, min_length=1, max_length=2000)
