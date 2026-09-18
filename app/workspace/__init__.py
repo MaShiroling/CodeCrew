@@ -7,6 +7,15 @@ from app.workspace.changes import (
     WorkspaceChangeError,
     WorkspaceChangeSet,
 )
+from app.workspace.permissions import (
+    PathRole,
+    PermissionGate,
+    PermissionPolicy,
+    PermissionReport,
+    PermissionViolation,
+    PermissionViolationKind,
+    WorkspacePermissionError,
+)
 from app.workspace.worktrees import (
     GitCommandError,
     InvalidRepositoryError,
@@ -25,9 +34,16 @@ __all__ = [
     "GitCommandError",
     "InvalidRepositoryError",
     "InvalidRevisionError",
+    "PathRole",
+    "PermissionGate",
+    "PermissionPolicy",
+    "PermissionReport",
+    "PermissionViolation",
+    "PermissionViolationKind",
     "WorkspaceChangeCollector",
     "WorkspaceChangeError",
     "WorkspaceChangeSet",
+    "WorkspacePermissionError",
     "WorktreeConflictError",
     "WorktreeDirtyError",
     "WorktreeError",

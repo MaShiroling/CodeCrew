@@ -10,6 +10,7 @@ class ArtifactType(str, Enum):
     PLAN = "plan"
     DIFF = "diff"
     CHANGESET = "changeset"
+    PERMISSION_REPORT = "permission_report"
     TEST_LOG = "test_log"
     VERIFICATION_REPORT = "verification_report"
     REVIEW_REPORT = "review_report"
