@@ -1,5 +1,12 @@
 """Worktree and permission isolation (milestone four)."""
 
+from app.workspace.changes import (
+    ChangedFile,
+    ChangeKind,
+    WorkspaceChangeCollector,
+    WorkspaceChangeError,
+    WorkspaceChangeSet,
+)
 from app.workspace.worktrees import (
     GitCommandError,
     InvalidRepositoryError,
@@ -13,9 +20,14 @@ from app.workspace.worktrees import (
 )
 
 __all__ = [
+    "ChangeKind",
+    "ChangedFile",
     "GitCommandError",
     "InvalidRepositoryError",
     "InvalidRevisionError",
+    "WorkspaceChangeCollector",
+    "WorkspaceChangeError",
+    "WorkspaceChangeSet",
     "WorktreeConflictError",
     "WorktreeDirtyError",
     "WorktreeError",
