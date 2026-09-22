@@ -49,5 +49,24 @@ changing task state.
 Each processed message and its decision are persisted. Re-delivery returns the same decision and
 can replay an unapplied transition after a narrow process interruption. Invalid event ordering is
 rejected. Rework events consume the configured budget and eventually emit a human-input directive.
-The controller currently produces directives; automatic execution of those directives is the next
-integration step.
+
+## Directive execution and event loop
+
+`WorkflowDirectiveExecutor` connects controller output to runtime components:
+
+- Agent wake directives call `AgentTurnRunner` with role-specific permissions.
+- Verifier directives run deterministic checks and publish `verification_ready` from the protected
+  Verifier system member.
+- Completion directives load the bound Review artifact, evaluate `CompletionGuard`, and publish a
+  protected pass or rejection event.
+- Human directives pause automatic execution without acknowledging away the required input.
+
+`WorkflowEventLoop` queues every message produced by these actions and sends it back through the
+controller. Replayed controller decisions do not rerun expensive directives, and messages delivered
+to the Orchestrator are acknowledged only after their directives succeed. A configurable event
+limit prevents an unbounded local run.
+
+Planner and Reviewer actions may include a small JSON `artifact_content`. TurnRunner persists this
+content as a Plan or Review Artifact before routing the message. Large patches and logs must still
+use existing Artifact IDs. The current runtime keeps the latest structured VerificationReport in
+memory; reconstructing that complete object after a process restart remains future work.

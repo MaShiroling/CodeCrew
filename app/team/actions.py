@@ -3,7 +3,14 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    JsonValue,
+    ValidationError,
+    model_validator,
+)
 
 from app.team.models import MessageRecipient
 
@@ -35,12 +42,18 @@ class AgentChatAction(BaseModel):
     recipient: MessageRecipient | None = None
     content: str | None = Field(default=None, min_length=1, max_length=16_000)
     artifact_ids: tuple[UUID, ...] = Field(default=(), max_length=50)
+    artifact_content: JsonValue | None = None
     reply_to: UUID | None = None
 
     @model_validator(mode="after")
     def validate_action_shape(self) -> "AgentChatAction":
         if self.action is ChatActionType.FINISH_TURN:
-            if self.recipient is not None or self.artifact_ids or self.reply_to is not None:
+            if (
+                self.recipient is not None
+                or self.artifact_ids
+                or self.artifact_content is not None
+                or self.reply_to is not None
+            ):
                 raise ValueError("finish_turn cannot target recipients, replies, or artifacts")
             return self
         if self.recipient is None:
@@ -49,12 +62,20 @@ class AgentChatAction(BaseModel):
             raise ValueError("chat actions require content")
         if self.action is ChatActionType.ANSWER_QUESTION and self.reply_to is None:
             raise ValueError("answer_question requires reply_to")
+        if self.action is ChatActionType.SHARE_ARTIFACT and not self.artifact_ids:
+            raise ValueError("share_artifact requires artifact_ids")
         if self.action in {
-            ChatActionType.SHARE_ARTIFACT,
             ChatActionType.SHARE_PLAN,
             ChatActionType.APPROVE_REVIEW,
-        } and not self.artifact_ids:
-            raise ValueError(f"{self.action.value} requires artifact_ids")
+        }:
+            sources = bool(self.artifact_ids) + (self.artifact_content is not None)
+            if sources != 1:
+                raise ValueError(
+                    f"{self.action.value} requires exactly one Artifact ID source "
+                    "or artifact_content"
+                )
+        elif self.artifact_content is not None:
+            raise ValueError("artifact_content is only allowed for Plan or Review output")
         if len(self.artifact_ids) != len(set(self.artifact_ids)):
             raise ValueError("artifact_ids must be unique")
         return self

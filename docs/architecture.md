@@ -32,6 +32,10 @@ workflow controller consumes these room events directly.
   after the complete turn succeeds.
 - `WorkflowController`: idempotently reduces persisted room events into legal Task transitions and
   explicit directives to wake Agents, run Verifier or CompletionGuard, or request human input.
+- `WorkflowDirectiveExecutor`: executes those directives and publishes Verifier and CompletionGuard
+  results back into the room as integrity-bound system events.
+- `WorkflowEventLoop`: feeds produced events back through the controller until completion, a human
+  pause, an empty queue, or the configured event limit.
 - `AgentReviewerRunner`: starts a fresh read-only review session per attempt and validates its
   structured JSON result before the orchestrator persists it as evidence.
 - `HandoffEnvelope`: versioned A2A message carrying small structured payloads and artifact IDs,
@@ -52,6 +56,6 @@ outer-layer implementations. This keeps fake adapters and in-memory stores usabl
 
 ## Current exclusions
 
-Planner output parsing, restart-safe task recovery, SSE streaming, the complete task API, and the
-evaluation runner are not implemented yet. Reviewer rejection can trigger at most two bounded
-rework rounds; budget exhaustion deterministically routes the task to `needs_human`.
+Restart-safe recovery of in-memory verification evidence, SSE streaming, the complete task API,
+and the evaluation runner are not implemented yet. Reviewer rejection can trigger at most two
+bounded rework rounds; budget exhaustion deterministically routes the task to `needs_human`.

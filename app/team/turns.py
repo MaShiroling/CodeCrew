@@ -17,7 +17,7 @@ from app.agents import (
     PermissionMode,
 )
 from app.orchestration.models import Task
-from app.storage import ArtifactReference, ArtifactStore
+from app.storage import ArtifactReference, ArtifactStore, ArtifactType
 from app.team.actions import (
     AgentChatAction,
     AgentChatTurn,
@@ -195,7 +195,7 @@ class AgentTurnRunner:
             )
             correlation_id = parent.correlation_id if parent else latest.correlation_id
             causation_id = parent.message_id if parent else latest.message_id
-            artifacts = self._artifact_references(task, action)
+            artifacts = self._artifact_references(task, member_id, action)
             outgoing = ChatMessage(
                 room_id=latest.room_id,
                 task_id=task.id,
@@ -216,7 +216,7 @@ class AgentTurnRunner:
         return tuple(routed)
 
     def _artifact_references(
-        self, task: Task, action: AgentChatAction
+        self, task: Task, member_id: UUID, action: AgentChatAction
     ) -> tuple[ArtifactReference, ...]:
         references: list[ArtifactReference] = []
         for artifact_id in action.artifact_ids:
@@ -227,6 +227,41 @@ class AgentTurnRunner:
                 ArtifactReference.from_metadata(
                     metadata,
                     summary=action.content or metadata.filename or "Agent-shared artifact",
+                )
+            )
+        if action.artifact_content is not None:
+            member = self.rooms.get_member(member_id)
+            if action.action is ChatActionType.SHARE_PLAN:
+                artifact_type = ArtifactType.PLAN
+                content = action.artifact_content
+                filename = f"plan-round-{task.rework_rounds}.json"
+            elif action.action is ChatActionType.APPROVE_REVIEW:
+                if not isinstance(action.artifact_content, dict):
+                    raise AgentTurnError("review artifact_content must be a JSON object")
+                artifact_type = ArtifactType.REVIEW_REPORT
+                content = {
+                    "task_id": str(task.id),
+                    "trace_id": str(task.trace_id),
+                    "reviewer": member.name,
+                    "verdict": "approved",
+                    "issues": action.artifact_content.get("issues", []),
+                    "summary": action.content,
+                }
+                filename = f"review-round-{task.rework_rounds}.json"
+            else:
+                raise AgentTurnError("unsupported inline artifact action")
+            metadata = self.artifacts.put_json(
+                content,
+                task_id=task.id,
+                trace_id=task.trace_id,
+                type=artifact_type,
+                created_by=member.name,
+                filename=filename,
+            )
+            references.append(
+                ArtifactReference.from_metadata(
+                    metadata,
+                    summary=action.content or filename,
                 )
             )
         return tuple(references)
@@ -281,6 +316,7 @@ class AgentTurnRunner:
                     },
                     "content": "required text",
                     "artifact_ids": ["UUID"],
+                    "artifact_content": "small JSON for share_plan or approve_review",
                     "reply_to": "UUID required for answer_question",
                 }
             ]

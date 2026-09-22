@@ -72,6 +72,19 @@ def test_action_specific_fields_are_required() -> None:
             recipient=recipient(),
             content="done",
         )
+    with pytest.raises(ValidationError, match="exactly one"):
+        AgentChatAction(
+            action=ChatActionType.SHARE_PLAN,
+            recipient=recipient(),
+            content="plan",
+        )
+    inline = AgentChatAction(
+        action=ChatActionType.SHARE_PLAN,
+        recipient=recipient(),
+        content="plan",
+        artifact_content={"steps": ["edit", "test"]},
+    )
+    assert inline.artifact_content == {"steps": ["edit", "test"]}
 
 
 def test_parser_rejects_non_json_and_unknown_fields() -> None:

@@ -16,6 +16,14 @@ from app.team.controller import (
     WorkflowDirective,
     WorkflowDirectiveKind,
 )
+from app.team.execution import (
+    DirectiveExecutionResult,
+    WorkflowDirectiveExecutor,
+    WorkflowEventLoop,
+    WorkflowExecutionError,
+    WorkflowRunResult,
+    WorkflowRuntime,
+)
 from app.team.models import (
     MAX_CHAT_ARTIFACTS,
     MAX_CHAT_CONTENT_CHARS,
@@ -73,6 +81,7 @@ __all__ = [
     "ConversationArtifactError",
     "ConversationRouter",
     "ConversationRoutingError",
+    "DirectiveExecutionResult",
     "InvalidChatAcknowledgementError",
     "MemberKind",
     "MemberNotFoundError",
@@ -96,6 +105,11 @@ __all__ = [
     "WorkflowControllerError",
     "WorkflowDecision",
     "WorkflowDirective",
+    "WorkflowDirectiveExecutor",
     "WorkflowDirectiveKind",
+    "WorkflowEventLoop",
+    "WorkflowExecutionError",
+    "WorkflowRunResult",
+    "WorkflowRuntime",
     "parse_agent_chat_turn",
 ]

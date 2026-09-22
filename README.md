@@ -8,8 +8,8 @@ CodeCrew 是一个面向软件变更任务的独立开源项目。它把 Claude 
 Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不建设通用聊天或陪伴平台。
 
 > 当前状态：底层协作、隔离执行、验证、完成守卫、独立只读 Reviewer、最多两轮
-> 返工闭环、TeamRoom、AgentTurnRunner 和事件驱动 WorkflowController 核心已实现；
-> 指令自动执行、完整 Trace 和产品入口仍在开发中。
+> 返工闭环、TeamRoom、AgentTurnRunner、事件驱动 WorkflowController 和自动指令循环
+> 已实现；跨进程恢复、完整 Trace 和产品入口仍在开发中。
 
 ## 目标工作流
 
@@ -108,6 +108,10 @@ Codex CLI Implementer（独立 Git Worktree）
 - 动作全部路由成功后才 ACK，失败输入保留待重试
 - 聊天事件驱动 Task 状态迁移并生成 Agent/Verifier/CompletionGuard 调度指令
 - 工作流事件持久化去重，支持控制器重复消费和有限恢复
+- `WorkflowDirectiveExecutor` 自动唤醒 Agent、运行 Verifier 和 CompletionGuard
+- Verifier/CompletionGuard 以受保护的系统成员身份发布证据消息
+- `WorkflowEventLoop` 连续消费新事件，并在完成、等待人工或安全上限时停止
+- Planner/Reviewer 可内联输出小型结构化 JSON，由 TurnRunner 固化为 Artifact
 
 ## 完成守卫
 
@@ -186,7 +190,7 @@ flowchart TB
 以下内容仍属于开发计划，不能视为现有功能：
 
 - Planner 输出解析与 Plan 服务
-- WorkflowController 指令自动执行与连续事件循环
+- 进程重启后恢复内存中的 VerificationReport 和运行队列
 - 进程重启后的任务恢复
 - Task、Trace 和 Event 的完整持久化
 - SSE 实时事件和完整任务 API
@@ -309,7 +313,8 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段五点五之一：TeamRoom 通信模型、SQLite Store 和 ConversationRouter
 - [x] 阶段五点五之二：Agent 聊天动作协议与 AgentTurnRunner
 - [x] 阶段五点五之三：事件驱动 WorkflowController 核心归约器
-- [ ] 阶段五点五之四：Planner 澄清、Reviewer 返工和系统 Bot 事件闭环
+- [x] 阶段五点五之四：指令执行器、系统 Bot 与自动事件循环
+- [ ] 阶段五点五之五：Planner 澄清、Reviewer 返工与对话预算
 - [ ] 阶段六：Trace、SSE、任务 API、CLI 和端到端 MVP
 - [ ] 阶段七：多语言编码任务评测集
 - [ ] 阶段八：单 Agent / 多 Agent 对照实验与指标报告
