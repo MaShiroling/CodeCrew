@@ -64,9 +64,32 @@ def artifact(
     artifacts: ArtifactStore,
     task: Task,
     type: ArtifactType,
+    *,
+    review_verdict: str = "rejected",
 ) -> ArtifactReference:
+    content = {"type": type.value}
+    if type is ArtifactType.REVIEW_REPORT:
+        content = {
+            "task_id": str(task.id),
+            "trace_id": str(task.trace_id),
+            "reviewer": "test-reviewer",
+            "verdict": review_verdict,
+            "issues": (
+                []
+                if review_verdict == "approved"
+                else [
+                    {
+                        "issue_id": str(uuid4()),
+                        "priority": "high",
+                        "summary": "implementation needs correction",
+                        "resolved": False,
+                    }
+                ]
+            ),
+            "summary": "rework required",
+        }
     metadata = artifacts.put_json(
-        {"type": type.value},
+        content,
         task_id=task.id,
         trace_id=task.trace_id,
         type=type,
@@ -189,7 +212,14 @@ def test_events_drive_happy_path_without_direct_stage_calls(tmp_path: Path) -> N
         members[MemberRole.REVIEWER],
         members[MemberRole.ORCHESTRATOR],
         MessageType.REVIEW_APPROVED,
-        artifacts=(artifact(artifacts, task, ArtifactType.REVIEW_REPORT),),
+        artifacts=(
+            artifact(
+                artifacts,
+                task,
+                ArtifactType.REVIEW_REPORT,
+                review_verdict="approved",
+            ),
+        ),
     )
     decision = controller.handle(task, approved)
     assert task.state is TaskState.REVIEWING
@@ -328,6 +358,7 @@ def test_rework_budget_exhaustion_routes_to_human(tmp_path: Path) -> None:
         members[MemberRole.REVIEWER],
         members[MemberRole.ORCHESTRATOR],
         MessageType.REWORK_REQUEST,
+        artifacts=(artifact(artifacts, task, ArtifactType.REVIEW_REPORT),),
     )
 
     decision = controller.handle(task, rejected)
@@ -347,6 +378,7 @@ def test_rework_event_starts_next_implementation_round(tmp_path: Path) -> None:
         members[MemberRole.REVIEWER],
         members[MemberRole.ORCHESTRATOR],
         MessageType.REWORK_REQUEST,
+        artifacts=(artifact(artifacts, task, ArtifactType.REVIEW_REPORT),),
     )
 
     decision = controller.handle(task, rejected)

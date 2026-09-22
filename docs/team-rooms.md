@@ -30,6 +30,22 @@ from the latest Plan and the pending questions when the Planner does not repeat 
 The prompt includes the complete lightweight Plan history while Plan bodies remain Artifact
 references. Revised Plans keep the task in `implementing` and wake the Implementer again.
 
+## Reviewer rework conversation
+
+A Reviewer rejects an implementation with `request_rework`, targeting the Implementer and
+attaching exactly one `ReviewReport` Artifact. Inline reports are normalized into the shared
+`ReviewIssue` contract. A rejected report must contain at least one unresolved issue, and the
+Router independently verifies that the Artifact is task/trace bound, has a `rejected` verdict, and
+contains actionable unresolved issues.
+
+The rejection event consumes one deterministic rework round, moves the task back to
+`implementing`, and wakes the Implementer with the Review Artifact path in its prompt. A subsequent
+`request_review` always returns through Verifier before a fresh Reviewer turn. Review history is
+included as lightweight structured data plus Artifact paths. Stable `issue_id` values form the
+cross-round ledger: every still-unresolved issue must be carried into the next Review report, and a
+Reviewer cannot approve while a carried high or critical issue remains unresolved. The existing
+rework budget still routes the task to a human after the configured limit.
+
 ## Turn lifecycle
 
 `AgentTurnRunner` performs one bounded turn:

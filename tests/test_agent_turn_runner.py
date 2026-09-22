@@ -13,7 +13,7 @@ from app.agents import (
     FakeEventSpec,
     PermissionMode,
 )
-from app.orchestration.models import Task
+from app.orchestration.models import Task, TaskState
 from app.storage import ArtifactStore, ArtifactType, SQLiteDatabase
 from app.team import (
     AgentTurnError,
@@ -29,6 +29,7 @@ from app.team import (
     RoomMember,
     TeamRoom,
     TeamRoomStore,
+    WorkflowController,
 )
 
 
@@ -409,3 +410,168 @@ async def test_planner_answers_clarification_and_publishes_versioned_plan(
         "supersedes_artifact_id": str(initial_metadata.artifact_id),
     }
     assert str(initial_metadata.artifact_id) in planner_adapter.requests[0].prompt
+
+
+@pytest.mark.asyncio
+async def test_reviewer_rework_evidence_drives_implementer_back_to_verification(
+    tmp_path: Path,
+) -> None:
+    implementer_scenario = FakeAgentScenario(
+        output={
+            "actions": [
+                {
+                    "action": "request_review",
+                    "recipient": {"kind": "role", "role": "orchestrator"},
+                    "content": "Rework completed and ready for verification",
+                },
+                {"action": "finish_turn", "content": "Fix submitted"},
+            ]
+        }
+    )
+    runner, router, rooms, artifacts, adapter, task, room, members = make_context(
+        tmp_path, implementer_scenario
+    )
+    reviewer = members[MemberRole.REVIEWER]
+    implementer = members[MemberRole.IMPLEMENTER]
+    reviewer_adapter = FakeAgentAdapter(
+        FakeAgentScenario(
+            output={
+                "actions": [
+                    {
+                        "action": "request_rework",
+                        "recipient": {"kind": "role", "role": "implementer"},
+                        "content": "The fallback path needs correction",
+                        "artifact_content": {
+                            "issues": [
+                                {
+                                    "priority": "high",
+                                    "summary": "Fallback returns the wrong default",
+                                    "resolved": False,
+                                }
+                            ]
+                        },
+                    },
+                    {"action": "finish_turn", "content": "Rework required"},
+                ]
+            }
+        ),
+        name="fake-reviewer",
+        capabilities=frozenset({AgentCapability.CODE_REVIEW}),
+    )
+    runner.registry.register(
+        reviewer_adapter,
+        roles={AgentRole.REVIEWER},
+        permission_modes={PermissionMode.READ_ONLY},
+    )
+    send_trigger(
+        router,
+        room,
+        members[MemberRole.ORCHESTRATOR],
+        reviewer,
+        content="Review the verified implementation",
+    )
+    for state in (
+        TaskState.PLANNING,
+        TaskState.IMPLEMENTING,
+        TaskState.VERIFYING,
+        TaskState.REVIEWING,
+    ):
+        task.transition_to(state)
+    controller = WorkflowController(rooms)
+    controller.initialize()
+
+    review_turn = await runner.run(
+        task,
+        room_id=room.room_id,
+        member_id=reviewer.member_id,
+        agent_name="fake-reviewer",
+        working_directory=tmp_path,
+    )
+    rework = review_turn.routed_messages[0]
+    decision = controller.handle(task, rework)
+
+    assert rework.message.type is MessageType.REWORK_REQUEST
+    assert rework.message.artifacts[0].type is ArtifactType.REVIEW_REPORT
+    review_content = artifacts.read_json(rework.message.artifacts[0].artifact_id)
+    assert review_content["verdict"] == "rejected"
+    assert review_content["issues"][0]["priority"] == "high"
+    assert task.state is TaskState.IMPLEMENTING
+    assert task.rework_rounds == 1
+    assert decision.directives[0].target_role is MemberRole.IMPLEMENTER
+    assert (
+        rooms.pending_for(implementer.member_id)[0].message.artifacts[0].artifact_id
+        == rework.message.artifacts[0].artifact_id
+    )
+
+    implementation_turn = await runner.run(
+        task,
+        room_id=room.room_id,
+        member_id=implementer.member_id,
+        agent_name=adapter.name,
+        working_directory=tmp_path,
+    )
+    ready = implementation_turn.routed_messages[0]
+    controller.handle(task, ready)
+
+    assert ready.message.type is MessageType.IMPLEMENTATION_READY
+    assert task.state is TaskState.VERIFYING
+    assert str(rework.message.artifacts[0].artifact_id) in adapter.requests[0].prompt
+
+    task.transition_to(TaskState.REVIEWING)
+    send_trigger(
+        router,
+        room,
+        members[MemberRole.ORCHESTRATOR],
+        reviewer,
+        content="Review the corrected implementation",
+    )
+    reviewer_adapter._scenario = FakeAgentScenario(
+        output={
+            "actions": [
+                {
+                    "action": "approve_review",
+                    "recipient": {"kind": "role", "role": "orchestrator"},
+                    "content": "The reported regression is fixed",
+                    "artifact_content": {"issues": []},
+                },
+                {"action": "finish_turn", "content": "Approved"},
+            ]
+        }
+    )
+    with pytest.raises(AgentTurnError, match="carry forward"):
+        await runner.run(
+            task,
+            room_id=room.room_id,
+            member_id=reviewer.member_id,
+            agent_name="fake-reviewer",
+            working_directory=tmp_path,
+        )
+
+    issue = review_content["issues"][0]
+    reviewer_adapter._scenario = FakeAgentScenario(
+        output={
+            "actions": [
+                {
+                    "action": "approve_review",
+                    "recipient": {"kind": "role", "role": "orchestrator"},
+                    "content": "The reported regression is fixed",
+                    "artifact_content": {"issues": [{**issue, "resolved": True}]},
+                },
+                {"action": "finish_turn", "content": "Approved"},
+            ]
+        }
+    )
+    approval_turn = await runner.run(
+        task,
+        room_id=room.room_id,
+        member_id=reviewer.member_id,
+        agent_name="fake-reviewer",
+        working_directory=tmp_path,
+    )
+    approval = approval_turn.routed_messages[0]
+
+    assert approval.message.type is MessageType.REVIEW_APPROVED
+    approved_content = artifacts.read_json(approval.message.artifacts[0].artifact_id)
+    assert approved_content["issues"][0]["issue_id"] == issue["issue_id"]
+    assert approved_content["issues"][0]["resolved"] is True
+    assert issue["issue_id"] in reviewer_adapter.requests[-1].prompt

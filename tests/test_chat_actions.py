@@ -121,3 +121,23 @@ def test_plan_revision_fields_are_scoped_to_share_plan() -> None:
             content="invalid",
             addresses_message_ids=(question_id,),
         )
+
+
+def test_rework_action_requires_structured_review_evidence() -> None:
+    with pytest.raises(ValidationError, match="exactly one"):
+        AgentChatAction(
+            action=ChatActionType.REQUEST_REWORK,
+            recipient=recipient(),
+            content="fix the regression",
+        )
+    action = AgentChatAction(
+        action=ChatActionType.REQUEST_REWORK,
+        recipient=recipient(),
+        content="fix the regression",
+        artifact_content={
+            "issues": [
+                {"priority": "high", "summary": "fallback regresses", "resolved": False}
+            ]
+        },
+    )
+    assert action.artifact_content is not None

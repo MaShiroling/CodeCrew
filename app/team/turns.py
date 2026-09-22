@@ -33,6 +33,7 @@ from app.team.models import (
 )
 from app.team.router import ConversationRouter
 from app.team.store import TeamRoomStore
+from app.verification import ReviewIssue, ReviewIssuePriority, ReviewVerdict
 
 
 class AgentTurnError(RuntimeError):
@@ -264,16 +265,57 @@ class AgentTurnRunner:
                         else ""
                     ),
                 }
-            elif action.action is ChatActionType.APPROVE_REVIEW:
+            elif action.action in {
+                ChatActionType.APPROVE_REVIEW,
+                ChatActionType.REQUEST_REWORK,
+            }:
                 if not isinstance(action.artifact_content, dict):
                     raise AgentTurnError("review artifact_content must be a JSON object")
+                try:
+                    issues = tuple(
+                        ReviewIssue.model_validate(item)
+                        for item in action.artifact_content.get("issues", [])
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise AgentTurnError("review issues have invalid structure") from exc
+                verdict = (
+                    ReviewVerdict.APPROVED
+                    if action.action is ChatActionType.APPROVE_REVIEW
+                    else ReviewVerdict.REJECTED
+                )
+                if verdict is ReviewVerdict.REJECTED and (
+                    not issues or all(issue.resolved for issue in issues)
+                ):
+                    raise AgentTurnError(
+                        "a rework request requires at least one unresolved review issue"
+                    )
+                prior_unresolved = self._unresolved_review_issues(member.room_id)
+                current_by_id = {issue.issue_id: issue for issue in issues}
+                missing = tuple(
+                    issue.issue_id
+                    for issue in prior_unresolved
+                    if issue.issue_id not in current_by_id
+                )
+                if missing:
+                    raise AgentTurnError(
+                        "review output must carry forward every unresolved issue ID"
+                    )
+                if verdict is ReviewVerdict.APPROVED and any(
+                    not issue.resolved
+                    and issue.priority
+                    in {ReviewIssuePriority.HIGH, ReviewIssuePriority.CRITICAL}
+                    for issue in issues
+                ):
+                    raise AgentTurnError(
+                        "an approved review cannot contain unresolved high-priority issues"
+                    )
                 artifact_type = ArtifactType.REVIEW_REPORT
                 content = {
                     "task_id": str(task.id),
                     "trace_id": str(task.trace_id),
                     "reviewer": member.name,
-                    "verdict": "approved",
-                    "issues": action.artifact_content.get("issues", []),
+                    "verdict": verdict.value,
+                    "issues": [issue.model_dump(mode="json") for issue in issues],
                     "summary": action.content,
                 }
                 filename = f"review-round-{task.rework_rounds}.json"
@@ -347,7 +389,10 @@ class AgentTurnRunner:
                     },
                     "content": "required text",
                     "artifact_ids": ["UUID"],
-                    "artifact_content": "small JSON for share_plan or approve_review",
+                    "artifact_content": (
+                        "small JSON for share_plan, approve_review, or request_rework; "
+                        "rework requires unresolved issues with priority and summary"
+                    ),
                     "reply_to": "UUID required for answer_question",
                     "supersedes_artifact_id": "latest Plan UUID for a revised plan",
                     "addresses_message_ids": [
@@ -371,6 +416,7 @@ class AgentTurnRunner:
             }
             for revision in self.rooms.list_plan_revisions(incoming[-1].message.room_id)
         ]
+        review_history = self._review_history(incoming[-1].message.room_id)
         return (
             "You are participating in a controlled CodeCrew task room. "
             "Return only one JSON object matching the action schema. "
@@ -380,8 +426,52 @@ class AgentTurnRunner:
             f"Room members:\n{json.dumps(roster, ensure_ascii=False)}\n\n"
             f"New messages:\n{json.dumps(messages, ensure_ascii=False)}\n\n"
             f"Plan history:\n{json.dumps(plan_history, ensure_ascii=False)}\n\n"
+            f"Review history:\n{json.dumps(review_history, ensure_ascii=False)}\n\n"
             f"Action schema:\n{json.dumps(schema, ensure_ascii=False)}"
         )
+
+    def _review_history(self, room_id: UUID) -> list[dict[str, object]]:
+        history: list[dict[str, object]] = []
+        for stored in self.rooms.list_messages(room_id, limit=1_000):
+            if stored.message.type not in {
+                MessageType.REWORK_REQUEST,
+                MessageType.REVIEW_APPROVED,
+            }:
+                continue
+            reference = next(
+                (
+                    item
+                    for item in stored.message.artifacts
+                    if item.type is ArtifactType.REVIEW_REPORT
+                ),
+                None,
+            )
+            if reference is None:
+                continue
+            content = self.artifacts.read_json(reference.artifact_id)
+            if not isinstance(content, dict):
+                continue
+            history.append(
+                {
+                    "artifact_id": str(reference.artifact_id),
+                    "path": str(self.artifacts.blob_path_for(reference.artifact_id)),
+                    "verdict": content.get("verdict"),
+                    "issues": content.get("issues", []),
+                    "summary": content.get("summary"),
+                }
+            )
+        return history
+
+    def _unresolved_review_issues(self, room_id: UUID) -> tuple[ReviewIssue, ...]:
+        latest: dict[UUID, ReviewIssue] = {}
+        for report in self._review_history(room_id):
+            raw_issues = report.get("issues", [])
+            if not isinstance(raw_issues, list):
+                continue
+            for item in raw_issues:
+                issue = ReviewIssue.model_validate(item)
+                latest[issue.issue_id] = issue
+        return tuple(issue for issue in latest.values() if not issue.resolved)
 
     @staticmethod
     def _turn_key(

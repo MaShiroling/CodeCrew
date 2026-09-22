@@ -71,6 +71,7 @@ class AgentChatAction(BaseModel):
         if self.action in {
             ChatActionType.SHARE_PLAN,
             ChatActionType.APPROVE_REVIEW,
+            ChatActionType.REQUEST_REWORK,
         }:
             sources = bool(self.artifact_ids) + (self.artifact_content is not None)
             if sources != 1:
@@ -79,7 +80,9 @@ class AgentChatAction(BaseModel):
                     "or artifact_content"
                 )
         elif self.artifact_content is not None:
-            raise ValueError("artifact_content is only allowed for Plan or Review output")
+            raise ValueError(
+                "artifact_content is only allowed for Plan or Review output"
+            )
         if self.action is not ChatActionType.SHARE_PLAN and (
             self.supersedes_artifact_id is not None or self.addresses_message_ids
         ):

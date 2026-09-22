@@ -195,6 +195,16 @@ def test_router_enforces_privileged_message_types(tmp_path: Path) -> None:
             ),
             authenticated_sender_id=implementer.member_id,
         )
+    with pytest.raises(RouteNotAllowedError, match="review_report"):
+        router.route(
+            direct_message(
+                room,
+                reviewer,
+                implementer,
+                type=MessageType.REWORK_REQUEST,
+            ),
+            authenticated_sender_id=reviewer.member_id,
+        )
 
 
 def test_question_answer_preserves_reply_causality(tmp_path: Path) -> None:
@@ -273,3 +283,66 @@ def test_artifacts_must_be_integrity_bound_to_room_task(tmp_path: Path) -> None:
             ),
             authenticated_sender_id=implementer.member_id,
         )
+
+
+def test_rework_requires_rejected_report_with_unresolved_issues(tmp_path: Path) -> None:
+    router, room, members, artifacts = make_context(tmp_path)
+    reviewer = members[MemberRole.REVIEWER]
+    implementer = members[MemberRole.IMPLEMENTER]
+
+    def review_reference(content: dict) -> ArtifactReference:
+        metadata = artifacts.put_json(
+            content,
+            task_id=room.task_id,
+            trace_id=room.trace_id,
+            type=ArtifactType.REVIEW_REPORT,
+            created_by="reviewer",
+            filename=f"review-{uuid4()}.json",
+        )
+        return ArtifactReference.from_metadata(metadata, summary="review")
+
+    base = {
+        "task_id": str(room.task_id),
+        "trace_id": str(room.trace_id),
+        "reviewer": "reviewer",
+        "verdict": "rejected",
+        "issues": [
+            {
+                "issue_id": str(uuid4()),
+                "priority": "high",
+                "summary": "regression remains",
+                "resolved": False,
+            }
+        ],
+        "summary": "rework required",
+    }
+    valid = direct_message(
+        room,
+        reviewer,
+        implementer,
+        type=MessageType.REWORK_REQUEST,
+        artifacts=(review_reference(base),),
+    )
+    assert router.route(valid, authenticated_sender_id=reviewer.member_id).message == valid
+
+    invalid = direct_message(
+        room,
+        reviewer,
+        implementer,
+        type=MessageType.REWORK_REQUEST,
+        artifacts=(review_reference({**base, "issues": []}),),
+    )
+    with pytest.raises(ConversationArtifactError, match="unresolved issue"):
+        router.route(invalid, authenticated_sender_id=reviewer.member_id)
+
+    forgotten = direct_message(
+        room,
+        reviewer,
+        members[MemberRole.ORCHESTRATOR],
+        type=MessageType.REVIEW_APPROVED,
+        artifacts=(
+            review_reference({**base, "verdict": "approved", "issues": []}),
+        ),
+    )
+    with pytest.raises(ConversationArtifactError, match="carry forward"):
+        router.route(forgotten, authenticated_sender_id=reviewer.member_id)

@@ -31,7 +31,8 @@ state transitions.
   resolves recipients, and validates attached Artifact integrity before persistence.
 - `AgentTurnRunner`: consumes pending room messages, leases a role-compatible adapter, captures
   normalized stream events, parses structured actions, routes them, and acknowledges inputs only
-  after the complete turn succeeds.
+  after the complete turn succeeds. It also carries Plan and Review history into fresh independent
+  sessions without copying the complete chat transcript.
 - `WorkflowController`: idempotently reduces persisted room events into legal Task transitions and
   explicit directives to wake Agents, run Verifier or CompletionGuard, or request human input.
 - `WorkflowDirectiveExecutor`: executes those directives and publishes Verifier and CompletionGuard

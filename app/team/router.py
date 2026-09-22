@@ -16,6 +16,7 @@ from app.team.models import (
     StoredChatMessage,
 )
 from app.team.store import TeamRoomStore
+from app.verification import ReviewIssue, ReviewIssuePriority, ReviewVerdict
 
 
 class ConversationRoutingError(RuntimeError):
@@ -93,6 +94,8 @@ class ConversationRouter:
         self._validate_message_type(message, sender, recipients)
         self._validate_reply(message, recipients)
         self._validate_artifacts(message)
+        if message.type in {MessageType.REWORK_REQUEST, MessageType.REVIEW_APPROVED}:
+            self._validate_review_report(message)
         return self.rooms.append_message(
             message,
             recipient_ids=tuple(member.member_id for member in recipients),
@@ -185,6 +188,7 @@ class ConversationRouter:
         required_artifact_types = {
             MessageType.VERIFICATION_READY: ArtifactType.VERIFICATION_REPORT,
             MessageType.REVIEW_APPROVED: ArtifactType.REVIEW_REPORT,
+            MessageType.REWORK_REQUEST: ArtifactType.REVIEW_REPORT,
             MessageType.COMPLETION_PASSED: ArtifactType.COMPLETION_DECISION,
             MessageType.COMPLETION_REJECTED: ArtifactType.COMPLETION_DECISION,
         }
@@ -233,3 +237,83 @@ class ConversationRouter:
                     pass
             except (ArtifactNotFoundError, ArtifactIntegrityError) as exc:
                 raise ConversationArtifactError(str(exc)) from exc
+
+    def _validate_review_report(self, message: ChatMessage) -> None:
+        reference = next(
+            item for item in message.artifacts if item.type is ArtifactType.REVIEW_REPORT
+        )
+        try:
+            content = self.artifacts.read_json(reference.artifact_id)
+            if not isinstance(content, dict):
+                raise TypeError("review report must be a JSON object")
+            if content.get("task_id") != str(message.task_id):
+                raise ValueError("review report task_id does not match the message")
+            if content.get("trace_id") != str(message.trace_id):
+                raise ValueError("review report trace_id does not match the message")
+            expected_verdict = (
+                ReviewVerdict.REJECTED
+                if message.type is MessageType.REWORK_REQUEST
+                else ReviewVerdict.APPROVED
+            )
+            if ReviewVerdict(content.get("verdict")) is not expected_verdict:
+                raise ValueError(
+                    f"{message.type.value} review verdict must be {expected_verdict.value}"
+                )
+            raw_issues = content.get("issues")
+            if not isinstance(raw_issues, list):
+                raise TypeError("rework review issues must be a list")
+            if any(
+                not isinstance(item, dict) or "issue_id" not in item
+                for item in raw_issues
+            ):
+                raise ValueError("every review issue requires a stable issue_id")
+            issues = tuple(ReviewIssue.model_validate(item) for item in raw_issues)
+            if message.type is MessageType.REWORK_REQUEST and (
+                not issues or all(issue.resolved for issue in issues)
+            ):
+                raise ValueError("rework review requires an unresolved issue")
+            current_by_id = {issue.issue_id: issue for issue in issues}
+            missing = tuple(
+                issue.issue_id
+                for issue in self._unresolved_review_issues(message.room_id)
+                if issue.issue_id not in current_by_id
+            )
+            if missing:
+                raise ValueError("review report must carry forward unresolved issue IDs")
+            if expected_verdict is ReviewVerdict.APPROVED and any(
+                not issue.resolved
+                and issue.priority
+                in {ReviewIssuePriority.HIGH, ReviewIssuePriority.CRITICAL}
+                for issue in issues
+            ):
+                raise ValueError(
+                    "approved review cannot contain unresolved high-priority issues"
+                )
+        except (TypeError, ValueError) as exc:
+            raise ConversationArtifactError(f"invalid review report: {exc}") from exc
+
+    def _unresolved_review_issues(self, room_id: UUID) -> tuple[ReviewIssue, ...]:
+        latest: dict[UUID, ReviewIssue] = {}
+        for stored in self.rooms.list_messages(room_id, limit=1_000):
+            if stored.message.type not in {
+                MessageType.REWORK_REQUEST,
+                MessageType.REVIEW_APPROVED,
+            }:
+                continue
+            reference = next(
+                (
+                    item
+                    for item in stored.message.artifacts
+                    if item.type is ArtifactType.REVIEW_REPORT
+                ),
+                None,
+            )
+            if reference is None:
+                continue
+            content = self.artifacts.read_json(reference.artifact_id)
+            if not isinstance(content, dict) or not isinstance(content.get("issues"), list):
+                continue
+            for item in content["issues"]:
+                issue = ReviewIssue.model_validate(item)
+                latest[issue.issue_id] = issue
+        return tuple(issue for issue in latest.values() if not issue.resolved)
