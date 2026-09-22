@@ -171,10 +171,10 @@ class ConversationRouter:
         if message.type is MessageType.PLAN_SHARED:
             if sender.role is not MemberRole.PLANNER:
                 raise RouteNotAllowedError("only planner may publish a plan")
-            if not any(
+            if sum(
                 reference.type is ArtifactType.PLAN for reference in message.artifacts
-            ):
-                raise RouteNotAllowedError("plan_shared requires a plan artifact")
+            ) != 1:
+                raise RouteNotAllowedError("plan_shared requires exactly one plan artifact")
         if (
             message.type is MessageType.IMPLEMENTATION_READY
             and sender.role is not MemberRole.IMPLEMENTER

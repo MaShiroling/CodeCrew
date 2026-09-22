@@ -112,6 +112,8 @@ Codex CLI Implementer（独立 Git Worktree）
 - Verifier/CompletionGuard 以受保护的系统成员身份发布证据消息
 - `WorkflowEventLoop` 连续消费新事件，并在完成、等待人工或安全上限时停止
 - Planner/Reviewer 可内联输出小型结构化 JSON，由 TurnRunner 固化为 Artifact
+- Implementer 可向 Planner 发起结构化澄清，Planner 通过回复线程回答并发布修订 Plan
+- Plan 以不可变版本链持久化，记录版本号、被替代 Artifact 和本次解决的问题
 
 ## 完成守卫
 
@@ -314,7 +316,9 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段五点五之二：Agent 聊天动作协议与 AgentTurnRunner
 - [x] 阶段五点五之三：事件驱动 WorkflowController 核心归约器
 - [x] 阶段五点五之四：指令执行器、系统 Bot 与自动事件循环
-- [ ] 阶段五点五之五：Planner 澄清、Reviewer 返工与对话预算
+- [x] 阶段五点五之五 A：Planner ↔ Implementer 澄清与 Plan 版本管理
+- [ ] 阶段五点五之五 B：Reviewer ↔ Implementer 对话式返工
+- [ ] 阶段五点五之五 C：对话预算与死循环保护
 - [ ] 阶段六：Trace、SSE、任务 API、CLI 和端到端 MVP
 - [ ] 阶段七：多语言编码任务评测集
 - [ ] 阶段八：单 Agent / 多 Agent 对照实验与指标报告

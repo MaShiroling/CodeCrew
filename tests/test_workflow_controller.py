@@ -227,6 +227,53 @@ def test_question_wakes_recipient_without_changing_state(tmp_path: Path) -> None
     )
 
 
+def test_revised_plan_wakes_implementer_without_restarting_state(tmp_path: Path) -> None:
+    controller, router, artifacts, task, room, members = make_context(tmp_path)
+    task.transition_to(TaskState.PLANNING)
+    initial = emit(
+        router,
+        room,
+        members[MemberRole.PLANNER],
+        members[MemberRole.IMPLEMENTER],
+        MessageType.PLAN_SHARED,
+        artifacts=(artifact(artifacts, task, ArtifactType.PLAN),),
+    )
+    controller.handle(task, initial)
+    question = emit(
+        router,
+        room,
+        members[MemberRole.IMPLEMENTER],
+        members[MemberRole.PLANNER],
+        MessageType.QUESTION,
+    )
+    revised_artifact = artifact(artifacts, task, ArtifactType.PLAN)
+    revised = router.route(
+        ChatMessage(
+            room_id=room.room_id,
+            task_id=task.id,
+            trace_id=task.trace_id,
+            sender_id=members[MemberRole.PLANNER].member_id,
+            recipients=(
+                MessageRecipient(kind=RecipientKind.ROLE, role=MemberRole.IMPLEMENTER),
+            ),
+            type=MessageType.PLAN_SHARED,
+            content="Clarified implementation plan",
+            artifacts=(revised_artifact,),
+            supersedes_artifact_id=initial.message.artifacts[0].artifact_id,
+            addresses_message_ids=(question.message.message_id,),
+            idempotency_key=f"event-{uuid4()}",
+        ),
+        authenticated_sender_id=members[MemberRole.PLANNER].member_id,
+    )
+
+    decision = controller.handle(task, revised)
+
+    assert task.state is TaskState.IMPLEMENTING
+    assert decision.transitions == ()
+    assert decision.directives[0].target_role is MemberRole.IMPLEMENTER
+    assert decision.directives[0].reason == "revised plan is available"
+
+
 def test_reprocessing_event_is_durable_and_idempotent(tmp_path: Path) -> None:
     controller, router, _, task, room, members = make_context(tmp_path)
     issue = emit(

@@ -13,10 +13,11 @@ and implement changes; deterministic code owns verification and completion.
 6. The completion guard accepts only verifier evidence plus reviewer approval. Rework is capped
    by configuration and exhaustion moves the task to `needs_human`.
 
-The migration toward event-driven collaboration adds a task-scoped `TeamRoom`. Agents exchange
-typed messages through a `ConversationRouter`; SQLite stores the append-only conversation and
-per-recipient acknowledgements. The existing orchestrator remains authoritative until the future
-workflow controller consumes these room events directly.
+The event-driven collaboration layer adds a task-scoped `TeamRoom`. Agents exchange typed messages
+through a `ConversationRouter`; SQLite stores the append-only conversation, per-recipient
+acknowledgements, processed workflow decisions, and immutable Plan version chains. The
+`WorkflowController` consumes these persisted events and remains the sole owner of legal Task
+state transitions.
 
 ## Key contracts
 
@@ -24,7 +25,8 @@ workflow controller consumes these room events directly.
   Concrete Claude Code, Codex CLI, and fake adapters arrive in milestone two.
 - `AgentRegistry`: capabilities, permissions, availability, and concurrency limits.
 - `Orchestrator`: the sole writer of task state, applying explicit legal transitions.
-- `TeamRoomStore`: durable rooms, members, messages, reply threads, cursors, and recipient ACKs.
+- `TeamRoomStore`: durable rooms, members, messages, reply threads, cursors, recipient ACKs, and
+  versioned Plan revisions linked to clarification questions.
 - `ConversationRouter`: authenticates senders, enforces role routes and privileged message types,
   resolves recipients, and validates attached Artifact integrity before persistence.
 - `AgentTurnRunner`: consumes pending room messages, leases a role-compatible adapter, captures

@@ -44,6 +44,8 @@ class AgentChatAction(BaseModel):
     artifact_ids: tuple[UUID, ...] = Field(default=(), max_length=50)
     artifact_content: JsonValue | None = None
     reply_to: UUID | None = None
+    supersedes_artifact_id: UUID | None = None
+    addresses_message_ids: tuple[UUID, ...] = Field(default=(), max_length=50)
 
     @model_validator(mode="after")
     def validate_action_shape(self) -> "AgentChatAction":
@@ -53,6 +55,8 @@ class AgentChatAction(BaseModel):
                 or self.artifact_ids
                 or self.artifact_content is not None
                 or self.reply_to is not None
+                or self.supersedes_artifact_id is not None
+                or self.addresses_message_ids
             ):
                 raise ValueError("finish_turn cannot target recipients, replies, or artifacts")
             return self
@@ -76,6 +80,12 @@ class AgentChatAction(BaseModel):
                 )
         elif self.artifact_content is not None:
             raise ValueError("artifact_content is only allowed for Plan or Review output")
+        if self.action is not ChatActionType.SHARE_PLAN and (
+            self.supersedes_artifact_id is not None or self.addresses_message_ids
+        ):
+            raise ValueError("plan revision fields are only allowed for share_plan")
+        if len(self.addresses_message_ids) != len(set(self.addresses_message_ids)):
+            raise ValueError("addresses_message_ids must be unique")
         if len(self.artifact_ids) != len(set(self.artifact_ids)):
             raise ValueError("artifact_ids must be unique")
         return self

@@ -10,6 +10,8 @@ from app.team.models import (
     ChatMessage,
     MessageDelivery,
     MessageDeliveryStatus,
+    MessageType,
+    PlanRevision,
     RoomMember,
     RoomStatus,
     StoredChatMessage,
@@ -106,6 +108,28 @@ TEAM_ROOM_MIGRATIONS = (
             CREATE INDEX chat_delivery_recipient_idx
             ON chat_deliveries(recipient_id, status, message_id)
             """,
+        ),
+    ),
+    Migration(
+        version=5,
+        name="create_plan_revisions",
+        statements=(
+            """
+            CREATE TABLE plan_revisions (
+                room_id TEXT NOT NULL REFERENCES team_rooms(room_id),
+                task_id TEXT NOT NULL,
+                trace_id TEXT NOT NULL,
+                version INTEGER NOT NULL CHECK(version > 0),
+                artifact_id TEXT NOT NULL UNIQUE,
+                message_id TEXT NOT NULL UNIQUE REFERENCES chat_messages(message_id),
+                supersedes_artifact_id TEXT,
+                addresses_message_ids_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                PRIMARY KEY(room_id, version),
+                FOREIGN KEY(supersedes_artifact_id) REFERENCES plan_revisions(artifact_id)
+            )
+            """,
+            "CREATE INDEX plan_revisions_task_idx ON plan_revisions(task_id, version)",
         ),
     ),
 )
@@ -267,7 +291,30 @@ class TeamRoomStore:
                     for recipient_id in recipient_ids
                 ),
             )
+            if message.type is MessageType.PLAN_SHARED:
+                self._insert_plan_revision(connection, message)
             return self._get_message(connection, message.message_id)
+
+    def latest_plan_revision(self, room_id: UUID) -> PlanRevision | None:
+        with self.database.connect() as connection:
+            self._require_room_row(connection, room_id)
+            row = connection.execute(
+                """
+                SELECT * FROM plan_revisions
+                WHERE room_id = ? ORDER BY version DESC LIMIT 1
+                """,
+                (str(room_id),),
+            ).fetchone()
+        return _plan_revision_from_row(row) if row is not None else None
+
+    def list_plan_revisions(self, room_id: UUID) -> tuple[PlanRevision, ...]:
+        with self.database.connect() as connection:
+            self._require_room_row(connection, room_id)
+            rows = connection.execute(
+                "SELECT * FROM plan_revisions WHERE room_id = ? ORDER BY version",
+                (str(room_id),),
+            ).fetchall()
+        return tuple(_plan_revision_from_row(row) for row in rows)
 
     def get_message(self, message_id: UUID) -> StoredChatMessage:
         with self.database.connect() as connection:
@@ -461,6 +508,66 @@ class TeamRoomStore:
             deliveries=tuple(_delivery_from_row(item) for item in deliveries),
         )
 
+    @staticmethod
+    def _insert_plan_revision(
+        connection: sqlite3.Connection, message: ChatMessage
+    ) -> None:
+        plan_artifacts = [
+            reference for reference in message.artifacts if reference.type.value == "plan"
+        ]
+        if len(plan_artifacts) != 1:
+            raise RoomConflictError("plan_shared requires exactly one plan artifact")
+        previous = connection.execute(
+            """
+            SELECT * FROM plan_revisions
+            WHERE room_id = ? ORDER BY version DESC LIMIT 1
+            """,
+            (str(message.room_id),),
+        ).fetchone()
+        if previous is None:
+            if message.supersedes_artifact_id is not None:
+                raise RoomConflictError("the initial plan cannot supersede another plan")
+            if message.addresses_message_ids:
+                raise RoomConflictError("the initial plan cannot address clarification messages")
+            version = 1
+        else:
+            if message.supersedes_artifact_id != UUID(previous["artifact_id"]):
+                raise RoomConflictError("a revised plan must supersede the latest plan")
+            if not message.addresses_message_ids:
+                raise RoomConflictError("a revised plan must address a clarification question")
+            placeholders = ",".join("?" for _ in message.addresses_message_ids)
+            rows = connection.execute(
+                f"""
+                SELECT message_id, room_id, message_type FROM chat_messages
+                WHERE message_id IN ({placeholders})
+                """,
+                tuple(str(item) for item in message.addresses_message_ids),
+            ).fetchall()
+            if len(rows) != len(message.addresses_message_ids) or any(
+                row["room_id"] != str(message.room_id)
+                or row["message_type"] != MessageType.QUESTION.value
+                for row in rows
+            ):
+                raise RoomConflictError(
+                    "a revised plan may only address persisted questions in the same room"
+                )
+            version = int(previous["version"]) + 1
+        connection.execute(
+            """
+            INSERT INTO plan_revisions(
+                room_id, task_id, trace_id, version, artifact_id, message_id,
+                supersedes_artifact_id, addresses_message_ids_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(message.room_id), str(message.task_id), str(message.trace_id), version,
+                str(plan_artifacts[0].artifact_id), str(message.message_id),
+                str(message.supersedes_artifact_id) if message.supersedes_artifact_id else None,
+                json.dumps([str(item) for item in message.addresses_message_ids]),
+                message.created_at.isoformat(),
+            ),
+        )
+
 
 def _member_from_row(row: sqlite3.Row) -> RoomMember:
     return RoomMember(
@@ -483,6 +590,20 @@ def _delivery_from_row(row: sqlite3.Row) -> MessageDelivery:
             if row["acknowledged_at"]
             else None
         ),
+    )
+
+
+def _plan_revision_from_row(row: sqlite3.Row) -> PlanRevision:
+    return PlanRevision(
+        room_id=row["room_id"],
+        task_id=row["task_id"],
+        trace_id=row["trace_id"],
+        version=row["version"],
+        artifact_id=row["artifact_id"],
+        message_id=row["message_id"],
+        supersedes_artifact_id=row["supersedes_artifact_id"],
+        addresses_message_ids=tuple(json.loads(row["addresses_message_ids_json"])),
+        created_at=datetime.fromisoformat(row["created_at"]),
     )
 
 

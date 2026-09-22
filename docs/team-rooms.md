@@ -9,12 +9,26 @@ Artifacts are integrity checked before persistence.
 An Agent turn returns one JSON object containing up to 20 actions. Supported actions are:
 
 - `send_message`, `ask_question`, and `answer_question`;
-- `share_artifact` and `report_progress`;
-- `request_review`, `request_rework`, and `request_human_input`;
+- `share_artifact`, `share_plan`, and `report_progress`;
+- `request_review`, `approve_review`, `request_rework`, and `request_human_input`;
 - `finish_turn`.
 
 Exactly one `finish_turn` must appear at the end. Answers require `reply_to`; Artifact sharing
 requires Artifact IDs. Unknown fields and prose outside the JSON object are rejected.
+
+## Planner clarification and Plan versions
+
+An Implementer can send `ask_question` to the Planner without changing the task's
+`implementing` state. The question wakes only its resolved recipient. The Planner answers with an
+`answer_question` action bound to the original message through `reply_to`, then may publish a
+clarified `share_plan` action in the same turn.
+
+Every accepted `plan_shared` message creates an immutable `PlanRevision` row. Version 1 has no
+parent. Later versions must supersede the latest Plan Artifact and identify one or more persisted
+questions in the same room through `addresses_message_ids`. `AgentTurnRunner` derives these links
+from the latest Plan and the pending questions when the Planner does not repeat them explicitly.
+The prompt includes the complete lightweight Plan history while Plan bodies remain Artifact
+references. Revised Plans keep the task in `implementing` and wake the Implementer again.
 
 ## Turn lifecycle
 
@@ -65,6 +79,10 @@ rejected. Rework events consume the configured budget and eventually emit a huma
 controller. Replayed controller decisions do not rerun expensive directives, and messages delivered
 to the Orchestrator are acknowledged only after their directives succeed. A configurable event
 limit prevents an unbounded local run.
+
+If one Agent turn emits several messages for the same recipient, their directives may request more
+than one wake-up. The executor coalesces later wake-ups after the first turn consumes the complete
+pending batch; an empty mailbox is therefore not treated as an Agent failure.
 
 Planner and Reviewer actions may include a small JSON `artifact_content`. TurnRunner persists this
 content as a Plan or Review Artifact before routing the message. Large patches and logs must still

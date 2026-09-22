@@ -123,10 +123,23 @@ class WorkflowController:
             transitions = (TaskState.PLANNING,)
             directives = (self._wake(MemberRole.PLANNER, "new issue requires a plan"),)
         elif message.type is MessageType.PLAN_SHARED:
-            self._require_state(task, TaskState.PLANNING, message.type)
-            transitions = (TaskState.IMPLEMENTING,)
+            if task.state not in {TaskState.PLANNING, TaskState.IMPLEMENTING}:
+                raise WorkflowControllerError(
+                    "plan_shared requires task state planning or implementing, "
+                    f"got {task.state.value}"
+                )
+            transitions = (
+                (TaskState.IMPLEMENTING,)
+                if task.state is TaskState.PLANNING
+                else ()
+            )
             directives = (
-                self._wake(MemberRole.IMPLEMENTER, "structured plan is available"),
+                self._wake(
+                    MemberRole.IMPLEMENTER,
+                    "revised plan is available"
+                    if message.supersedes_artifact_id
+                    else "structured plan is available",
+                ),
             )
         elif message.type in {
             MessageType.IMPLEMENTATION_READY,

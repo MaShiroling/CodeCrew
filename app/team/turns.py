@@ -196,6 +196,23 @@ class AgentTurnRunner:
             correlation_id = parent.correlation_id if parent else latest.correlation_id
             causation_id = parent.message_id if parent else latest.message_id
             artifacts = self._artifact_references(task, member_id, action)
+            supersedes_artifact_id = None
+            addresses_message_ids: tuple[UUID, ...] = ()
+            if action.action is ChatActionType.SHARE_PLAN:
+                latest_plan = self.rooms.latest_plan_revision(latest.room_id)
+                supersedes_artifact_id = (
+                    action.supersedes_artifact_id
+                    or (latest_plan.artifact_id if latest_plan is not None else None)
+                )
+                addresses_message_ids = action.addresses_message_ids or (
+                    tuple(
+                        item.message.message_id
+                        for item in incoming
+                        if item.message.type is MessageType.QUESTION
+                    )
+                    if latest_plan is not None
+                    else ()
+                )
             outgoing = ChatMessage(
                 room_id=latest.room_id,
                 task_id=task.id,
@@ -205,6 +222,8 @@ class AgentTurnRunner:
                 type=_MESSAGE_TYPES[action.action],
                 content=action.content or "finished",
                 artifacts=artifacts,
+                supersedes_artifact_id=supersedes_artifact_id,
+                addresses_message_ids=addresses_message_ids,
                 reply_to=action.reply_to,
                 correlation_id=correlation_id,
                 causation_id=causation_id,
@@ -234,7 +253,17 @@ class AgentTurnRunner:
             if action.action is ChatActionType.SHARE_PLAN:
                 artifact_type = ArtifactType.PLAN
                 content = action.artifact_content
-                filename = f"plan-round-{task.rework_rounds}.json"
+                latest_plan = self.rooms.latest_plan_revision(member.room_id)
+                version = latest_plan.version + 1 if latest_plan is not None else 1
+                filename = f"plan-v{version}.json"
+                metadata = {
+                    "plan_version": str(version),
+                    "supersedes_artifact_id": (
+                        str(action.supersedes_artifact_id or latest_plan.artifact_id)
+                        if latest_plan is not None
+                        else ""
+                    ),
+                }
             elif action.action is ChatActionType.APPROVE_REVIEW:
                 if not isinstance(action.artifact_content, dict):
                     raise AgentTurnError("review artifact_content must be a JSON object")
@@ -248,6 +277,7 @@ class AgentTurnRunner:
                     "summary": action.content,
                 }
                 filename = f"review-round-{task.rework_rounds}.json"
+                metadata = None
             else:
                 raise AgentTurnError("unsupported inline artifact action")
             metadata = self.artifacts.put_json(
@@ -257,6 +287,7 @@ class AgentTurnRunner:
                 type=artifact_type,
                 created_by=member.name,
                 filename=filename,
+                metadata=metadata,
             )
             references.append(
                 ArtifactReference.from_metadata(
@@ -318,9 +349,28 @@ class AgentTurnRunner:
                     "artifact_ids": ["UUID"],
                     "artifact_content": "small JSON for share_plan or approve_review",
                     "reply_to": "UUID required for answer_question",
+                    "supersedes_artifact_id": "latest Plan UUID for a revised plan",
+                    "addresses_message_ids": [
+                        "question UUIDs resolved by a revised plan"
+                    ],
                 }
             ]
         }
+        plan_history = [
+            {
+                "version": revision.version,
+                "artifact_id": str(revision.artifact_id),
+                "supersedes_artifact_id": (
+                    str(revision.supersedes_artifact_id)
+                    if revision.supersedes_artifact_id
+                    else None
+                ),
+                "addresses_message_ids": [
+                    str(item) for item in revision.addresses_message_ids
+                ],
+            }
+            for revision in self.rooms.list_plan_revisions(incoming[-1].message.room_id)
+        ]
         return (
             "You are participating in a controlled CodeCrew task room. "
             "Return only one JSON object matching the action schema. "
@@ -329,6 +379,7 @@ class AgentTurnRunner:
             f"Your member_id: {member_id}\n"
             f"Room members:\n{json.dumps(roster, ensure_ascii=False)}\n\n"
             f"New messages:\n{json.dumps(messages, ensure_ascii=False)}\n\n"
+            f"Plan history:\n{json.dumps(plan_history, ensure_ascii=False)}\n\n"
             f"Action schema:\n{json.dumps(schema, ensure_ascii=False)}"
         )
 

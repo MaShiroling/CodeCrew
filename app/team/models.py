@@ -142,6 +142,8 @@ class ChatMessage(BaseModel):
     artifacts: tuple[ArtifactReference, ...] = Field(
         default=(), max_length=MAX_CHAT_ARTIFACTS
     )
+    supersedes_artifact_id: UUID | None = None
+    addresses_message_ids: tuple[UUID, ...] = Field(default=(), max_length=50)
     reply_to: UUID | None = None
     correlation_id: UUID = Field(default_factory=uuid4)
     causation_id: UUID | None = None
@@ -159,7 +161,29 @@ class ChatMessage(BaseModel):
         artifact_ids = [item.artifact_id for item in self.artifacts]
         if len(artifact_ids) != len(set(artifact_ids)):
             raise ValueError("artifact references must be unique")
+        if len(self.addresses_message_ids) != len(set(self.addresses_message_ids)):
+            raise ValueError("addressed message IDs must be unique")
+        if self.type is not MessageType.PLAN_SHARED and (
+            self.supersedes_artifact_id is not None or self.addresses_message_ids
+        ):
+            raise ValueError("plan revision fields are only valid for plan_shared messages")
         return self
+
+
+class PlanRevision(BaseModel):
+    """One immutable, task-scoped version in the implementation plan chain."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    room_id: UUID
+    task_id: UUID
+    trace_id: UUID
+    version: int = Field(gt=0)
+    artifact_id: UUID
+    message_id: UUID
+    supersedes_artifact_id: UUID | None = None
+    addresses_message_ids: tuple[UUID, ...] = ()
+    created_at: AwareDatetime
 
 
 class MessageDeliveryStatus(str, Enum):

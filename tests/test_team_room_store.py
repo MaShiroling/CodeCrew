@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from app.storage import SQLiteDatabase
+from app.storage import ArtifactReference, ArtifactType, SQLiteDatabase
 from app.team import (
     ChatIdempotencyConflictError,
     ChatMessage,
@@ -81,7 +81,93 @@ def test_room_and_members_persist_across_restart(tmp_path: Path) -> None:
     reopened.initialize()
 
     assert reopened.get_room(room.room_id) == room
-    assert reopened.database.schema_version == 3
+    assert reopened.database.schema_version == 5
+
+
+def test_plan_revisions_form_an_immutable_clarification_chain(tmp_path: Path) -> None:
+    store, room, planner, implementer, _ = make_context(tmp_path)
+    first_artifact = ArtifactReference(
+        artifact_id=uuid4(),
+        type=ArtifactType.PLAN,
+        sha256="a" * 64,
+        summary="initial plan",
+    )
+    first = store.append_message(
+        message(
+            room,
+            planner,
+            implementer,
+            type=MessageType.PLAN_SHARED,
+            artifacts=(first_artifact,),
+        ),
+        recipient_ids=(implementer.member_id,),
+    )
+    question = store.append_message(
+        message(room, implementer, planner),
+        recipient_ids=(planner.member_id,),
+    )
+    second_artifact = ArtifactReference(
+        artifact_id=uuid4(),
+        type=ArtifactType.PLAN,
+        sha256="b" * 64,
+        summary="revised plan",
+    )
+    second = store.append_message(
+        message(
+            room,
+            planner,
+            implementer,
+            type=MessageType.PLAN_SHARED,
+            artifacts=(second_artifact,),
+            supersedes_artifact_id=first_artifact.artifact_id,
+            addresses_message_ids=(question.message.message_id,),
+        ),
+        recipient_ids=(implementer.member_id,),
+    )
+
+    revisions = store.list_plan_revisions(room.room_id)
+
+    assert [revision.version for revision in revisions] == [1, 2]
+    assert revisions[0].message_id == first.message.message_id
+    assert revisions[1].message_id == second.message.message_id
+    assert revisions[1].supersedes_artifact_id == first_artifact.artifact_id
+    assert revisions[1].addresses_message_ids == (question.message.message_id,)
+    assert store.latest_plan_revision(room.room_id) == revisions[1]
+
+
+def test_revised_plan_must_supersede_latest_and_address_a_question(
+    tmp_path: Path,
+) -> None:
+    store, room, planner, implementer, _ = make_context(tmp_path)
+    first_artifact = ArtifactReference(
+        artifact_id=uuid4(), type=ArtifactType.PLAN, sha256="a" * 64, summary="v1"
+    )
+    store.append_message(
+        message(
+            room,
+            planner,
+            implementer,
+            type=MessageType.PLAN_SHARED,
+            artifacts=(first_artifact,),
+        ),
+        recipient_ids=(implementer.member_id,),
+    )
+    invalid_artifact = ArtifactReference(
+        artifact_id=uuid4(), type=ArtifactType.PLAN, sha256="b" * 64, summary="v2"
+    )
+
+    with pytest.raises(RoomConflictError, match="must address"):
+        store.append_message(
+            message(
+                room,
+                planner,
+                implementer,
+                type=MessageType.PLAN_SHARED,
+                artifacts=(invalid_artifact,),
+                supersedes_artifact_id=first_artifact.artifact_id,
+            ),
+            recipient_ids=(implementer.member_id,),
+        )
 
 
 def test_incremental_message_read_and_per_recipient_ack(tmp_path: Path) -> None:

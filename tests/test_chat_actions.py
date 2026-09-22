@@ -98,3 +98,26 @@ def test_parser_rejects_non_json_and_unknown_fields() -> None:
                 ]
             }
         )
+
+
+def test_plan_revision_fields_are_scoped_to_share_plan() -> None:
+    question_id = uuid4()
+    previous_plan_id = uuid4()
+    revision = AgentChatAction(
+        action=ChatActionType.SHARE_PLAN,
+        recipient=recipient(),
+        content="revised plan",
+        artifact_content={"steps": ["clarified change"]},
+        supersedes_artifact_id=previous_plan_id,
+        addresses_message_ids=(question_id,),
+    )
+
+    assert revision.supersedes_artifact_id == previous_plan_id
+    assert revision.addresses_message_ids == (question_id,)
+    with pytest.raises(ValidationError, match="only allowed for share_plan"):
+        AgentChatAction(
+            action=ChatActionType.SEND_MESSAGE,
+            recipient=recipient(),
+            content="invalid",
+            addresses_message_ids=(question_id,),
+        )

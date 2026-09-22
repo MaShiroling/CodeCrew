@@ -300,3 +300,112 @@ async def test_turn_can_resume_native_agent_session(tmp_path: Path) -> None:
 
     assert result.session.native_session_id == "native-thread-1"
     assert adapter.requests[0].resume_from_session_id == "native-thread-1"
+
+
+@pytest.mark.asyncio
+async def test_planner_answers_clarification_and_publishes_versioned_plan(
+    tmp_path: Path,
+) -> None:
+    scenario = FakeAgentScenario()
+    runner, router, rooms, artifacts, _, task, room, members = make_context(
+        tmp_path, scenario
+    )
+    planner = members[MemberRole.PLANNER]
+    implementer = members[MemberRole.IMPLEMENTER]
+    initial_metadata = artifacts.put_json(
+        {"steps": ["use an unspecified fallback"]},
+        task_id=task.id,
+        trace_id=task.trace_id,
+        type=ArtifactType.PLAN,
+        created_by="planner",
+        filename="plan-v1.json",
+    )
+    router.route(
+        ChatMessage(
+            room_id=room.room_id,
+            task_id=task.id,
+            trace_id=task.trace_id,
+            sender_id=planner.member_id,
+            recipients=(
+                MessageRecipient(
+                    kind=RecipientKind.MEMBER, member_id=implementer.member_id
+                ),
+            ),
+            type=MessageType.PLAN_SHARED,
+            content="Initial plan",
+            artifacts=(
+                artifacts.get_reference(
+                    initial_metadata.artifact_id, summary="Initial plan"
+                ),
+            ),
+            idempotency_key="initial-plan",
+        ),
+        authenticated_sender_id=planner.member_id,
+    )
+    question = router.route(
+        ChatMessage(
+            room_id=room.room_id,
+            task_id=task.id,
+            trace_id=task.trace_id,
+            sender_id=implementer.member_id,
+            recipients=(
+                MessageRecipient(kind=RecipientKind.MEMBER, member_id=planner.member_id),
+            ),
+            type=MessageType.QUESTION,
+            content="Which fallback should the implementation use?",
+            idempotency_key="clarification-question",
+        ),
+        authenticated_sender_id=implementer.member_id,
+    )
+    planner_adapter = FakeAgentAdapter(
+        FakeAgentScenario(
+            output={
+                "actions": [
+                    {
+                        "action": "answer_question",
+                        "recipient": {"kind": "role", "role": "implementer"},
+                        "content": "Use the repository's existing default.",
+                        "reply_to": str(question.message.message_id),
+                    },
+                    {
+                        "action": "share_plan",
+                        "recipient": {"kind": "role", "role": "implementer"},
+                        "content": "Plan revised after clarification",
+                        "artifact_content": {
+                            "steps": ["reuse existing default", "run regression tests"]
+                        },
+                    },
+                    {"action": "finish_turn", "content": "Clarification resolved"},
+                ]
+            }
+        ),
+        name="fake-planner",
+        capabilities=frozenset({AgentCapability.REPOSITORY_ANALYSIS}),
+    )
+    runner.registry.register(
+        planner_adapter,
+        roles={AgentRole.PLANNER},
+        permission_modes={PermissionMode.READ_ONLY},
+    )
+
+    result = await runner.run(
+        task,
+        room_id=room.room_id,
+        member_id=planner.member_id,
+        agent_name="fake-planner",
+        working_directory=tmp_path,
+    )
+
+    assert [item.message.type for item in result.routed_messages] == [
+        MessageType.ANSWER,
+        MessageType.PLAN_SHARED,
+    ]
+    revisions = rooms.list_plan_revisions(room.room_id)
+    assert [revision.version for revision in revisions] == [1, 2]
+    assert revisions[1].supersedes_artifact_id == initial_metadata.artifact_id
+    assert revisions[1].addresses_message_ids == (question.message.message_id,)
+    assert artifacts.get_metadata(revisions[1].artifact_id).metadata == {
+        "plan_version": "2",
+        "supersedes_artifact_id": str(initial_metadata.artifact_id),
+    }
+    assert str(initial_metadata.artifact_id) in planner_adapter.requests[0].prompt

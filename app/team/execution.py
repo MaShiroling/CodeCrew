@@ -148,6 +148,11 @@ class WorkflowDirectiveExecutor:
                 raise WorkflowExecutionError(
                     f"cannot run a turn for non-Agent member {member.name}"
                 )
+            # Multiple messages produced by one Agent turn can each request a wake-up.
+            # The first wake consumes the complete pending batch, so later directives
+            # are intentionally coalesced instead of failing with "no pending messages".
+            if not self.turns.rooms.pending_for(member.member_id, limit=1):
+                continue
             try:
                 agent_name = runtime.agent_names[member.role]
             except KeyError as exc:
