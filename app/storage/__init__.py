@@ -14,9 +14,20 @@ from app.storage.sqlite import (
     SQLiteDatabase,
     SQLiteStorageError,
 )
+from app.storage.tasks import (
+    TASK_REPOSITORY_MIGRATIONS,
+    StaleTaskRevisionError,
+    TaskConflictError,
+    TaskNotFoundError,
+    TaskRepository,
+    TaskRepositoryError,
+    TaskRepositoryIntegrityError,
+    TaskSnapshot,
+)
 
 __all__ = [
     "ARTIFACT_STORE_MIGRATIONS",
+    "TASK_REPOSITORY_MIGRATIONS",
     "ArtifactIntegrityError",
     "ArtifactMetadata",
     "ArtifactNotFoundError",
@@ -28,4 +39,11 @@ __all__ = [
     "MigrationConflictError",
     "SQLiteDatabase",
     "SQLiteStorageError",
+    "StaleTaskRevisionError",
+    "TaskConflictError",
+    "TaskNotFoundError",
+    "TaskRepository",
+    "TaskRepositoryError",
+    "TaskRepositoryIntegrityError",
+    "TaskSnapshot",
 ]

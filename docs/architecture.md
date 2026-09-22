@@ -25,6 +25,8 @@ state transitions.
   Concrete Claude Code, Codex CLI, and fake adapters arrive in milestone two.
 - `AgentRegistry`: capabilities, permissions, availability, and concurrency limits.
 - `Orchestrator`: the sole writer of task state, applying explicit legal transitions.
+- `TaskRepository`: stores detached Task snapshots in SQLite. Every save requires the caller's
+  expected revision, preventing stale recovery workers from overwriting newer state.
 - `TeamRoomStore`: durable rooms, members, messages, reply threads, cursors, recipient ACKs, and
   versioned Plan revisions linked to clarification questions.
 - `ConversationRouter`: authenticates senders, enforces role routes and privileged message types,
@@ -61,6 +63,7 @@ outer-layer implementations. This keeps fake adapters and in-memory stores usabl
 
 ## Current exclusions
 
-Restart-safe recovery of in-memory verification evidence, SSE streaming, the complete task API,
-and the evaluation runner are not implemented yet. Reviewer rejection can trigger at most two
-bounded rework rounds; budget exhaustion deterministically routes the task to `needs_human`.
+Task snapshots are durable, but reconstruction of runtime context and in-memory verification
+evidence is not implemented yet. SSE streaming, the complete task API, and the evaluation runner
+also remain future work. Reviewer rejection can trigger at most two bounded rework rounds; budget
+exhaustion deterministically routes the task to `needs_human`.

@@ -45,6 +45,8 @@ Codex CLI Implementer（独立 Git Worktree）
 ### 任务与 Agent 运行时
 
 - 软件任务状态模型和合法状态跳转检查
+- SQLite `TaskRepository` 持久化完整任务快照、状态、返工轮次和 metadata
+- 单调递增 revision 与乐观锁，阻止恢复进程或并发写入静默覆盖新状态
 - Provider-neutral `AgentAdapter` 接口
 - Claude Code 只读 Adapter
 - Codex CLI 受限工作区 Adapter
@@ -195,10 +197,8 @@ flowchart TB
 
 以下内容仍属于开发计划，不能视为现有功能：
 
-- Planner 输出解析与 Plan 服务
 - 进程重启后恢复内存中的 VerificationReport 和运行队列
-- 进程重启后的任务恢复
-- Task、Trace 和 Event 的完整持久化
+- 运行上下文、Trace 和 Event 的完整持久化与自动恢复
 - SSE 实时事件和完整任务 API
 - CLI 产品入口与任务控制台
 - 12～15 条正式编码评测集
@@ -323,7 +323,13 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段五点五之五 A：Planner ↔ Implementer 澄清与 Plan 版本管理
 - [x] 阶段五点五之五 B：Reviewer ↔ Implementer 对话式返工
 - [x] 阶段五点五之五 C：对话预算与死循环保护
-- [ ] 阶段六：Trace、SSE、任务 API、CLI 和端到端 MVP
+- [x] 阶段六之一：TaskRepository 与乐观锁
+- [ ] 阶段六之二：运行上下文持久化
+- [ ] 阶段六之三：TraceStore 与统一事件记录
+- [ ] 阶段六之四：验证证据恢复
+- [ ] 阶段六之五：Workflow Recovery Coordinator
+- [ ] 阶段六之六：崩溃恢复集成测试
+- [ ] 阶段六后续：SSE、任务 API、CLI 和端到端 MVP
 - [ ] 阶段七：多语言编码任务评测集
 - [ ] 阶段八：单 Agent / 多 Agent 对照实验与指标报告
 
