@@ -8,6 +8,14 @@ from app.team.actions import (
     ChatActionType,
     parse_agent_chat_turn,
 )
+from app.team.controller import (
+    WORKFLOW_CONTROLLER_MIGRATIONS,
+    WorkflowController,
+    WorkflowControllerError,
+    WorkflowDecision,
+    WorkflowDirective,
+    WorkflowDirectiveKind,
+)
 from app.team.models import (
     MAX_CHAT_ARTIFACTS,
     MAX_CHAT_CONTENT_CHARS,
@@ -51,6 +59,7 @@ __all__ = [
     "MAX_CHAT_CONTENT_CHARS",
     "MAX_CHAT_RECIPIENTS",
     "TEAM_ROOM_MIGRATIONS",
+    "WORKFLOW_CONTROLLER_MIGRATIONS",
     "AgentChatAction",
     "AgentChatTurn",
     "AgentTurnError",
@@ -83,5 +92,10 @@ __all__ = [
     "TeamRoom",
     "TeamRoomStore",
     "TeamRoomStoreError",
+    "WorkflowController",
+    "WorkflowControllerError",
+    "WorkflowDecision",
+    "WorkflowDirective",
+    "WorkflowDirectiveKind",
     "parse_agent_chat_turn",
 ]

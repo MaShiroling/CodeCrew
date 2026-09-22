@@ -30,6 +30,8 @@ workflow controller consumes these room events directly.
 - `AgentTurnRunner`: consumes pending room messages, leases a role-compatible adapter, captures
   normalized stream events, parses structured actions, routes them, and acknowledges inputs only
   after the complete turn succeeds.
+- `WorkflowController`: idempotently reduces persisted room events into legal Task transitions and
+  explicit directives to wake Agents, run Verifier or CompletionGuard, or request human input.
 - `AgentReviewerRunner`: starts a fresh read-only review session per attempt and validates its
   structured JSON result before the orchestrator persists it as evidence.
 - `HandoffEnvelope`: versioned A2A message carrying small structured payloads and artifact IDs,

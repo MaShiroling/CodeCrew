@@ -73,8 +73,10 @@ _MESSAGE_TYPES = {
     ChatActionType.ASK_QUESTION: MessageType.QUESTION,
     ChatActionType.ANSWER_QUESTION: MessageType.ANSWER,
     ChatActionType.SHARE_ARTIFACT: MessageType.ARTIFACT_SHARED,
+    ChatActionType.SHARE_PLAN: MessageType.PLAN_SHARED,
     ChatActionType.REPORT_PROGRESS: MessageType.STATUS_UPDATE,
-    ChatActionType.REQUEST_REVIEW: MessageType.REVIEW_REQUEST,
+    ChatActionType.REQUEST_REVIEW: MessageType.IMPLEMENTATION_READY,
+    ChatActionType.APPROVE_REVIEW: MessageType.REVIEW_APPROVED,
     ChatActionType.REQUEST_REWORK: MessageType.REWORK_REQUEST,
     ChatActionType.REQUEST_HUMAN_INPUT: MessageType.HUMAN_INPUT_REQUEST,
 }
@@ -270,8 +272,8 @@ class AgentTurnRunner:
             "actions": [
                 {
                     "action": "send_message | ask_question | answer_question | "
-                    "share_artifact | report_progress | request_review | "
-                    "request_rework | request_human_input | finish_turn",
+                    "share_artifact | share_plan | report_progress | request_review | "
+                    "approve_review | request_rework | request_human_input | finish_turn",
                     "recipient": {
                         "kind": "member | role | room",
                         "member_id": "UUID only for member",

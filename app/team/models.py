@@ -32,14 +32,21 @@ class MemberKind(str, Enum):
 
 
 class MessageType(str, Enum):
+    ISSUE_POSTED = "issue_posted"
     MESSAGE = "message"
     QUESTION = "question"
     ANSWER = "answer"
     STATUS_UPDATE = "status_update"
     ARTIFACT_SHARED = "artifact_shared"
+    PLAN_SHARED = "plan_shared"
+    IMPLEMENTATION_READY = "implementation_ready"
     REVIEW_COMMENT = "review_comment"
     REVIEW_REQUEST = "review_request"
+    REVIEW_APPROVED = "review_approved"
     REWORK_REQUEST = "rework_request"
+    VERIFICATION_READY = "verification_ready"
+    COMPLETION_PASSED = "completion_passed"
+    COMPLETION_REJECTED = "completion_rejected"
     HUMAN_INPUT_REQUEST = "human_input_request"
     SYSTEM_EVENT = "system_event"
 

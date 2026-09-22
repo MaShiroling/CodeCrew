@@ -1,6 +1,11 @@
 from uuid import UUID
 
-from app.storage import ArtifactIntegrityError, ArtifactNotFoundError, ArtifactStore
+from app.storage import (
+    ArtifactIntegrityError,
+    ArtifactNotFoundError,
+    ArtifactStore,
+    ArtifactType,
+)
 from app.team.models import (
     ChatMessage,
     MemberKind,
@@ -30,11 +35,20 @@ class ConversationArtifactError(ConversationRoutingError):
 
 
 _ALLOWED_ROUTES: dict[MemberRole, frozenset[MemberRole]] = {
-    MemberRole.PLANNER: frozenset({MemberRole.IMPLEMENTER, MemberRole.HUMAN}),
-    MemberRole.IMPLEMENTER: frozenset(
-        {MemberRole.PLANNER, MemberRole.REVIEWER, MemberRole.HUMAN}
+    MemberRole.PLANNER: frozenset(
+        {MemberRole.IMPLEMENTER, MemberRole.ORCHESTRATOR, MemberRole.HUMAN}
     ),
-    MemberRole.REVIEWER: frozenset({MemberRole.IMPLEMENTER, MemberRole.HUMAN}),
+    MemberRole.IMPLEMENTER: frozenset(
+        {
+            MemberRole.PLANNER,
+            MemberRole.REVIEWER,
+            MemberRole.ORCHESTRATOR,
+            MemberRole.HUMAN,
+        }
+    ),
+    MemberRole.REVIEWER: frozenset(
+        {MemberRole.IMPLEMENTER, MemberRole.ORCHESTRATOR, MemberRole.HUMAN}
+    ),
     MemberRole.VERIFIER: frozenset(
         {
             MemberRole.IMPLEMENTER,
@@ -127,6 +141,11 @@ class ConversationRouter:
     ) -> None:
         if message.type is MessageType.SYSTEM_EVENT and sender.kind is not MemberKind.SYSTEM:
             raise RouteNotAllowedError("only a system identity may send system events")
+        if message.type is MessageType.ISSUE_POSTED and sender.role not in {
+            MemberRole.HUMAN,
+            MemberRole.ORCHESTRATOR,
+        }:
+            raise RouteNotAllowedError("only human or orchestrator may post an issue")
         if message.type is MessageType.REVIEW_COMMENT and sender.role is not MemberRole.REVIEWER:
             raise RouteNotAllowedError("only a reviewer may send review comments")
         if message.type is MessageType.REWORK_REQUEST and sender.role not in {
@@ -134,12 +153,48 @@ class ConversationRouter:
             MemberRole.ORCHESTRATOR,
         }:
             raise RouteNotAllowedError("only reviewer or orchestrator may request rework")
+        if message.type is MessageType.REVIEW_APPROVED and sender.role is not MemberRole.REVIEWER:
+            raise RouteNotAllowedError("only a reviewer may approve a review")
+        if message.type is MessageType.VERIFICATION_READY and sender.role is not MemberRole.VERIFIER:
+            raise RouteNotAllowedError("only verifier may publish verification evidence")
+        if message.type in {
+            MessageType.COMPLETION_PASSED,
+            MessageType.COMPLETION_REJECTED,
+        } and sender.role is not MemberRole.ORCHESTRATOR:
+            raise RouteNotAllowedError("only orchestrator may publish completion decisions")
         if message.type is MessageType.HUMAN_INPUT_REQUEST and not any(
             recipient.role is MemberRole.HUMAN for recipient in recipients
         ):
             raise RouteNotAllowedError("human input requests must target a human member")
         if message.type is MessageType.ARTIFACT_SHARED and not message.artifacts:
             raise RouteNotAllowedError("artifact_shared messages require an artifact reference")
+        if message.type is MessageType.PLAN_SHARED:
+            if sender.role is not MemberRole.PLANNER:
+                raise RouteNotAllowedError("only planner may publish a plan")
+            if not any(
+                reference.type is ArtifactType.PLAN for reference in message.artifacts
+            ):
+                raise RouteNotAllowedError("plan_shared requires a plan artifact")
+        if (
+            message.type is MessageType.IMPLEMENTATION_READY
+            and sender.role is not MemberRole.IMPLEMENTER
+        ):
+            raise RouteNotAllowedError(
+                "only implementer may declare implementation ready"
+            )
+        required_artifact_types = {
+            MessageType.VERIFICATION_READY: ArtifactType.VERIFICATION_REPORT,
+            MessageType.REVIEW_APPROVED: ArtifactType.REVIEW_REPORT,
+            MessageType.COMPLETION_PASSED: ArtifactType.COMPLETION_DECISION,
+            MessageType.COMPLETION_REJECTED: ArtifactType.COMPLETION_DECISION,
+        }
+        required_type = required_artifact_types.get(message.type)
+        if required_type is not None and not any(
+            reference.type is required_type for reference in message.artifacts
+        ):
+            raise RouteNotAllowedError(
+                f"{message.type.value} requires a {required_type.value} artifact"
+            )
 
     def _validate_reply(
         self,

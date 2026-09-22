@@ -37,3 +37,17 @@ retry cannot silently duplicate or change an already persisted action.
 
 Chat actions coordinate work but never complete a task. Task state remains controlled by the
 workflow layer, while Verifier and CompletionGuard remain the only sources of completion evidence.
+
+## Event-driven workflow control
+
+`WorkflowController` consumes only messages already persisted by `ConversationRouter`. Explicit
+events advance the task: issue posting wakes Planner, Plan sharing wakes Implementer,
+implementation readiness schedules Verifier, verification evidence wakes Reviewer, and review
+approval schedules CompletionGuard. Questions and answers wake their concrete recipients without
+changing task state.
+
+Each processed message and its decision are persisted. Re-delivery returns the same decision and
+can replay an unapplied transition after a narrow process interruption. Invalid event ordering is
+rejected. Rework events consume the configured budget and eventually emit a human-input directive.
+The controller currently produces directives; automatic execution of those directives is the next
+integration step.

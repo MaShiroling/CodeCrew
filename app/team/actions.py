@@ -19,8 +19,10 @@ class ChatActionType(str, Enum):
     ASK_QUESTION = "ask_question"
     ANSWER_QUESTION = "answer_question"
     SHARE_ARTIFACT = "share_artifact"
+    SHARE_PLAN = "share_plan"
     REPORT_PROGRESS = "report_progress"
     REQUEST_REVIEW = "request_review"
+    APPROVE_REVIEW = "approve_review"
     REQUEST_REWORK = "request_rework"
     REQUEST_HUMAN_INPUT = "request_human_input"
     FINISH_TURN = "finish_turn"
@@ -47,8 +49,12 @@ class AgentChatAction(BaseModel):
             raise ValueError("chat actions require content")
         if self.action is ChatActionType.ANSWER_QUESTION and self.reply_to is None:
             raise ValueError("answer_question requires reply_to")
-        if self.action is ChatActionType.SHARE_ARTIFACT and not self.artifact_ids:
-            raise ValueError("share_artifact requires artifact_ids")
+        if self.action in {
+            ChatActionType.SHARE_ARTIFACT,
+            ChatActionType.SHARE_PLAN,
+            ChatActionType.APPROVE_REVIEW,
+        } and not self.artifact_ids:
+            raise ValueError(f"{self.action.value} requires artifact_ids")
         if len(self.artifact_ids) != len(set(self.artifact_ids)):
             raise ValueError("artifact_ids must be unique")
         return self
