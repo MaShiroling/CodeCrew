@@ -1,12 +1,19 @@
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
+from app.agents import AgentRole
 from app.config import get_settings
 from app.orchestration.models import Task, TaskState
-from app.storage import ArtifactReference, ArtifactStore, ArtifactType
+from app.storage import (
+    AgentRuntimeBinding,
+    ArtifactReference,
+    ArtifactStore,
+    ArtifactType,
+    WorkflowRuntimeContext,
+)
 from app.team.budgets import (
     ConversationBudgetGuard,
     ConversationBudgetPolicy,
@@ -54,8 +61,52 @@ class WorkflowRuntime:
     worktree: WorktreeHandle
     verification_plan: VerificationPlan
     agent_names: dict[MemberRole, str]
+    native_session_ids: dict[MemberRole, str] = field(default_factory=dict)
     latest_verification: VerificationReport | None = None
     latest_completion: CompletionDecision | None = None
+
+    def to_context(self) -> WorkflowRuntimeContext:
+        return WorkflowRuntimeContext(
+            task_id=self.task.id,
+            trace_id=self.task.trace_id,
+            room_id=self.room_id,
+            worktree=self.worktree,
+            verification_plan=self.verification_plan,
+            agent_bindings=tuple(
+                AgentRuntimeBinding(
+                    role=AgentRole(role.value),
+                    agent_name=name,
+                    native_session_id=self.native_session_ids.get(role),
+                )
+                for role, name in sorted(
+                    self.agent_names.items(), key=lambda item: item[0].value
+                )
+            ),
+        )
+
+    @classmethod
+    def from_context(
+        cls, task: Task, context: WorkflowRuntimeContext
+    ) -> "WorkflowRuntime":
+        if context.task_id != task.id or context.trace_id != task.trace_id:
+            raise WorkflowExecutionError(
+                "persisted runtime context belongs to another task or trace"
+            )
+        return cls(
+            task=task,
+            room_id=context.room_id,
+            worktree=context.worktree,
+            verification_plan=context.verification_plan,
+            agent_names={
+                MemberRole(binding.role.value): binding.agent_name
+                for binding in context.agent_bindings
+            },
+            native_session_ids={
+                MemberRole(binding.role.value): binding.native_session_id
+                for binding in context.agent_bindings
+                if binding.native_session_id is not None
+            },
+        )
 
 
 class DirectiveExecutionResult(BaseModel):
@@ -189,7 +240,10 @@ class WorkflowDirectiveExecutor:
                 member_id=member.member_id,
                 agent_name=agent_name,
                 working_directory=runtime.worktree.worktree_path,
+                resume_native_session_id=runtime.native_session_ids.get(member.role),
             )
+            if turn.session.native_session_id is not None:
+                runtime.native_session_ids[member.role] = turn.session.native_session_id
             turns.append(turn)
             events.extend(turn.routed_messages)
             self.budget_guard.record_turn(

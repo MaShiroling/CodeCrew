@@ -147,7 +147,12 @@ async def test_event_loop_runs_agents_verifier_and_completion_guard(tmp_path: Pa
             }
         ),
         name="fake-planner",
-        capabilities=frozenset({AgentCapability.REPOSITORY_ANALYSIS}),
+        capabilities=frozenset(
+            {
+                AgentCapability.REPOSITORY_ANALYSIS,
+                AgentCapability.SESSION_RESUME,
+            }
+        ),
     )
     implementer = FakeAgentAdapter(
         FakeAgentScenario(
@@ -163,7 +168,9 @@ async def test_event_loop_runs_agents_verifier_and_completion_guard(tmp_path: Pa
             }
         ),
         name="fake-implementer",
-        capabilities=frozenset({AgentCapability.CODE_EDIT}),
+        capabilities=frozenset(
+            {AgentCapability.CODE_EDIT, AgentCapability.SESSION_RESUME}
+        ),
     )
     reviewer = FakeAgentAdapter(
         FakeAgentScenario(
@@ -180,7 +187,9 @@ async def test_event_loop_runs_agents_verifier_and_completion_guard(tmp_path: Pa
             }
         ),
         name="fake-reviewer",
-        capabilities=frozenset({AgentCapability.CODE_REVIEW}),
+        capabilities=frozenset(
+            {AgentCapability.CODE_REVIEW, AgentCapability.SESSION_RESUME}
+        ),
     )
     registry = AgentRegistry()
     registry.register(
@@ -251,6 +260,11 @@ async def test_event_loop_runs_agents_verifier_and_completion_guard(tmp_path: Pa
             MemberRole.IMPLEMENTER: implementer.name,
             MemberRole.REVIEWER: reviewer.name,
         },
+        native_session_ids={
+            MemberRole.PLANNER: "planner-native-1",
+            MemberRole.IMPLEMENTER: "implementer-native-1",
+            MemberRole.REVIEWER: "reviewer-native-1",
+        },
     )
 
     result = await loop.run(runtime, (issue,))
@@ -265,6 +279,9 @@ async def test_event_loop_runs_agents_verifier_and_completion_guard(tmp_path: Pa
     assert runtime.latest_completion.passed
     usage = executor.budget_guard.usage(task.id, room_id=room_id)
     assert usage.agent_turns == 3
+    assert planner.requests[0].resume_from_session_id == "planner-native-1"
+    assert implementer.requests[0].resume_from_session_id == "implementer-native-1"
+    assert reviewer.requests[0].resume_from_session_id == "reviewer-native-1"
     types = [
         item.message.type for item in rooms.list_messages(room_id)
     ]
