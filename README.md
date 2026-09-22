@@ -8,7 +8,8 @@ CodeCrew 是一个面向软件变更任务的独立开源项目。它把 Claude 
 Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不建设通用聊天或陪伴平台。
 
 > 当前状态：底层协作、隔离执行、验证、完成守卫、独立只读 Reviewer、最多两轮
-> 返工闭环，以及 TeamRoom 基础通信层已实现；事件驱动控制器和产品入口仍在开发中。
+> 返工闭环、TeamRoom 基础通信层和 AgentTurnRunner 已实现；事件驱动控制器和
+> 产品入口仍在开发中。
 
 ## 目标工作流
 
@@ -102,6 +103,9 @@ Codex CLI Implementer（独立 Git Worktree）
 - 消息幂等写入与并发写入保护
 - `ConversationRouter` 身份校验和角色通信矩阵
 - 系统消息防伪、回复因果约束及 Artifact 完整性校验
+- 严格的 Agent 聊天动作 JSON 协议
+- `AgentTurnRunner` 增量读取消息、启动/恢复会话并收集流式事件
+- 动作全部路由成功后才 ACK，失败输入保留待重试
 
 ## 完成守卫
 
@@ -300,7 +304,8 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段五之三：Orchestrator 单轮主状态机
 - [x] 阶段五之四：独立 Reviewer 执行与两轮返工循环
 - [x] 阶段五点五之一：TeamRoom 通信模型、SQLite Store 和 ConversationRouter
-- [ ] 阶段五点五之二：Agent 聊天动作、TurnRunner 和事件驱动控制器
+- [x] 阶段五点五之二：Agent 聊天动作协议与 AgentTurnRunner
+- [ ] 阶段五点五之三：事件驱动 WorkflowController
 - [ ] 阶段六：Trace、SSE、任务 API、CLI 和端到端 MVP
 - [ ] 阶段七：多语言编码任务评测集
 - [ ] 阶段八：单 Agent / 多 Agent 对照实验与指标报告
@@ -309,6 +314,7 @@ docs/                # 架构和 Adapter 文档
 
 - [MVP 架构与边界](docs/architecture.md)
 - [Agent Adapter 生命周期与安全说明](docs/agent-adapters.md)
+- [TeamRoom 与 Agent 对话执行](docs/team-rooms.md)
 
 ## License
 

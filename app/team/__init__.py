@@ -43,6 +43,7 @@ from app.team.store import (
     TeamRoomStore,
     TeamRoomStoreError,
 )
+from app.team.turns import AgentTurnError, AgentTurnResult, AgentTurnRunner
 
 __all__ = [
     "MAX_ACTIONS_PER_TURN",
@@ -52,6 +53,9 @@ __all__ = [
     "TEAM_ROOM_MIGRATIONS",
     "AgentChatAction",
     "AgentChatTurn",
+    "AgentTurnError",
+    "AgentTurnResult",
+    "AgentTurnRunner",
     "ChatActionError",
     "ChatActionType",
     "ChatIdempotencyConflictError",

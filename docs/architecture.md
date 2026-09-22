@@ -27,6 +27,9 @@ workflow controller consumes these room events directly.
 - `TeamRoomStore`: durable rooms, members, messages, reply threads, cursors, and recipient ACKs.
 - `ConversationRouter`: authenticates senders, enforces role routes and privileged message types,
   resolves recipients, and validates attached Artifact integrity before persistence.
+- `AgentTurnRunner`: consumes pending room messages, leases a role-compatible adapter, captures
+  normalized stream events, parses structured actions, routes them, and acknowledges inputs only
+  after the complete turn succeeds.
 - `AgentReviewerRunner`: starts a fresh read-only review session per attempt and validates its
   structured JSON result before the orchestrator persists it as evidence.
 - `HandoffEnvelope`: versioned A2A message carrying small structured payloads and artifact IDs,
