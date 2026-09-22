@@ -7,8 +7,8 @@ CodeCrew 是一个面向软件变更任务的独立开源项目。它把 Claude 
 项目受 Clowder AI 的异构 Agent 团队思想启发，但从零独立实现，不复制其代码、
 Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不建设通用聊天或陪伴平台。
 
-> 当前状态：底层协作、隔离执行、验证与完成守卫已经实现；完整 Orchestrator
-> 和 Planner → Implementer → Verifier → Reviewer 自动工作流仍在开发中。
+> 当前状态：底层协作、隔离执行、验证、完成守卫和单轮 Orchestrator 已实现；
+> Reviewer 实际执行适配与最多两轮返工循环仍在开发中。
 
 ## 目标工作流
 
@@ -288,7 +288,7 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段四：Git Worktree、变更收集、权限和命令审计
 - [x] 阶段五之一：确定性 Verifier
 - [x] 阶段五之二：CompletionGuard 与 Reviewer 数据契约
-- [ ] 阶段五之三：Orchestrator 主状态机
+- [x] 阶段五之三：Orchestrator 单轮主状态机
 - [ ] 阶段五之四：Reviewer 执行与返工循环
 - [ ] 阶段六：Trace、SSE、任务 API、CLI 和端到端 MVP
 - [ ] 阶段七：多语言编码任务评测集

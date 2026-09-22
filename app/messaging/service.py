@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from uuid import UUID
 
 from app.messaging.mailbox import Mailbox
 from app.messaging.models import HandoffEnvelope, HandoffParty, MailboxMessage
@@ -38,10 +39,16 @@ class HandoffService:
         self.validate_artifacts(envelope)
         return self.mailbox.send(envelope)
 
-    def receive(self, recipient: HandoffParty, *, limit: int = 10) -> HandoffBatch:
+    def receive(
+        self,
+        recipient: HandoffParty,
+        *,
+        task_id: UUID | None = None,
+        limit: int = 10,
+    ) -> HandoffBatch:
         accepted: list[MailboxMessage] = []
         rejected: list[MailboxMessage] = []
-        for message in self.mailbox.receive(recipient, limit=limit):
+        for message in self.mailbox.receive(recipient, task_id=task_id, limit=limit):
             try:
                 self.validate_artifacts(message.envelope)
             except ArtifactReferenceValidationError as exc:

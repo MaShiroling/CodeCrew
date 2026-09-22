@@ -134,18 +134,31 @@ class Mailbox:
             ).fetchone()
         return _message_from_row(row)
 
-    def receive(self, recipient: HandoffParty, *, limit: int = 10) -> tuple[MailboxMessage, ...]:
+    def receive(
+        self,
+        recipient: HandoffParty,
+        *,
+        task_id: UUID | None = None,
+        limit: int = 10,
+    ) -> tuple[MailboxMessage, ...]:
         if limit <= 0:
             raise ValueError("limit must be positive")
         delivered_at = utc_now().isoformat()
         with self.database.transaction() as connection:
+            task_clause = " AND task_id = ?" if task_id is not None else ""
+            parameters: tuple[str | int, ...] = (
+                recipient.value,
+                MailboxMessageStatus.PENDING.value,
+                *((str(task_id),) if task_id is not None else ()),
+                limit,
+            )
             rows = connection.execute(
-                """
+                f"""
                 SELECT sequence FROM mailbox_messages
-                WHERE recipient = ? AND status = ?
+                WHERE recipient = ? AND status = ?{task_clause}
                 ORDER BY sequence LIMIT ?
                 """,
-                (recipient.value, MailboxMessageStatus.PENDING.value, limit),
+                parameters,
             ).fetchall()
             sequences = [row["sequence"] for row in rows]
             if not sequences:
