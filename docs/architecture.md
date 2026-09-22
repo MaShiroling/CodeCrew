@@ -13,12 +13,20 @@ and implement changes; deterministic code owns verification and completion.
 6. The completion guard accepts only verifier evidence plus reviewer approval. Rework is capped
    by configuration and exhaustion moves the task to `needs_human`.
 
+The migration toward event-driven collaboration adds a task-scoped `TeamRoom`. Agents exchange
+typed messages through a `ConversationRouter`; SQLite stores the append-only conversation and
+per-recipient acknowledgements. The existing orchestrator remains authoritative until the future
+workflow controller consumes these room events directly.
+
 ## Key contracts
 
 - `AgentAdapter`: start a role-specific session, stream normalized events, cancel, and resume.
   Concrete Claude Code, Codex CLI, and fake adapters arrive in milestone two.
 - `AgentRegistry`: capabilities, permissions, availability, and concurrency limits.
 - `Orchestrator`: the sole writer of task state, applying explicit legal transitions.
+- `TeamRoomStore`: durable rooms, members, messages, reply threads, cursors, and recipient ACKs.
+- `ConversationRouter`: authenticates senders, enforces role routes and privileged message types,
+  resolves recipients, and validates attached Artifact integrity before persistence.
 - `AgentReviewerRunner`: starts a fresh read-only review session per attempt and validates its
   structured JSON result before the orchestrator persists it as evidence.
 - `HandoffEnvelope`: versioned A2A message carrying small structured payloads and artifact IDs,

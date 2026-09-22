@@ -17,6 +17,13 @@ from app.team.models import (
     StoredChatMessage,
     TeamRoom,
 )
+from app.team.router import (
+    ConversationArtifactError,
+    ConversationRouter,
+    ConversationRoutingError,
+    RouteNotAllowedError,
+    SenderAuthenticationError,
+)
 from app.team.store import (
     TEAM_ROOM_MIGRATIONS,
     ChatIdempotencyConflictError,
@@ -37,6 +44,9 @@ __all__ = [
     "ChatIdempotencyConflictError",
     "ChatMessage",
     "ChatMessageNotFoundError",
+    "ConversationArtifactError",
+    "ConversationRouter",
+    "ConversationRoutingError",
     "InvalidChatAcknowledgementError",
     "MemberKind",
     "MemberNotFoundError",
@@ -50,6 +60,8 @@ __all__ = [
     "RoomMember",
     "RoomNotFoundError",
     "RoomStatus",
+    "RouteNotAllowedError",
+    "SenderAuthenticationError",
     "StoredChatMessage",
     "TeamRoom",
     "TeamRoomStore",

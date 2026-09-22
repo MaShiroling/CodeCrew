@@ -7,8 +7,8 @@ CodeCrew 是一个面向软件变更任务的独立开源项目。它把 Claude 
 项目受 Clowder AI 的异构 Agent 团队思想启发，但从零独立实现，不复制其代码、
 Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不建设通用聊天或陪伴平台。
 
-> 当前状态：底层协作、隔离执行、验证、完成守卫、独立只读 Reviewer 和
-> 最多两轮返工闭环已实现；Planner 服务、持久化 Trace 和产品入口仍在开发中。
+> 当前状态：底层协作、隔离执行、验证、完成守卫、独立只读 Reviewer、最多两轮
+> 返工闭环，以及 TeamRoom 基础通信层已实现；事件驱动控制器和产品入口仍在开发中。
 
 ## 目标工作流
 
@@ -92,6 +92,16 @@ Codex CLI Implementer（独立 Git Worktree）
 - Verification/Review 持久化报告绑定检查
 - Artifact 归属、类型、SHA-256 和 Blob 完整性检查
 - 结构化 `CompletionDecision` Artifact
+
+### TeamRoom 基础通信
+
+- 任务级聊天室、成员身份和 Agent/System/Human 角色模型
+- 普通消息、问题回答、状态、Review、返工和系统事件类型
+- 直接成员、角色和全房间接收者
+- SQLite 消息持久化、逐接收者 ACK、回复线程和游标增量读取
+- 消息幂等写入与并发写入保护
+- `ConversationRouter` 身份校验和角色通信矩阵
+- 系统消息防伪、回复因果约束及 Artifact 完整性校验
 
 ## 完成守卫
 
@@ -260,6 +270,7 @@ app/
 ├── agents/          # Agent 接口、Registry 和 CLI Adapter
 ├── messaging/       # A2A Handoff、Mailbox 和消息完整性
 ├── orchestration/   # Task、Orchestrator、Reviewer 执行与返工调度
+├── team/            # TeamRoom、聊天存储和受控 ConversationRouter
 ├── storage/         # SQLite 与 ArtifactStore
 ├── workspace/       # Worktree、Diff、权限和命令审计
 ├── verification/    # Verifier、Reviewer 契约和 CompletionGuard
@@ -288,6 +299,8 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段五之二：CompletionGuard 与 Reviewer 数据契约
 - [x] 阶段五之三：Orchestrator 单轮主状态机
 - [x] 阶段五之四：独立 Reviewer 执行与两轮返工循环
+- [x] 阶段五点五之一：TeamRoom 通信模型、SQLite Store 和 ConversationRouter
+- [ ] 阶段五点五之二：Agent 聊天动作、TurnRunner 和事件驱动控制器
 - [ ] 阶段六：Trace、SSE、任务 API、CLI 和端到端 MVP
 - [ ] 阶段七：多语言编码任务评测集
 - [ ] 阶段八：单 Agent / 多 Agent 对照实验与指标报告
