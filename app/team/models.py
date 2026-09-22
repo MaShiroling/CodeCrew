@@ -38,6 +38,7 @@ class MessageType(str, Enum):
     STATUS_UPDATE = "status_update"
     ARTIFACT_SHARED = "artifact_shared"
     REVIEW_COMMENT = "review_comment"
+    REVIEW_REQUEST = "review_request"
     REWORK_REQUEST = "rework_request"
     HUMAN_INPUT_REQUEST = "human_input_request"
     SYSTEM_EVENT = "system_event"

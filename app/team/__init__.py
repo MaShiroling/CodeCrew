@@ -1,5 +1,13 @@
 """Task-scoped team rooms and controlled agent conversation."""
 
+from app.team.actions import (
+    MAX_ACTIONS_PER_TURN,
+    AgentChatAction,
+    AgentChatTurn,
+    ChatActionError,
+    ChatActionType,
+    parse_agent_chat_turn,
+)
 from app.team.models import (
     MAX_CHAT_ARTIFACTS,
     MAX_CHAT_CONTENT_CHARS,
@@ -37,10 +45,15 @@ from app.team.store import (
 )
 
 __all__ = [
+    "MAX_ACTIONS_PER_TURN",
     "MAX_CHAT_ARTIFACTS",
     "MAX_CHAT_CONTENT_CHARS",
     "MAX_CHAT_RECIPIENTS",
     "TEAM_ROOM_MIGRATIONS",
+    "AgentChatAction",
+    "AgentChatTurn",
+    "ChatActionError",
+    "ChatActionType",
     "ChatIdempotencyConflictError",
     "ChatMessage",
     "ChatMessageNotFoundError",
@@ -66,4 +79,5 @@ __all__ = [
     "TeamRoom",
     "TeamRoomStore",
     "TeamRoomStoreError",
+    "parse_agent_chat_turn",
 ]
