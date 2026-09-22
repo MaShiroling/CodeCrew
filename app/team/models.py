@@ -167,3 +167,10 @@ class MessageDelivery(BaseModel):
     status: MessageDeliveryStatus = MessageDeliveryStatus.PENDING
     acknowledged_at: AwareDatetime | None = None
 
+
+class StoredChatMessage(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    sequence: int = Field(gt=0)
+    message: ChatMessage
+    deliveries: tuple[MessageDelivery, ...] = ()
