@@ -25,6 +25,12 @@ class Settings(BaseSettings):
     codex_cli_path: str = Field(default="codex", min_length=1)
     agent_output_queue_maxsize: int = Field(default=256, gt=0)
     process_terminate_grace_seconds: float = Field(default=2.0, gt=0)
+    max_conversation_agent_turns: int = Field(default=30, ge=0, le=1000)
+    max_conversation_tokens: int = Field(default=500_000, ge=0)
+    max_conversation_duration_seconds: int = Field(default=7_200, ge=0)
+    max_conversation_messages: int = Field(default=200, ge=1, le=1000)
+    max_repeated_messages: int = Field(default=3, ge=1, le=20)
+    max_questions_without_progress: int = Field(default=4, ge=1, le=20)
 
 
 @lru_cache

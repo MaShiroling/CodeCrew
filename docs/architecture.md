@@ -39,6 +39,8 @@ state transitions.
   results back into the room as integrity-bound system events.
 - `WorkflowEventLoop`: feeds produced events back through the controller until completion, a human
   pause, an empty queue, or the configured event limit.
+- `ConversationBudgetGuard`: persists per-session usage and deterministically escalates turn,
+  Token, duration, message, repeated-content, and no-progress question limit violations to a human.
 - `AgentReviewerRunner`: starts a fresh read-only review session per attempt and validates its
   structured JSON result before the orchestrator persists it as evidence.
 - `HandoffEnvelope`: versioned A2A message carrying small structured payloads and artifact IDs,

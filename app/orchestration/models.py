@@ -32,10 +32,18 @@ TERMINAL_STATES = {
 
 ALLOWED_TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
     TaskState.CREATED: frozenset({TaskState.PLANNING, TaskState.CANCELLED}),
-    TaskState.PLANNING: frozenset({TaskState.IMPLEMENTING, TaskState.FAILED, TaskState.CANCELLED}),
-    TaskState.IMPLEMENTING: frozenset({TaskState.VERIFYING, TaskState.FAILED, TaskState.CANCELLED}),
-    TaskState.VERIFYING: frozenset({TaskState.REVIEWING, TaskState.REWORK, TaskState.FAILED}),
-    TaskState.REVIEWING: frozenset({TaskState.COMPLETED, TaskState.REWORK, TaskState.FAILED}),
+    TaskState.PLANNING: frozenset(
+        {TaskState.IMPLEMENTING, TaskState.FAILED, TaskState.CANCELLED, TaskState.NEEDS_HUMAN}
+    ),
+    TaskState.IMPLEMENTING: frozenset(
+        {TaskState.VERIFYING, TaskState.FAILED, TaskState.CANCELLED, TaskState.NEEDS_HUMAN}
+    ),
+    TaskState.VERIFYING: frozenset(
+        {TaskState.REVIEWING, TaskState.REWORK, TaskState.FAILED, TaskState.NEEDS_HUMAN}
+    ),
+    TaskState.REVIEWING: frozenset(
+        {TaskState.COMPLETED, TaskState.REWORK, TaskState.FAILED, TaskState.NEEDS_HUMAN}
+    ),
     TaskState.REWORK: frozenset({TaskState.IMPLEMENTING, TaskState.NEEDS_HUMAN, TaskState.CANCELLED}),
     TaskState.COMPLETED: frozenset(),
     TaskState.FAILED: frozenset(),

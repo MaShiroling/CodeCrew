@@ -4,8 +4,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict
 
-from app.orchestration.models import Task
+from app.config import get_settings
+from app.orchestration.models import Task, TaskState
 from app.storage import ArtifactReference, ArtifactStore, ArtifactType
+from app.team.budgets import (
+    ConversationBudgetGuard,
+    ConversationBudgetPolicy,
+    ConversationBudgetViolation,
+)
 from app.team.controller import (
     WorkflowController,
     WorkflowDecision,
@@ -84,6 +90,7 @@ class WorkflowDirectiveExecutor:
         verifier: Verifier,
         completion_guard: CompletionGuard,
         artifacts: ArtifactStore,
+        budget_guard: ConversationBudgetGuard | None = None,
     ) -> None:
         databases = (
             turns.rooms.database.path,
@@ -98,6 +105,11 @@ class WorkflowDirectiveExecutor:
         self.verifier = verifier
         self.completion_guard = completion_guard
         self.artifacts = artifacts
+        self.budget_guard = budget_guard or ConversationBudgetGuard(
+            turns.rooms,
+            ConversationBudgetPolicy.from_settings(get_settings()),
+        )
+        self.budget_guard.initialize()
 
     async def execute(
         self,
@@ -110,7 +122,7 @@ class WorkflowDirectiveExecutor:
             if directive.target_role is None:
                 raise WorkflowExecutionError("wake_agent directive requires target_role")
             member = self._member_for_role(runtime.room_id, directive.target_role)
-            return await self._run_members((member,), runtime)
+            return await self._run_members((member,), runtime, source)
         if directive.kind is WorkflowDirectiveKind.WAKE_MEMBERS:
             members = tuple(
                 self.turns.rooms.get_member(member_id)
@@ -124,7 +136,7 @@ class WorkflowDirectiveExecutor:
                     paused=True,
                     pause_reason=f"waiting for human member {human.name}",
                 )
-            return await self._run_members(members, runtime)
+            return await self._run_members(members, runtime, source)
         if directive.kind is WorkflowDirectiveKind.RUN_VERIFIER:
             return await self._run_verifier(source, runtime)
         if directive.kind is WorkflowDirectiveKind.RUN_COMPLETION_GUARD:
@@ -140,6 +152,7 @@ class WorkflowDirectiveExecutor:
         self,
         members: tuple[RoomMember, ...],
         runtime: WorkflowRuntime,
+        source: StoredChatMessage,
     ) -> DirectiveExecutionResult:
         turns: list[AgentTurnResult] = []
         events: list[StoredChatMessage] = []
@@ -153,6 +166,17 @@ class WorkflowDirectiveExecutor:
             # are intentionally coalesced instead of failing with "no pending messages".
             if not self.turns.rooms.pending_for(member.member_id, limit=1):
                 continue
+            violation = self.budget_guard.evaluate(
+                runtime.task.id, room_id=runtime.room_id
+            )
+            if violation is not None:
+                escalation = self._budget_pause(runtime, source, violation)
+                return DirectiveExecutionResult(
+                    produced_events=(*events, *escalation.produced_events),
+                    agent_turns=tuple(turns),
+                    paused=True,
+                    pause_reason=escalation.pause_reason,
+                )
             try:
                 agent_name = runtime.agent_names[member.role]
             except KeyError as exc:
@@ -168,9 +192,43 @@ class WorkflowDirectiveExecutor:
             )
             turns.append(turn)
             events.extend(turn.routed_messages)
+            self.budget_guard.record_turn(
+                runtime.task,
+                room_id=runtime.room_id,
+                member_id=member.member_id,
+                turn=turn,
+            )
         return DirectiveExecutionResult(
             produced_events=tuple(events),
             agent_turns=tuple(turns),
+        )
+
+    def _budget_pause(
+        self,
+        runtime: WorkflowRuntime,
+        source: StoredChatMessage,
+        violation: ConversationBudgetViolation,
+    ) -> DirectiveExecutionResult:
+        if runtime.task.state is not TaskState.NEEDS_HUMAN:
+            runtime.task.transition_to(TaskState.NEEDS_HUMAN)
+        orchestrator = self._member_for_role(runtime.room_id, MemberRole.ORCHESTRATOR)
+        human = self._member_for_role(runtime.room_id, MemberRole.HUMAN)
+        event = self._publish_system_event(
+            runtime,
+            sender=orchestrator,
+            recipient=human,
+            type=MessageType.HUMAN_INPUT_REQUEST,
+            content=(
+                f"Conversation stopped: {violation.detail} "
+                f"({violation.actual}/{violation.limit})"
+            ),
+            artifacts=(),
+            source=source,
+        )
+        return DirectiveExecutionResult(
+            produced_events=(event,),
+            paused=True,
+            pause_reason=event.message.content,
         )
 
     async def _run_verifier(

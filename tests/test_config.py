@@ -6,6 +6,8 @@ def test_settings_load_prefixed_environment(monkeypatch) -> None:
     monkeypatch.setenv("CODECREW_AGENT_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("CODECREW_CLAUDE_CLI_PATH", "/opt/bin/claude")
     monkeypatch.setenv("CODECREW_CODEX_CLI_PATH", "/opt/bin/codex")
+    monkeypatch.setenv("CODECREW_MAX_CONVERSATION_AGENT_TURNS", "12")
+    monkeypatch.setenv("CODECREW_MAX_CONVERSATION_TOKENS", "12345")
 
     settings = Settings(_env_file=None)
 
@@ -13,6 +15,8 @@ def test_settings_load_prefixed_environment(monkeypatch) -> None:
     assert settings.agent_timeout_seconds == 30
     assert settings.claude_cli_path == "/opt/bin/claude"
     assert settings.codex_cli_path == "/opt/bin/codex"
+    assert settings.max_conversation_agent_turns == 12
+    assert settings.max_conversation_tokens == 12345
 
 
 def test_agent_process_defaults_are_bounded() -> None:

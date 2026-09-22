@@ -263,6 +263,8 @@ async def test_event_loop_runs_agents_verifier_and_completion_guard(tmp_path: Pa
     assert runtime.latest_verification.passed
     assert runtime.latest_completion is not None
     assert runtime.latest_completion.passed
+    usage = executor.budget_guard.usage(task.id, room_id=room_id)
+    assert usage.agent_turns == 3
     types = [
         item.message.type for item in rooms.list_messages(room_id)
     ]

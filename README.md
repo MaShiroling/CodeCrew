@@ -116,6 +116,8 @@ Codex CLI Implementer（独立 Git Worktree）
 - Plan 以不可变版本链持久化，记录版本号、被替代 Artifact 和本次解决的问题
 - Reviewer 拒绝时必须发布结构化 Review Artifact，Implementer 按问题清单返工后重新验证
 - Review 问题通过稳定 `issue_id` 跨轮追踪，批准前必须保留并更新历史未解决问题
+- `ConversationBudgetGuard` 持久化 Agent Turn、Token 和耗时，并限制消息总量
+- 重复发言或连续提问没有产生工作流进展时，确定性暂停并转人工处理
 
 ## 完成守卫
 
@@ -320,7 +322,7 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段五点五之四：指令执行器、系统 Bot 与自动事件循环
 - [x] 阶段五点五之五 A：Planner ↔ Implementer 澄清与 Plan 版本管理
 - [x] 阶段五点五之五 B：Reviewer ↔ Implementer 对话式返工
-- [ ] 阶段五点五之五 C：对话预算与死循环保护
+- [x] 阶段五点五之五 C：对话预算与死循环保护
 - [ ] 阶段六：Trace、SSE、任务 API、CLI 和端到端 MVP
 - [ ] 阶段七：多语言编码任务评测集
 - [ ] 阶段八：单 Agent / 多 Agent 对照实验与指标报告

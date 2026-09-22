@@ -46,6 +46,23 @@ cross-round ledger: every still-unresolved issue must be carried into the next R
 Reviewer cannot approve while a carried high or critical issue remains unresolved. The existing
 rework budget still routes the task to a human after the configured limit.
 
+## Conversation budgets and loop detection
+
+`ConversationBudgetGuard` checks limits immediately before every Agent wake-up. Successful turns
+are recorded idempotently in SQLite with session, role, reported input/output Token usage, and
+duration, so a process restart does not reset the budget. Room messages remain the source of truth
+for message-count and loop checks.
+
+The policy bounds total Agent turns, reported Tokens, cumulative Agent duration, and room messages.
+It also fingerprints normalized question, answer, and ordinary-message content to detect repeated
+speech, and counts questions since the most recent concrete workflow-progress event. Unknown Token
+usage is tracked separately and is never guessed; turn and duration limits still apply.
+
+When a limit is reached, the next Agent is not started. The executor moves the active task to
+`needs_human`, publishes a protected `human_input_request` containing the violated limit and
+observed value, and pauses the event loop. These limits are configured through `CODECREW_*`
+environment variables documented in `.env.example`.
+
 ## Turn lifecycle
 
 `AgentTurnRunner` performs one bounded turn:
