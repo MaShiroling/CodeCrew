@@ -31,6 +31,11 @@ streaming JSON, plan permissions, only `Read`, `Glob`, and `Grep`, safe mode, di
 commands, and a strict empty MCP configuration. Requests for workspace-write permissions are
 rejected before process launch.
 
+`AgentReviewerRunner` acquires a `CODE_REVIEW`-capable adapter from the registry for each review,
+always with `READ_ONLY` permission and a fresh session. It gives the reviewer the issue plus paths
+to immutable Plan, Diff, changeset, and verification artifacts, then accepts only a schema-valid
+JSON verdict. It never resumes the Planner session or treats reviewer prose as completion proof.
+
 ## Codex CLI
 
 `CodexCliAdapter` uses non-interactive `exec --json`. Permission mode maps to the CLI's
@@ -56,4 +61,3 @@ post-run unauthorized-change detection.
 Unit tests use deterministic fake process handles and never contact providers. Live tests are
 marked `integration`, skipped unless `CODECREW_RUN_CLI_INTEGRATION=1`, and use read-only prompts.
 They can consume account quota and require authenticated CLI installations.
-

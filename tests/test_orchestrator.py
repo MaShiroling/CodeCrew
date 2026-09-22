@@ -53,9 +53,11 @@ class FakeImplementer:
     def __init__(self, *, make_change: bool = True, fail: bool = False) -> None:
         self.make_change = make_change
         self.fail = fail
+        self.rework_contexts = []
 
-    async def implement(self, task, worktree, plan) -> ImplementationOutcome:
+    async def implement(self, task, worktree, plan, rework=None) -> ImplementationOutcome:
         assert task.state is TaskState.IMPLEMENTING
+        self.rework_contexts.append(rework)
         if self.fail:
             raise RuntimeError("implementation crashed")
         if self.make_change:
@@ -70,7 +72,7 @@ class FakeReviewer:
     def __init__(self, verdict: ReviewVerdict = ReviewVerdict.APPROVED) -> None:
         self.verdict = verdict
 
-    async def review(self, task, plan, verification) -> ReviewDraft:
+    async def review(self, task, worktree, plan, verification) -> ReviewDraft:
         assert task.state is TaskState.REVIEWING
         issues = (
             ()
@@ -172,6 +174,7 @@ async def test_single_attempt_completes_only_after_guard_passes(tmp_path: Path) 
 
     assert result.task.state is TaskState.COMPLETED
     assert result.completion.passed
+    assert len(result.attempts) == 1
     assert len(result.handoff_ids) == 4
     messages = handoffs.mailbox.list_messages(task_id=task.id)
     assert [message.envelope.type for message in messages] == [
@@ -246,3 +249,85 @@ async def test_run_once_rejects_non_created_task(tmp_path: Path) -> None:
         await orchestrator.run_once(task, verification_plan=verification_plan())
 
     assert task.state is TaskState.PLANNING
+
+
+class SequencedReviewer(FakeReviewer):
+    def __init__(self, verdicts: tuple[ReviewVerdict, ...]) -> None:
+        self.verdicts = verdicts
+        self.calls = 0
+
+    async def review(self, task, worktree, plan, verification) -> ReviewDraft:
+        verdict = self.verdicts[min(self.calls, len(self.verdicts) - 1)]
+        self.calls += 1
+        self.verdict = verdict
+        return await super().review(task, worktree, plan, verification)
+
+
+@pytest.mark.asyncio
+async def test_rework_feedback_returns_to_implementer_and_can_complete(
+    tmp_path: Path,
+) -> None:
+    repository = make_repository(tmp_path)
+    implementer = FakeImplementer()
+    reviewer = SequencedReviewer(
+        (ReviewVerdict.REJECTED, ReviewVerdict.APPROVED)
+    )
+    orchestrator, handoffs = make_orchestrator(
+        tmp_path, implementer=implementer, reviewer=reviewer
+    )
+    task = Task(issue="Set value to two", repository_path=str(repository))
+
+    result = await orchestrator.run(task, verification_plan=verification_plan())
+
+    assert result.task.state is TaskState.COMPLETED
+    assert result.task.rework_rounds == 1
+    assert len(result.attempts) == 2
+    assert implementer.rework_contexts[0] is None
+    assert implementer.rework_contexts[1].round_number == 1
+    assert implementer.rework_contexts[1].issues[0].priority is ReviewIssuePriority.HIGH
+    message_types = [
+        message.envelope.type
+        for message in handoffs.mailbox.list_messages(task_id=task.id)
+    ]
+    assert message_types.count(HandoffType.REWORK_REQUESTED) == 1
+    assert message_types.count(HandoffType.IMPLEMENTATION_READY) == 2
+
+
+@pytest.mark.asyncio
+async def test_rework_budget_exhaustion_routes_task_to_human(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path)
+    reviewer = SequencedReviewer((ReviewVerdict.REJECTED,))
+    orchestrator, handoffs = make_orchestrator(tmp_path, reviewer=reviewer)
+    task = Task(issue="Set value to two", repository_path=str(repository))
+
+    result = await orchestrator.run(
+        task,
+        verification_plan=verification_plan(),
+        max_rework_rounds=2,
+    )
+
+    assert result.task.state is TaskState.NEEDS_HUMAN
+    assert result.task.rework_rounds == 2
+    assert len(result.attempts) == 3
+    assert reviewer.calls == 3
+    messages = handoffs.mailbox.list_messages(task_id=task.id)
+    assert sum(
+        message.envelope.type is HandoffType.REWORK_REQUESTED for message in messages
+    ) == 2
+    assert all(message.status is MailboxMessageStatus.ACKNOWLEDGED for message in messages)
+
+
+@pytest.mark.asyncio
+async def test_rework_budget_cannot_be_negative(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path)
+    orchestrator, _ = make_orchestrator(tmp_path)
+    task = Task(issue="Set value to two", repository_path=str(repository))
+
+    with pytest.raises(ValueError, match="cannot be negative"):
+        await orchestrator.run(
+            task,
+            verification_plan=verification_plan(),
+            max_rework_rounds=-1,
+        )
+
+    assert task.state is TaskState.CREATED

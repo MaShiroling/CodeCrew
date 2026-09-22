@@ -7,8 +7,8 @@ CodeCrew 是一个面向软件变更任务的独立开源项目。它把 Claude 
 项目受 Clowder AI 的异构 Agent 团队思想启发，但从零独立实现，不复制其代码、
 Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不建设通用聊天或陪伴平台。
 
-> 当前状态：底层协作、隔离执行、验证、完成守卫和单轮 Orchestrator 已实现；
-> Reviewer 实际执行适配与最多两轮返工循环仍在开发中。
+> 当前状态：底层协作、隔离执行、验证、完成守卫、独立只读 Reviewer 和
+> 最多两轮返工闭环已实现；Planner 服务、持久化 Trace 和产品入口仍在开发中。
 
 ## 目标工作流
 
@@ -87,6 +87,7 @@ Codex CLI Implementer（独立 Git Worktree）
 - 禁止命令尝试检查
 - 结构化 `VerificationReport`
 - 结构化 Reviewer 结论和问题优先级契约
+- 独立只读 Reviewer 会话、严格 JSON 输出解析和证据引用
 - `CompletionGuard` 逐项重算完成条件
 - Verification/Review 持久化报告绑定检查
 - Artifact 归属、类型、SHA-256 和 Blob 完整性检查
@@ -168,11 +169,8 @@ flowchart TB
 
 以下内容仍属于开发计划，不能视为现有功能：
 
-- 自动驱动完整流程的 Orchestrator
 - Planner 输出解析与 Plan 服务
-- 独立 Reviewer 会话执行器
-- Reviewer 拒绝后的两轮返工调度
-- 超预算转人工和崩溃恢复
+- 进程重启后的任务恢复
 - Task、Trace 和 Event 的完整持久化
 - SSE 实时事件和完整任务 API
 - CLI 产品入口与任务控制台
@@ -261,7 +259,7 @@ curl http://127.0.0.1:8000/health
 app/
 ├── agents/          # Agent 接口、Registry 和 CLI Adapter
 ├── messaging/       # A2A Handoff、Mailbox 和消息完整性
-├── orchestration/   # Task 状态模型；Orchestrator 待实现
+├── orchestration/   # Task、Orchestrator、Reviewer 执行与返工调度
 ├── storage/         # SQLite 与 ArtifactStore
 ├── workspace/       # Worktree、Diff、权限和命令审计
 ├── verification/    # Verifier、Reviewer 契约和 CompletionGuard
@@ -289,7 +287,7 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段五之一：确定性 Verifier
 - [x] 阶段五之二：CompletionGuard 与 Reviewer 数据契约
 - [x] 阶段五之三：Orchestrator 单轮主状态机
-- [ ] 阶段五之四：Reviewer 执行与返工循环
+- [x] 阶段五之四：独立 Reviewer 执行与两轮返工循环
 - [ ] 阶段六：Trace、SSE、任务 API、CLI 和端到端 MVP
 - [ ] 阶段七：多语言编码任务评测集
 - [ ] 阶段八：单 Agent / 多 Agent 对照实验与指标报告

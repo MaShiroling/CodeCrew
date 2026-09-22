@@ -19,6 +19,8 @@ and implement changes; deterministic code owns verification and completion.
   Concrete Claude Code, Codex CLI, and fake adapters arrive in milestone two.
 - `AgentRegistry`: capabilities, permissions, availability, and concurrency limits.
 - `Orchestrator`: the sole writer of task state, applying explicit legal transitions.
+- `AgentReviewerRunner`: starts a fresh read-only review session per attempt and validates its
+  structured JSON result before the orchestrator persists it as evidence.
 - `HandoffEnvelope`: versioned A2A message carrying small structured payloads and artifact IDs,
   with message ID, correlation ID, idempotency key, and acknowledgement state.
 - `ArtifactStore`: immutable metadata and content-addressed blobs for plans, diffs, logs, and
@@ -35,8 +37,8 @@ Domain models have no process, database, or web dependencies. Adapters implement
 defined by the orchestration layer. SQLite repositories, subprocess runners, and FastAPI are
 outer-layer implementations. This keeps fake adapters and in-memory stores usable in tests.
 
-## Non-goals for milestone one
+## Current exclusions
 
-No agent invocation, database persistence, worktree mutation, SSE streaming, verifier execution,
-or evaluation runner is claimed as implemented yet.
-
+Planner output parsing, restart-safe task recovery, SSE streaming, the complete task API, and the
+evaluation runner are not implemented yet. Reviewer rejection can trigger at most two bounded
+rework rounds; budget exhaustion deterministically routes the task to `needs_human`.
