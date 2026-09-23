@@ -1,2 +1,1 @@
-"""HTTP and SSE API (milestone six)."""
-
+"""Versioned HTTP API contracts and future SSE endpoints."""

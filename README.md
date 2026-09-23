@@ -10,7 +10,8 @@ Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不
 > 当前状态：底层协作、隔离执行、验证、完成守卫、独立只读 Reviewer、最多两轮
 > 返工闭环、TeamRoom、AgentTurnRunner、事件驱动 WorkflowController 和自动指令循环
 > 已实现；任务/运行上下文持久化、统一 Trace、验证证据恢复、Workflow Recovery
-> Coordinator 和跨进程崩溃恢复测试已完成。应用启动钩子和产品入口仍在开发中。
+> Coordinator 和跨进程崩溃恢复测试已完成。任务 API 契约已定义；任务服务接入、
+> 应用启动钩子和产品入口仍在开发中。
 
 ## 目标工作流
 
@@ -204,13 +205,14 @@ flowchart TB
 
 - FastAPI 启动钩子和部署级自动恢复调度
 - Trace 与领域记录不一致时的自动回填
-- SSE 实时事件和完整任务 API
+- 任务 API 与持久化工作流服务的连接，以及 SSE 实时事件
 - CLI 产品入口与任务控制台
 - 12～15 条正式编码评测集
 - 单 Agent 与多 Agent 对照实验
 - Token 成本、平均时延和 P95 指标报告
 
-当前 FastAPI 只提供基础健康检查，不代表完整产品 API 已经完成。
+当前 FastAPI 提供健康检查与 `/api/v1/tasks` 契约路由；默认任务服务尚未配置，
+任务路由返回 503，不代表完整产品 API 已经完成。
 
 ## 技术栈
 
@@ -297,7 +299,7 @@ app/
 ├── workspace/       # Worktree、Diff、权限和命令审计
 ├── verification/    # Verifier、Reviewer 契约和 CompletionGuard
 ├── trace/           # Trace/Event 持久化待实现
-└── api/             # 完整任务 API 待实现
+└── api/             # 任务 API 契约已实现，工作流服务待接入
 
 tests/               # 单元测试与可选 CLI 集成测试
 evals/               # 后续评测任务、隐藏测试和结果
@@ -334,9 +336,15 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段六之四：验证证据恢复
 - [x] 阶段六之五：Workflow Recovery Coordinator
 - [x] 阶段六之六：崩溃恢复集成测试
-- [ ] 阶段六后续：SSE、任务 API、CLI 和端到端 MVP
-- [ ] 阶段七：多语言编码任务评测集
-- [ ] 阶段八：单 Agent / 多 Agent 对照实验与指标报告
+- [x] 阶段七之一：任务 API 请求/响应契约、版本化路由与错误格式
+- [ ] 阶段七之二：任务服务接入与工作流启动
+- [ ] 阶段七之三：应用启动恢复与任务控制
+- [ ] 阶段七之四：SSE 事件流与断线续接
+- [ ] 阶段七之五：端到端任务 API 测试与 CLI 入口
+- [ ] 阶段八：任务列表、聊天室和证据查看前端
+- [ ] 阶段九：多语言编码任务评测集
+- [ ] 阶段十：单 Agent / 多 Agent 对照实验与指标报告
+- [ ] 阶段十一：演示样例、部署文档和简历材料
 
 ## 文档
 
@@ -345,6 +353,7 @@ docs/                # 架构和 Adapter 文档
 - [TeamRoom 与 Agent 对话执行](docs/team-rooms.md)
 - [验证证据与任务恢复](docs/evidence-recovery.md)
 - [统一 Trace 与事件回放](docs/tracing.md)
+- [任务 API 契约](docs/task-api.md)
 
 ## License
 
