@@ -1,0 +1,31 @@
+{
+  "planner_adapter": "codex-cli",
+  "verification_plan": {
+    "commands": [
+      {
+        "name": "compile",
+        "kind": "static_analysis",
+        "argv": ["python", "-m", "compileall", "-q", "src"]
+      },
+      {
+        "name": "public-tests",
+        "kind": "public_tests",
+        "argv": ["python", "-m", "pytest", "tests/public"]
+      },
+      {
+        "name": "hidden-tests-placeholder",
+        "kind": "hidden_tests",
+        "argv": ["python", "-m", "pytest", "tests/hidden"]
+      }
+    ]
+  },
+  "permission_policy": {
+    "allowed_paths": ["src", "tests"]
+  },
+  "command_policy": {
+    "rules": [
+      {"name": "compile", "argv_prefix": ["python", "-m", "compileall"]},
+      {"name": "pytest", "argv_prefix": ["python", "-m", "pytest"]}
+    ]
+  }
+}

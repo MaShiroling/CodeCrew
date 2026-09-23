@@ -1,4 +1,4 @@
-# 任务 API 契约与运行时服务（阶段七第 1～4 步）
+# 任务 API 契约与运行时服务（阶段七）
 
 所有任务路由以 `/api/v1/tasks` 为前缀。当前已实现路由、Pydantic 请求/响应模型、
 OpenAPI 描述和统一错误响应。`PersistentTaskService` 可通过
@@ -53,4 +53,11 @@ Planner 与 Orchestrator），然后在本进程异步启动事件循环。查�
 这只是持久化事件投递，不是成功判定，也不提供未经授权的对外访问控制；当前 API 应
 仅在可信本地环境使用。
 
-下一步补端到端 API 测试与 CLI 入口。
+端到端测试使用 FakeAgentAdapter 通过 HTTP 提交任务，覆盖有效 Diff 经三类确定性检查、
+Reviewer 审批和 CompletionGuard 后完成，以及无有效 Diff 时不得完成。
+本地 CLI 入口为 `python -m app.cli serve --config <JSON> --port 8000`（安装后也可
+使用 `codecrew serve`），只绑定 `127.0.0.1` 且固定单 worker。JSON 显式配置
+Planner 适配器、验证计划、允许写入路径与命令白名单；示例见
+`examples/server-config.python.json`。当前 CLI 只能使用已有 Claude Code / Codex CLI
+适配器，不能配置尚未实现的 Kimi K3 / DeepSeek Flash。示例中的 `tests/hidden` 只是
+占位，不能保证测试对 Agent 保密；真正的隐藏测试隔离仍属于后续工作。

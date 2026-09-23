@@ -10,8 +10,8 @@ Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不
 > 当前状态：底层协作、隔离执行、验证、完成守卫、独立只读 Reviewer、最多两轮
 > 返工闭环、TeamRoom、AgentTurnRunner、事件驱动 WorkflowController 和自动指令循环
 > 已实现；任务/运行上下文持久化、统一 Trace、验证证据恢复、Workflow Recovery
-> Coordinator 和跨进程崩溃恢复测试已完成。任务 API 契约已定义；任务服务接入、
-> 应用启动钩子和产品入口仍在开发中。
+> Coordinator 和跨进程崩溃恢复测试已完成。阶段七已打通任务 API、SSE、
+> 显式配置的本地 CLI 服务入口与 Fake Agent 端到端验证；前端和正式评测集尚未开发。
 
 ## 目标工作流
 
@@ -203,16 +203,17 @@ flowchart TB
 
 以下内容仍属于开发计划，不能视为现有功能：
 
-- FastAPI 启动钩子和部署级自动恢复调度
+- 多 worker 分布式派发与跨进程租约
 - Trace 与领域记录不一致时的自动回填
-- 任务 API 与持久化工作流服务的连接，以及 SSE 实时事件
-- CLI 产品入口与任务控制台
+- Kimi K3 / DeepSeek Flash 真实适配器与对应角色接线
+- 前端任务控制台与 API 身份认证
+- 真正对 Agent 不可见的隐藏测试隔离环境
 - 12～15 条正式编码评测集
 - 单 Agent 与多 Agent 对照实验
 - Token 成本、平均时延和 P95 指标报告
 
-当前 FastAPI 提供健康检查与 `/api/v1/tasks` 契约路由；默认任务服务尚未配置，
-任务路由返回 503，不代表完整产品 API 已经完成。
+默认 `app.main:app` 仍未配置真实 Agent 和验证策略，任务路由返回 503；
+需使用下方显式配置的本地 CLI 入口。当前不应将 API 暴露到公网或运行不可信仓库。
 
 ## 技术栈
 
@@ -245,13 +246,6 @@ cp .env.example .env
 .venv/bin/ruff check .
 ```
 
-当前测试基线：
-
-```text
-184 passed
-2 skipped
-```
-
 两个默认跳过的测试会调用真实 Claude Code/Codex CLI，可能需要网络并消耗 Token。
 显式运行方式：
 
@@ -259,7 +253,7 @@ cp .env.example .env
 CODECREW_RUN_CLI_INTEGRATION=1 .venv/bin/pytest -m integration
 ```
 
-启动当前 FastAPI 健康检查服务：
+仅启动默认 FastAPI 健康检查服务（任务路由返回 503）：
 
 ```bash
 .venv/bin/uvicorn app.main:app --reload
@@ -268,6 +262,19 @@ CODECREW_RUN_CLI_INTEGRATION=1 .venv/bin/pytest -m integration
 ```bash
 curl http://127.0.0.1:8000/health
 ```
+
+使用显式策略启动可执行任务的本地单 worker API：
+
+```bash
+.venv/bin/python -m app.cli serve --config examples/server-config.python.json --port 8000
+```
+
+安装项目后也可使用 `codecrew serve ...`。该入口仅绑定 `127.0.0.1`，目前接线为
+Codex CLI Planner / Implementer、Claude Code Reviewer（可在配置中将 Planner
+改为 Claude Code）。启动前须安装并配置这两个 CLI，且根据目标仓库修改示例的验证命令、
+允许目录及 `CODECREW_WORKTREE_ROOT`；Worktree 根目录必须在目标仓库外。
+示例中的 `tests/hidden` **只是配置占位路径，不是保密的隐藏测试**。真正对 Agent
+不可见的隐藏测试隔离环境尚未实现，不能把示例配置用于正式可靠性评测。
 
 ## 配置
 
@@ -298,10 +305,12 @@ app/
 ├── storage/         # SQLite 与 ArtifactStore
 ├── workspace/       # Worktree、Diff、权限和命令审计
 ├── verification/    # Verifier、Reviewer 契约和 CompletionGuard
-├── trace/           # Trace/Event 持久化待实现
-└── api/             # 任务 API 契约已实现，工作流服务待接入
+├── trace/           # Trace/Event 持久化与回放
+├── api/             # 任务 API、持久化服务与 SSE
+└── cli.py           # 显式配置的本地单 worker 启动入口
 
-tests/               # 单元测试与可选 CLI 集成测试
+tests/               # 单元、Fake Agent API 端到端及可选真实 CLI 集成测试
+examples/            # 本地服务策略配置示例
 evals/               # 后续评测任务、隐藏测试和结果
 prompts/             # 后续版本化角色 Prompt
 docs/                # 架构和 Adapter 文档
@@ -340,7 +349,7 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段七之二：可注入的持久化任务服务与本进程工作流启动
 - [x] 阶段七之三：显式运行时装配、应用启动恢复与本进程任务取消
 - [x] 阶段七之四：基于 TraceStore 的任务 SSE 事件流与断线续接
-- [ ] 阶段七之五：端到端任务 API 测试与 CLI 入口
+- [x] 阶段七之五：Fake Agent 端到端任务 API 测试与本地 CLI 入口
 - [ ] 阶段八：任务列表、聊天室和证据查看前端
 - [ ] 阶段九：多语言编码任务评测集
 - [ ] 阶段十：单 Agent / 多 Agent 对照实验与指标报告
