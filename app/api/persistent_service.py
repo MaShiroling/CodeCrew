@@ -1,0 +1,246 @@
+"""Durable task bootstrap and in-process TeamRoom execution for the HTTP API."""
+
+import asyncio
+from pathlib import Path
+from uuid import UUID, uuid4
+
+from app.api.models import CancelTaskRequest, CreateTaskRequest, TaskPage, TaskView
+from app.api.service import TaskInvalidRepository, TaskNotFound, TaskStateConflict
+from app.orchestration.models import InvalidTaskTransition, Task, TaskState
+from app.storage import (
+    RuntimeContextRepository,
+    StaleTaskRevisionError,
+    TaskNotFoundError,
+    TaskRepository,
+    TaskSnapshot,
+)
+from app.team.execution import WorkflowEventLoop, WorkflowRuntime
+from app.team.models import (
+    ChatMessage,
+    MemberKind,
+    MemberRole,
+    MessageRecipient,
+    MessageType,
+    RecipientKind,
+    RoomMember,
+    StoredChatMessage,
+    TeamRoom,
+)
+from app.team.router import ConversationRouter
+from app.team.store import TeamRoomStore
+from app.trace import TraceActorKind, TraceEvent, TraceEventType
+from app.verification import VerificationPlan
+from app.workspace import WorktreeError, WorktreeManager
+
+
+class PersistentTaskService:
+    """Create durable workflow inputs, then dispatch an in-process event loop.
+
+    One service instance owns its active runs. Cross-process dispatch and graceful
+    shutdown are intentionally deferred to the application lifecycle stage.
+    """
+
+    def __init__(
+        self,
+        *,
+        tasks: TaskRepository,
+        contexts: RuntimeContextRepository,
+        rooms: TeamRoomStore,
+        router: ConversationRouter,
+        worktrees: WorktreeManager,
+        event_loop: WorkflowEventLoop,
+        verification_plan: VerificationPlan,
+        agent_names: dict[MemberRole, str],
+    ) -> None:
+        paths = (tasks.database.path, contexts.database.path, rooms.database.path,
+                 router.artifacts.database.path)
+        if any(path != paths[0] for path in paths):
+            raise ValueError("task service stores must share one database")
+        if set(agent_names) != {
+            MemberRole.PLANNER, MemberRole.IMPLEMENTER, MemberRole.REVIEWER
+        }:
+            raise ValueError("planner, implementer, and reviewer bindings are required")
+        self.tasks = tasks
+        self.contexts = contexts
+        self.rooms = rooms
+        self.router = router
+        self.worktrees = worktrees
+        self.event_loop = event_loop
+        self.verification_plan = verification_plan
+        self.agent_names = dict(agent_names)
+        self._runs: dict[UUID, asyncio.Task[None]] = {}
+        self._lock = asyncio.Lock()
+        self.tasks.initialize()
+        self.contexts.initialize()
+        self.rooms.initialize()
+        self.router.artifacts.initialize()
+        self.event_loop.controller.initialize()
+
+    async def create_task(self, request: CreateTaskRequest) -> TaskView:
+        task = Task(issue=request.issue, repository_path=request.repository_path)
+        try:
+            worktree = await self.worktrees.create(
+                task_id=task.id, repository=Path(request.repository_path)
+            )
+        except WorktreeError as exc:
+            raise TaskInvalidRepository(str(exc)) from exc
+
+        room_id = uuid4()
+        members = tuple(
+            RoomMember(room_id=room_id, name=name, role=role, kind=kind)
+            for name, role, kind in (
+                ("planner", MemberRole.PLANNER, MemberKind.AGENT),
+                ("implementer", MemberRole.IMPLEMENTER, MemberKind.AGENT),
+                ("reviewer", MemberRole.REVIEWER, MemberKind.AGENT),
+                ("verifier", MemberRole.VERIFIER, MemberKind.SYSTEM),
+                ("orchestrator", MemberRole.ORCHESTRATOR, MemberKind.SYSTEM),
+                ("human", MemberRole.HUMAN, MemberKind.HUMAN),
+            )
+        )
+        room = TeamRoom(
+            room_id=room_id,
+            task_id=task.id,
+            trace_id=task.trace_id,
+            name=f"task-{task.id}",
+            members=members,
+        )
+        runtime = WorkflowRuntime(
+            task=task,
+            room_id=room_id,
+            worktree=worktree,
+            verification_plan=self.verification_plan,
+            agent_names=self.agent_names,
+        )
+        snapshot = self.tasks.create(task)
+        try:
+            self.rooms.create_room(room)
+            self.contexts.create(runtime.to_context())
+            human_id = next(member.member_id for member in members
+                            if member.role is MemberRole.HUMAN)
+            issue = self.router.route(
+                ChatMessage(
+                    room_id=room_id,
+                    task_id=task.id,
+                    trace_id=task.trace_id,
+                    sender_id=human_id,
+                    recipients=(
+                        MessageRecipient(kind=RecipientKind.ROLE, role=MemberRole.PLANNER),
+                        MessageRecipient(kind=RecipientKind.ROLE, role=MemberRole.ORCHESTRATOR),
+                    ),
+                    type=MessageType.ISSUE_POSTED,
+                    content=task.issue,
+                    correlation_id=task.trace_id,
+                    idempotency_key=f"initial-issue:{task.id}",
+                ),
+                authenticated_sender_id=human_id,
+            )
+        except Exception as exc:
+            self._mark_needs_human(snapshot, f"task bootstrap failed: {type(exc).__name__}: {exc}")
+            raise
+
+        async with self._lock:
+            self._runs[task.id] = asyncio.create_task(
+                self._run(runtime, issue), name=f"codecrew-task-{task.id}"
+            )
+        return self._view(snapshot)
+
+    async def _run(self, runtime: WorkflowRuntime, issue: StoredChatMessage) -> None:
+        try:
+            await self.event_loop.run(runtime, (issue,))
+            snapshot = self.tasks.get(runtime.task.id)
+            if runtime.task != snapshot.task:
+                self.tasks.save(runtime.task, expected_revision=snapshot.revision)
+            context = self.contexts.get(runtime.task.id)
+            self.contexts.save(runtime.to_context(), expected_revision=context.revision)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - isolate background workflow failures
+            snapshot = self.tasks.get(runtime.task.id)
+            self._mark_needs_human(
+                snapshot, f"workflow execution failed: {type(exc).__name__}: {exc}"
+            )
+        finally:
+            async with self._lock:
+                self._runs.pop(runtime.task.id, None)
+
+    async def get_task(self, task_id: UUID) -> TaskView:
+        try:
+            return self._view(self.tasks.get(task_id))
+        except TaskNotFoundError as exc:
+            raise TaskNotFound(str(exc)) from exc
+
+    async def list_tasks(
+        self, *, state: TaskState | None, limit: int, offset: int
+    ) -> TaskPage:
+        snapshots = self.tasks.list(state=state, limit=limit + 1, offset=offset)
+        return TaskPage(
+            items=tuple(self._view(item) for item in snapshots[:limit]),
+            limit=limit,
+            offset=offset,
+            next_offset=offset + limit if len(snapshots) > limit else None,
+        )
+
+    async def cancel_task(
+        self, task_id: UUID, request: CancelTaskRequest
+    ) -> TaskView:
+        async with self._lock:
+            try:
+                snapshot = self.tasks.get(task_id)
+            except TaskNotFoundError as exc:
+                raise TaskNotFound(str(exc)) from exc
+            if snapshot.revision != request.expected_revision:
+                raise TaskStateConflict("task revision changed")
+            if task_id in self._runs:
+                raise TaskStateConflict("task is running; active cancellation is not yet supported")
+            task = snapshot.task
+            try:
+                task.transition_to(TaskState.CANCELLED)
+            except InvalidTaskTransition as exc:
+                raise TaskStateConflict(str(exc)) from exc
+            if request.reason:
+                task.metadata["cancellation_reason"] = request.reason
+            try:
+                return self._view(self.tasks.save(task, expected_revision=snapshot.revision))
+            except StaleTaskRevisionError as exc:
+                raise TaskStateConflict(str(exc)) from exc
+
+    async def wait_for(self, task_id: UUID) -> None:
+        """Wait for a locally dispatched run; useful for controlled shutdown/tests."""
+        async with self._lock:
+            run = self._runs.get(task_id)
+        if run is not None:
+            await run
+
+    def _mark_needs_human(self, snapshot: TaskSnapshot, reason: str) -> None:
+        task = snapshot.task
+        if task.is_terminal:
+            return
+        task.transition_to(TaskState.NEEDS_HUMAN)
+        task.metadata["failure_reason"] = reason
+        self.tasks.save(task, expected_revision=snapshot.revision)
+        self.router.trace_store.append(
+            TraceEvent(
+                task_id=task.id,
+                trace_id=task.trace_id,
+                type=TraceEventType.SYSTEM_ERROR,
+                actor_kind=TraceActorKind.SYSTEM,
+                actor_id="task_service",
+                idempotency_key=f"task-service-error:{task.id}",
+                payload={"reason": reason},
+            )
+        )
+
+    @staticmethod
+    def _view(snapshot: TaskSnapshot) -> TaskView:
+        task = snapshot.task
+        return TaskView(
+            task_id=task.id,
+            trace_id=task.trace_id,
+            issue=task.issue,
+            repository_path=task.repository_path,
+            state=task.state,
+            rework_rounds=task.rework_rounds,
+            revision=snapshot.revision,
+            created_at=task.created_at,
+            updated_at=task.updated_at,
+        )

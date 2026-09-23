@@ -25,6 +25,11 @@ class TaskServiceUnavailable(TaskApiServiceError):
     status_code = 503
 
 
+class TaskInvalidRepository(TaskApiServiceError):
+    code = "invalid_repository"
+    status_code = 422
+
+
 class TaskService(Protocol):
     """Boundary between HTTP transport and durable task workflow operations."""
 
