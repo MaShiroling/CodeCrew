@@ -1,4 +1,6 @@
+import json
 import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -259,3 +261,116 @@ async def test_startup_resume_failure_escalates_task_and_records_trace(
     recorded = traces.list(task_id=task.id, trace_id=task.trace_id, limit=50)
     assert any(item.event.type is TraceEventType.RECOVERY_DECIDED for item in recorded)
     assert any(item.event.type is TraceEventType.TASK_STATE_CHANGED for item in recorded)
+
+
+def _run_recovery_in_new_process(tmp_path: Path) -> dict:
+    program = r"""
+import asyncio
+import json
+import sys
+from pathlib import Path
+
+from app.orchestration.models import TaskState
+from app.recovery import EvidenceRecoveryService, WorkflowRecoveryCoordinator
+from app.storage import ArtifactStore, RuntimeContextRepository, SQLiteDatabase, TaskRepository
+from app.team import MemberRole, TeamRoomStore
+from app.trace import TraceStore
+from app.workspace import WorktreeManager
+
+database = SQLiteDatabase(Path(sys.argv[1]))
+tasks = TaskRepository(database)
+contexts = RuntimeContextRepository(database)
+artifacts = ArtifactStore(database, Path(sys.argv[2]) / "artifacts")
+rooms = TeamRoomStore(database)
+traces = TraceStore(database)
+for store in (tasks, contexts, artifacts, rooms, traces):
+    store.initialize()
+
+class RestartedEventLoop:
+    async def run(self, runtime, events):
+        runtime.task.transition_to(TaskState.PLANNING)
+        orchestrator = next(
+            member for member in rooms.get_room(runtime.room_id).members
+            if member.role is MemberRole.ORCHESTRATOR
+        )
+        for event in events:
+            rooms.acknowledge(event.message.message_id, recipient_id=orchestrator.member_id)
+        runtime.native_session_ids[MemberRole.PLANNER] = "planner-session-after-restart"
+        return {"processed": len(events)}
+
+coordinator = WorkflowRecoveryCoordinator(
+    tasks=tasks,
+    contexts=contexts,
+    rooms=rooms,
+    traces=traces,
+    worktrees=WorktreeManager(Path(sys.argv[2]) / "worktrees"),
+    evidence=EvidenceRecoveryService(artifacts, traces),
+    event_loop=RestartedEventLoop(),
+)
+
+async def main():
+    report = await coordinator.recover_startup()
+    task = tasks.list(limit=1)[0].task
+    context = contexts.get(task.id) if task.state is not TaskState.NEEDS_HUMAN else None
+    print(json.dumps({
+        "dispositions": [entry.disposition.value for entry in report.entries],
+        "resumed_count": len(report.resumed),
+        "failures": len(report.failures),
+        "task_state": task.state.value,
+        "runtime_revision": context.revision if context else None,
+        "planner_session": next((
+            binding.native_session_id for binding in context.context.agent_bindings
+            if binding.role.value == "planner"
+        ), None) if context else None,
+    }))
+
+asyncio.run(main())
+"""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            program,
+            str(tmp_path / "codecrew.sqlite3"),
+            str(tmp_path),
+        ],
+        cwd=Path(__file__).parents[1],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    return json.loads(result.stdout)
+
+
+@pytest.mark.asyncio
+async def test_recovery_resumes_task_after_real_process_restart(tmp_path: Path) -> None:
+    _, task, members, rooms, _, tasks, contexts, _ = await _setup(tmp_path)
+    room = rooms.get_room(contexts.get(task.id).context.room_id)
+    _post_issue(task, room, members, rooms)
+
+    result = _run_recovery_in_new_process(tmp_path)
+
+    assert result == {
+        "dispositions": ["resumable"],
+        "resumed_count": 1,
+        "failures": 0,
+        "task_state": "planning",
+        "runtime_revision": 2,
+        "planner_session": "planner-session-after-restart",
+    }
+    assert tasks.get(task.id).task.state is TaskState.PLANNING
+    assert contexts.get(task.id).revision == 2
+
+
+@pytest.mark.asyncio
+async def test_recovery_escalates_missing_context_after_real_process_restart(
+    tmp_path: Path,
+) -> None:
+    _, _, *_ = await _setup(tmp_path, create_context=False)
+
+    result = _run_recovery_in_new_process(tmp_path)
+
+    assert result["dispositions"] == ["needs_human"]
+    assert result["resumed_count"] == 0
+    assert result["task_state"] == "needs_human"

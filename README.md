@@ -9,8 +9,8 @@ Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不
 
 > 当前状态：底层协作、隔离执行、验证、完成守卫、独立只读 Reviewer、最多两轮
 > 返工闭环、TeamRoom、AgentTurnRunner、事件驱动 WorkflowController 和自动指令循环
-> 已实现；任务/运行上下文持久化、统一 Trace、验证证据恢复和 Workflow Recovery
-> Coordinator 已完成。应用启动钩子和产品入口仍在开发中。
+> 已实现；任务/运行上下文持久化、统一 Trace、验证证据恢复、Workflow Recovery
+> Coordinator 和跨进程崩溃恢复测试已完成。应用启动钩子和产品入口仍在开发中。
 
 ## 目标工作流
 
@@ -333,7 +333,7 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段六之三：TraceStore 与统一事件记录
 - [x] 阶段六之四：验证证据恢复
 - [x] 阶段六之五：Workflow Recovery Coordinator
-- [ ] 阶段六之六：崩溃恢复集成测试
+- [x] 阶段六之六：崩溃恢复集成测试
 - [ ] 阶段六后续：SSE、任务 API、CLI 和端到端 MVP
 - [ ] 阶段七：多语言编码任务评测集
 - [ ] 阶段八：单 Agent / 多 Agent 对照实验与指标报告

@@ -29,3 +29,6 @@ Worktree 和证据链，并记录 `RECOVERY_DECIDED` Trace 事件。它按以下
 `resume()` 仅接受 `resumable` 项，并在运行事件循环后保存 Task 状态与 Agent 原生会话 ID。
 `recover_startup()` 提供启动时的扫描和安全续跑入口；Agent 执行失败后会转人工，避免自动重放
 存在歧义的副作用。调用方仍需在应用生命周期中显式调用该入口，FastAPI 启动钩子留待后续集成。
+
+跨进程测试在一个 Python 子进程中重新初始化全部仓储，再恢复父进程持久化的任务。测试覆盖
+安全续跑、Task 状态写回、Planner 原生会话 ID 写回，以及运行上下文缺失时转人工。
