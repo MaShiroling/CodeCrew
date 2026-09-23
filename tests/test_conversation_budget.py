@@ -37,6 +37,7 @@ from app.team import (
     WorkflowDirectiveExecutor,
     WorkflowRuntime,
 )
+from app.trace import TraceEventType
 from app.verification import CompletionGuard, VerificationPlan
 from app.workspace import WorktreeHandle
 
@@ -308,3 +309,8 @@ async def test_executor_escalates_to_human_before_over_budget_agent_turn(
     assert adapter.requests == []
     assert result.produced_events[0].message.type is MessageType.HUMAN_INPUT_REQUEST
     assert "Agent turn budget exhausted" in result.pause_reason
+    trace_types = [
+        item.event.type for item in router.trace_store.list(trace_id=task.trace_id)
+    ]
+    assert TraceEventType.BUDGET_EXCEEDED in trace_types
+    assert TraceEventType.HUMAN_INPUT_REQUESTED in trace_types

@@ -122,6 +122,8 @@ Codex CLI Implementer（独立 Git Worktree）
 - Review 问题通过稳定 `issue_id` 跨轮追踪，批准前必须保留并更新历史未解决问题
 - `ConversationBudgetGuard` 持久化 Agent Turn、Token 和耗时，并限制消息总量
 - 重复发言或连续提问没有产生工作流进展时，确定性暂停并转人工处理
+- 统一 `TraceStore` 记录消息、状态迁移、Agent Turn、验证、审批和预算事件
+- Trace 采用追加写入、幂等键、因果关联和游标查询，可用于回放与后续 SSE
 
 ## 完成守卫
 
@@ -200,7 +202,7 @@ flowchart TB
 以下内容仍属于开发计划，不能视为现有功能：
 
 - 进程重启后恢复内存中的 VerificationReport 和运行队列
-- Trace、Event、验证证据对象和运行队列的完整恢复
+- 验证证据对象和运行队列的完整恢复
 - SSE 实时事件和完整任务 API
 - CLI 产品入口与任务控制台
 - 12～15 条正式编码评测集
@@ -327,7 +329,7 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段五点五之五 C：对话预算与死循环保护
 - [x] 阶段六之一：TaskRepository 与乐观锁
 - [x] 阶段六之二：运行上下文持久化
-- [ ] 阶段六之三：TraceStore 与统一事件记录
+- [x] 阶段六之三：TraceStore 与统一事件记录
 - [ ] 阶段六之四：验证证据恢复
 - [ ] 阶段六之五：Workflow Recovery Coordinator
 - [ ] 阶段六之六：崩溃恢复集成测试
@@ -340,6 +342,7 @@ docs/                # 架构和 Adapter 文档
 - [MVP 架构与边界](docs/architecture.md)
 - [Agent Adapter 生命周期与安全说明](docs/agent-adapters.md)
 - [TeamRoom 与 Agent 对话执行](docs/team-rooms.md)
+- [统一 Trace 与事件回放](docs/tracing.md)
 
 ## License
 

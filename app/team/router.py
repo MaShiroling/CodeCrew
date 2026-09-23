@@ -16,6 +16,7 @@ from app.team.models import (
     StoredChatMessage,
 )
 from app.team.store import TeamRoomStore
+from app.trace import TraceActorKind, TraceEvent, TraceEventType, TraceStore
 from app.verification import ReviewIssue, ReviewIssuePriority, ReviewVerdict
 
 
@@ -66,11 +67,18 @@ _ALLOWED_ROUTES: dict[MemberRole, frozenset[MemberRole]] = {
 class ConversationRouter:
     """Authenticate, authorize, validate, resolve, and persist one room message."""
 
-    def __init__(self, rooms: TeamRoomStore, artifacts: ArtifactStore) -> None:
+    def __init__(
+        self,
+        rooms: TeamRoomStore,
+        artifacts: ArtifactStore,
+        trace_store: TraceStore | None = None,
+    ) -> None:
         if rooms.database.path != artifacts.database.path:
             raise ValueError("conversation router stores must share one database")
         self.rooms = rooms
         self.artifacts = artifacts
+        self.trace_store = trace_store or TraceStore(rooms.database)
+        self.trace_store.initialize()
 
     def route(
         self,
@@ -96,10 +104,70 @@ class ConversationRouter:
         self._validate_artifacts(message)
         if message.type in {MessageType.REWORK_REQUEST, MessageType.REVIEW_APPROVED}:
             self._validate_review_report(message)
-        return self.rooms.append_message(
+        stored = self.rooms.append_message(
             message,
             recipient_ids=tuple(member.member_id for member in recipients),
         )
+        actor_kind = {
+            MemberKind.AGENT: TraceActorKind.AGENT,
+            MemberKind.SYSTEM: TraceActorKind.SYSTEM,
+            MemberKind.HUMAN: TraceActorKind.HUMAN,
+        }[sender.kind]
+        persisted_message = stored.message
+        self.trace_store.append(
+            TraceEvent(
+                task_id=persisted_message.task_id,
+                trace_id=persisted_message.trace_id,
+                type=TraceEventType.CHAT_MESSAGE_PERSISTED,
+                actor_kind=actor_kind,
+                actor_id=str(sender.member_id),
+                correlation_id=persisted_message.correlation_id,
+                causation_id=persisted_message.causation_id,
+                idempotency_key=f"chat-message:{persisted_message.message_id}",
+                occurred_at=persisted_message.created_at,
+                payload={
+                    "message_id": str(persisted_message.message_id),
+                    "sequence": stored.sequence,
+                    "message_type": persisted_message.type.value,
+                    "sender_role": sender.role.value,
+                    "recipient_ids": [
+                        str(delivery.recipient_id) for delivery in stored.deliveries
+                    ],
+                    "artifact_ids": [
+                        str(reference.artifact_id)
+                        for reference in persisted_message.artifacts
+                    ],
+                },
+            )
+        )
+        semantic_type = {
+            MessageType.REVIEW_APPROVED: TraceEventType.REVIEW_DECIDED,
+            MessageType.REWORK_REQUEST: TraceEventType.REVIEW_DECIDED,
+            MessageType.HUMAN_INPUT_REQUEST: TraceEventType.HUMAN_INPUT_REQUESTED,
+        }.get(persisted_message.type)
+        if semantic_type is not None:
+            self.trace_store.append(
+                TraceEvent(
+                    task_id=persisted_message.task_id,
+                    trace_id=persisted_message.trace_id,
+                    type=semantic_type,
+                    actor_kind=actor_kind,
+                    actor_id=str(sender.member_id),
+                    correlation_id=persisted_message.correlation_id,
+                    causation_id=persisted_message.message_id,
+                    idempotency_key=f"semantic-message:{persisted_message.message_id}",
+                    occurred_at=persisted_message.created_at,
+                    payload={
+                        "message_id": str(persisted_message.message_id),
+                        "message_type": persisted_message.type.value,
+                        "artifact_ids": [
+                            str(item.artifact_id)
+                            for item in persisted_message.artifacts
+                        ],
+                    },
+                )
+            )
+        return stored
 
     @staticmethod
     def _resolve_recipients(

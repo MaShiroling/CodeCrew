@@ -1,6 +1,6 @@
 from collections import deque
 from dataclasses import dataclass, field
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
 
@@ -37,6 +37,7 @@ from app.team.models import (
 )
 from app.team.router import ConversationRouter
 from app.team.turns import AgentTurnResult, AgentTurnRunner
+from app.trace import TraceActorKind, TraceEvent, TraceEventType
 from app.verification import (
     CompletionDecision,
     CompletionGuard,
@@ -234,18 +235,43 @@ class WorkflowDirectiveExecutor:
                 raise WorkflowExecutionError(
                     f"no Agent is configured for role {member.role.value}"
                 ) from exc
-            turn = await self.turns.run(
-                runtime.task,
-                room_id=runtime.room_id,
-                member_id=member.member_id,
-                agent_name=agent_name,
-                working_directory=runtime.worktree.worktree_path,
-                resume_native_session_id=runtime.native_session_ids.get(member.role),
-            )
+            try:
+                turn = await self.turns.run(
+                    runtime.task,
+                    room_id=runtime.room_id,
+                    member_id=member.member_id,
+                    agent_name=agent_name,
+                    working_directory=runtime.worktree.worktree_path,
+                    resume_native_session_id=runtime.native_session_ids.get(member.role),
+                )
+            except Exception as exc:
+                self.router.trace_store.append(
+                    TraceEvent(
+                        task_id=runtime.task.id,
+                        trace_id=runtime.task.trace_id,
+                        type=TraceEventType.AGENT_TURN_FAILED,
+                        actor_kind=TraceActorKind.AGENT,
+                        actor_id=str(member.member_id),
+                        correlation_id=source.message.correlation_id,
+                        causation_id=source.message.message_id,
+                        idempotency_key=(
+                            f"agent-turn-failed:{source.message.message_id}:"
+                            f"{member.member_id}:{uuid4()}"
+                        ),
+                        payload={
+                            "role": member.role.value,
+                            "agent_name": agent_name,
+                            "error_type": type(exc).__name__,
+                            "error": str(exc)[:2000],
+                        },
+                    )
+                )
+                raise
             if turn.session.native_session_id is not None:
                 runtime.native_session_ids[member.role] = turn.session.native_session_id
             turns.append(turn)
             events.extend(turn.routed_messages)
+            self._trace_agent_turn(runtime, member, source, turn)
             self.budget_guard.record_turn(
                 runtime.task,
                 room_id=runtime.room_id,
@@ -265,6 +291,21 @@ class WorkflowDirectiveExecutor:
     ) -> DirectiveExecutionResult:
         if runtime.task.state is not TaskState.NEEDS_HUMAN:
             runtime.task.transition_to(TaskState.NEEDS_HUMAN)
+        self.router.trace_store.append(
+            TraceEvent(
+                task_id=runtime.task.id,
+                trace_id=runtime.task.trace_id,
+                type=TraceEventType.BUDGET_EXCEEDED,
+                actor_kind=TraceActorKind.DETERMINISTIC,
+                actor_id="conversation_budget_guard",
+                correlation_id=source.message.correlation_id,
+                causation_id=source.message.message_id,
+                idempotency_key=(
+                    f"budget-exceeded:{source.message.message_id}:{violation.code.value}"
+                ),
+                payload=violation.model_dump(mode="json"),
+            )
+        )
         orchestrator = self._member_for_role(runtime.room_id, MemberRole.ORCHESTRATOR)
         human = self._member_for_role(runtime.room_id, MemberRole.HUMAN)
         event = self._publish_system_event(
@@ -296,6 +337,25 @@ class WorkflowDirectiveExecutor:
             plan=runtime.verification_plan,
         )
         runtime.latest_verification = report
+        self.router.trace_store.append(
+            TraceEvent(
+                task_id=runtime.task.id,
+                trace_id=runtime.task.trace_id,
+                type=TraceEventType.VERIFICATION_COMPLETED,
+                actor_kind=TraceActorKind.DETERMINISTIC,
+                actor_id="verifier",
+                correlation_id=source.message.correlation_id,
+                causation_id=source.message.message_id,
+                idempotency_key=(
+                    f"verification:{report.artifact.artifact_id}"
+                ),
+                payload={
+                    "passed": report.passed,
+                    "artifact_id": str(report.artifact.artifact_id),
+                    "check_count": len(report.checks),
+                },
+            )
+        )
         verifier = self._member_for_role(runtime.room_id, MemberRole.VERIFIER)
         reviewer = self._member_for_role(runtime.room_id, MemberRole.REVIEWER)
         event = self._publish_system_event(
@@ -333,6 +393,25 @@ class WorkflowDirectiveExecutor:
         review = self._load_review(review_reference, runtime.task)
         decision = self.completion_guard.evaluate(runtime.latest_verification, review)
         runtime.latest_completion = decision
+        self.router.trace_store.append(
+            TraceEvent(
+                task_id=runtime.task.id,
+                trace_id=runtime.task.trace_id,
+                type=TraceEventType.COMPLETION_DECIDED,
+                actor_kind=TraceActorKind.DETERMINISTIC,
+                actor_id="completion_guard",
+                correlation_id=source.message.correlation_id,
+                causation_id=source.message.message_id,
+                idempotency_key=f"completion:{decision.artifact.artifact_id}",
+                payload={
+                    "passed": decision.passed,
+                    "artifact_id": str(decision.artifact.artifact_id),
+                    "failed_conditions": [
+                        item.value for item in decision.failed_conditions
+                    ],
+                },
+            )
+        )
         orchestrator = self._member_for_role(runtime.room_id, MemberRole.ORCHESTRATOR)
         recipient = self._member_for_role(
             runtime.room_id,
@@ -422,6 +501,56 @@ class WorkflowDirectiveExecutor:
             )
         return matches[0]
 
+    def _trace_agent_turn(
+        self,
+        runtime: WorkflowRuntime,
+        member: RoomMember,
+        source: StoredChatMessage,
+        turn: AgentTurnResult,
+    ) -> None:
+        common = {
+            "task_id": runtime.task.id,
+            "trace_id": runtime.task.trace_id,
+            "actor_kind": TraceActorKind.AGENT,
+            "actor_id": str(member.member_id),
+            "correlation_id": source.message.correlation_id,
+            "causation_id": source.message.message_id,
+        }
+        self.router.trace_store.append(
+            TraceEvent(
+                **common,
+                type=TraceEventType.AGENT_TURN_STARTED,
+                idempotency_key=f"agent-turn-started:{turn.session.session_id}",
+                occurred_at=turn.session.started_at,
+                payload={
+                    "session_id": str(turn.session.session_id),
+                    "native_session_id": turn.session.native_session_id,
+                    "role": member.role.value,
+                    "agent_name": turn.session.agent_name,
+                    "input_message_ids": [
+                        str(item) for item in turn.consumed_message_ids
+                    ],
+                },
+            )
+        )
+        usage = turn.agent_result.token_usage
+        self.router.trace_store.append(
+            TraceEvent(
+                **common,
+                type=TraceEventType.AGENT_TURN_COMPLETED,
+                idempotency_key=f"agent-turn-completed:{turn.session.session_id}",
+                payload={
+                    "session_id": str(turn.session.session_id),
+                    "duration_ms": turn.agent_result.duration_ms,
+                    "input_tokens": usage.input_tokens if usage else None,
+                    "output_tokens": usage.output_tokens if usage else None,
+                    "routed_message_ids": [
+                        str(item.message.message_id) for item in turn.routed_messages
+                    ],
+                },
+            )
+        )
+
 
 class WorkflowEventLoop:
     """Continuously reduce and execute newly produced room events."""
@@ -464,6 +593,7 @@ class WorkflowEventLoop:
                 )
             event = queue.popleft()
             decision = self.controller.handle(runtime.task, event)
+            self._trace_decision(runtime, event, decision)
             decisions.append(decision)
             processed += 1
             if decision.replayed:
@@ -509,3 +639,54 @@ class WorkflowEventLoop:
                     event.message.message_id,
                     recipient_id=delivery.recipient_id,
                 )
+
+    def _trace_decision(
+        self,
+        runtime: WorkflowRuntime,
+        event: StoredChatMessage,
+        decision: WorkflowDecision,
+    ) -> None:
+        trace_store = self.executor.router.trace_store
+        trace_store.append(
+            TraceEvent(
+                task_id=runtime.task.id,
+                trace_id=runtime.task.trace_id,
+                type=TraceEventType.WORKFLOW_DECISION,
+                actor_kind=TraceActorKind.DETERMINISTIC,
+                actor_id="workflow_controller",
+                correlation_id=event.message.correlation_id,
+                causation_id=event.message.message_id,
+                idempotency_key=f"workflow-decision:{event.message.message_id}",
+                occurred_at=event.message.created_at,
+                payload={
+                    "message_id": str(event.message.message_id),
+                    "state_before": decision.state_before.value,
+                    "state_after": decision.state_after.value,
+                    "rework_rounds_before": decision.rework_rounds_before,
+                    "rework_rounds_after": decision.rework_rounds_after,
+                    "directives": [
+                        item.model_dump(mode="json") for item in decision.directives
+                    ],
+                },
+            )
+        )
+        if decision.state_before is decision.state_after:
+            return
+        trace_store.append(
+            TraceEvent(
+                task_id=runtime.task.id,
+                trace_id=runtime.task.trace_id,
+                type=TraceEventType.TASK_STATE_CHANGED,
+                actor_kind=TraceActorKind.DETERMINISTIC,
+                actor_id="workflow_controller",
+                correlation_id=event.message.correlation_id,
+                causation_id=event.message.message_id,
+                idempotency_key=f"task-state:{event.message.message_id}",
+                occurred_at=event.message.created_at,
+                payload={
+                    "from": decision.state_before.value,
+                    "to": decision.state_after.value,
+                    "path": [item.value for item in decision.transitions],
+                },
+            )
+        )

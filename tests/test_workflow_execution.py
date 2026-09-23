@@ -31,6 +31,7 @@ from app.team import (
     WorkflowEventLoop,
     WorkflowRuntime,
 )
+from app.trace import TraceEventType
 from app.verification import (
     CompletionGuard,
     VerificationCheckKind,
@@ -295,3 +296,13 @@ async def test_event_loop_runs_agents_verifier_and_completion_guard(tmp_path: Pa
     ]
     assert rooms.pending_for(members[MemberRole.ORCHESTRATOR].member_id) == ()
     assert len(rooms.pending_for(members[MemberRole.HUMAN].member_id)) == 1
+    trace = router.trace_store.list(trace_id=task.trace_id)
+    trace_types = [item.event.type for item in trace]
+    assert trace_types.count(TraceEventType.CHAT_MESSAGE_PERSISTED) == 6
+    assert trace_types.count(TraceEventType.WORKFLOW_DECISION) == 6
+    assert trace_types.count(TraceEventType.TASK_STATE_CHANGED) == 5
+    assert trace_types.count(TraceEventType.AGENT_TURN_STARTED) == 3
+    assert trace_types.count(TraceEventType.AGENT_TURN_COMPLETED) == 3
+    assert trace_types.count(TraceEventType.VERIFICATION_COMPLETED) == 1
+    assert trace_types.count(TraceEventType.REVIEW_DECIDED) == 1
+    assert trace_types.count(TraceEventType.COMPLETION_DECIDED) == 1

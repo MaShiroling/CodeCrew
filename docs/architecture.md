@@ -55,7 +55,8 @@ state transitions.
 - `PermissionGate`: validates commands before execution and changed paths after execution.
 - `Verifier`: produces deterministic build, public-test, hidden-test, and permission evidence.
 - `CompletionGuard`: pure policy evaluation; agent prose is never evidence.
-- `TraceStore`: append-only events sharing a task `trace_id` for replay and attribution.
+- `TraceStore`: append-only, idempotent events sharing a task `trace_id`, with correlation and
+  causation links plus cursor reads for replay, attribution, and future SSE delivery.
 
 ## Dependency direction
 

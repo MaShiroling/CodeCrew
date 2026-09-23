@@ -19,6 +19,7 @@ from app.team import (
     TeamRoom,
     TeamRoomStore,
 )
+from app.trace import TraceEventType
 
 
 def make_context(tmp_path: Path):
@@ -101,6 +102,37 @@ def test_planner_and_implementer_can_exchange_direct_messages(tmp_path: Path) ->
     assert [delivery.recipient_id for delivery in routed.deliveries] == [
         implementer.member_id
     ]
+    trace = router.trace_store.list(
+        trace_id=room.trace_id,
+        type=TraceEventType.CHAT_MESSAGE_PERSISTED,
+    )
+    assert trace[0].event.payload["message_id"] == str(outgoing.message_id)
+
+
+def test_idempotent_message_retry_does_not_duplicate_trace_event(tmp_path: Path) -> None:
+    router, room, members, _ = make_context(tmp_path)
+    planner = members[MemberRole.PLANNER]
+    implementer = members[MemberRole.IMPLEMENTER]
+    outgoing = direct_message(
+        room,
+        planner,
+        implementer,
+        idempotency_key="stable-route",
+    )
+
+    first = router.route(outgoing, authenticated_sender_id=planner.member_id)
+    repeated = router.route(
+        outgoing.model_copy(update={"message_id": uuid4()}),
+        authenticated_sender_id=planner.member_id,
+    )
+
+    assert repeated == first
+    trace = router.trace_store.list(
+        trace_id=room.trace_id,
+        type=TraceEventType.CHAT_MESSAGE_PERSISTED,
+    )
+    assert len(trace) == 1
+    assert trace[0].event.payload["message_id"] == str(first.message.message_id)
 
 
 def test_role_and_room_targets_resolve_to_authorized_members(tmp_path: Path) -> None:
