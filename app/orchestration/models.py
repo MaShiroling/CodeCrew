@@ -41,10 +41,12 @@ ALLOWED_TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
         {TaskState.VERIFYING, TaskState.FAILED, TaskState.CANCELLED, TaskState.NEEDS_HUMAN}
     ),
     TaskState.VERIFYING: frozenset(
-        {TaskState.REVIEWING, TaskState.REWORK, TaskState.FAILED, TaskState.NEEDS_HUMAN}
+        {TaskState.REVIEWING, TaskState.REWORK, TaskState.FAILED, TaskState.CANCELLED,
+         TaskState.NEEDS_HUMAN}
     ),
     TaskState.REVIEWING: frozenset(
-        {TaskState.COMPLETED, TaskState.REWORK, TaskState.FAILED, TaskState.NEEDS_HUMAN}
+        {TaskState.COMPLETED, TaskState.REWORK, TaskState.FAILED, TaskState.CANCELLED,
+         TaskState.NEEDS_HUMAN}
     ),
     TaskState.REWORK: frozenset({TaskState.IMPLEMENTING, TaskState.NEEDS_HUMAN, TaskState.CANCELLED}),
     TaskState.COMPLETED: frozenset(),

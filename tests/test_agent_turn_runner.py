@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from uuid import uuid4
 
@@ -104,6 +105,42 @@ def send_trigger(router, room, sender, recipient, **updates):
     return router.route(
         ChatMessage(**values), authenticated_sender_id=sender.member_id
     )
+
+
+@pytest.mark.asyncio
+async def test_cancelling_turn_stops_adapter_and_preserves_pending_message(tmp_path: Path) -> None:
+    runner, router, rooms, _, adapter, task, room, members = make_context(
+        tmp_path, FakeAgentScenario(block_until_cancel=True)
+    )
+    implementer = members[MemberRole.IMPLEMENTER]
+    trigger = send_trigger(router, room, members[MemberRole.ORCHESTRATOR], implementer)
+    cancelled_sessions = []
+    original_cancel = adapter.cancel
+
+    async def tracked_cancel(session_id):
+        cancelled_sessions.append(session_id)
+        await original_cancel(session_id)
+
+    adapter.cancel = tracked_cancel
+    turn = asyncio.create_task(
+        runner.run(
+            task,
+            room_id=room.room_id,
+            member_id=implementer.member_id,
+            agent_name=adapter.name,
+            working_directory=tmp_path,
+        )
+    )
+    for _ in range(100):
+        if adapter.requests:
+            break
+        await asyncio.sleep(0.01)
+    assert adapter.requests
+    turn.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await turn
+    assert len(cancelled_sessions) == 1
+    assert rooms.pending_for(implementer.member_id) == (trigger,)
 
 
 @pytest.mark.asyncio

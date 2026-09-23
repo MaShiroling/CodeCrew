@@ -1,3 +1,4 @@
+import asyncio
 import hashlib
 import json
 from pathlib import Path
@@ -154,8 +155,12 @@ class AgentTurnRunner:
                 session = await adapter.start(request)
             else:
                 session = await adapter.resume(resume_native_session_id, request)
-            events = tuple([event async for event in adapter.stream(session.session_id)])
-            result = await adapter.wait(session.session_id)
+            try:
+                events = tuple([event async for event in adapter.stream(session.session_id)])
+                result = await adapter.wait(session.session_id)
+            except asyncio.CancelledError:
+                await adapter.cancel(session.session_id)
+                raise
 
         if result.trace_id != task.trace_id:
             raise AgentTurnError("agent result belongs to another trace")

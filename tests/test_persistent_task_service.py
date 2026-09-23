@@ -10,6 +10,7 @@ from app.api.persistent_service import PersistentTaskService
 from app.api.service import TaskInvalidRepository, TaskStateConflict
 from app.main import create_app
 from app.orchestration.models import Task, TaskState
+from app.recovery import EvidenceRecoveryService, WorkflowRecoveryCoordinator
 from app.storage import ArtifactStore, RuntimeContextRepository, SQLiteDatabase, TaskRepository
 from app.team import ConversationRouter, MemberRole, TeamRoomStore, WorkflowController
 from app.verification import VerificationPlan
@@ -86,14 +87,32 @@ async def test_create_bootstraps_durable_workflow_and_dispatches(tmp_path: Path)
         created,
     )
 
-    with pytest.raises(TaskStateConflict, match="running"):
-        await service.cancel_task(created.task_id, CancelTaskRequest(expected_revision=1))
-
     loop.release.set()
     await service.wait_for(created.task_id)
     persisted = await service.get_task(created.task_id)
     assert persisted.state is TaskState.PLANNING
     assert persisted.revision == 2
+
+
+@pytest.mark.asyncio
+async def test_cancel_running_workflow_waits_then_persists_terminal_state(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path)
+    service, loop = make_service(tmp_path)
+    created = await service.create_task(
+        CreateTaskRequest(issue="Fix parser", repository_path=str(repository))
+    )
+    await asyncio.wait_for(loop.started.wait(), timeout=2)
+
+    cancelled = await service.cancel_task(
+        created.task_id, CancelTaskRequest(expected_revision=1, reason="withdrawn")
+    )
+
+    assert cancelled.state is TaskState.CANCELLED
+    assert cancelled.revision == 2
+    assert not loop.release.is_set()
+    assert (await service.get_task(created.task_id)).state is TaskState.CANCELLED
+    with pytest.raises(TaskStateConflict, match="revision"):
+        await service.cancel_task(created.task_id, CancelTaskRequest(expected_revision=1))
 
 
 @pytest.mark.asyncio
@@ -120,6 +139,33 @@ async def test_cancel_persisted_unstarted_task_and_reject_stale_revision(tmp_pat
     assert service.tasks.get(task.id).task.metadata["cancellation_reason"] == "withdrawn"
     with pytest.raises(TaskStateConflict, match="revision"):
         await service.cancel_task(task.id, CancelTaskRequest(expected_revision=1))
+
+
+@pytest.mark.asyncio
+async def test_startup_dispatches_persisted_unprocessed_issue(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path)
+    original, _ = make_service(tmp_path)
+    created = await original.create_task(
+        CreateTaskRequest(issue="Fix parser", repository_path=str(repository))
+    )
+    await original.shutdown()
+
+    resumed, loop = make_service(tmp_path)
+    recovery = WorkflowRecoveryCoordinator(
+        tasks=resumed.tasks,
+        contexts=resumed.contexts,
+        rooms=resumed.rooms,
+        traces=resumed.router.trace_store,
+        worktrees=resumed.worktrees,
+        evidence=EvidenceRecoveryService(resumed.router.artifacts, resumed.router.trace_store),
+        event_loop=loop,
+    )
+    await resumed.startup(recovery)
+    await asyncio.wait_for(loop.started.wait(), timeout=2)
+    assert loop.received[0].task.id == created.task_id
+    loop.release.set()
+    await resumed.wait_for(created.task_id)
+    assert (await resumed.get_task(created.task_id)).state is TaskState.PLANNING
 
 
 def test_http_routes_use_persistent_service(tmp_path: Path) -> None:

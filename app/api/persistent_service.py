@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 from app.api.models import CancelTaskRequest, CreateTaskRequest, TaskPage, TaskView
 from app.api.service import TaskInvalidRepository, TaskNotFound, TaskStateConflict
 from app.orchestration.models import InvalidTaskTransition, Task, TaskState
+from app.recovery import RecoveryDisposition, RecoveryEntry, WorkflowRecoveryCoordinator
 from app.storage import (
     RuntimeContextRepository,
     StaleTaskRevisionError,
@@ -36,8 +37,7 @@ from app.workspace import WorktreeError, WorktreeManager
 class PersistentTaskService:
     """Create durable workflow inputs, then dispatch an in-process event loop.
 
-    One service instance owns its active runs. Cross-process dispatch and graceful
-    shutdown are intentionally deferred to the application lifecycle stage.
+    One service instance owns its active runs; deployment must use a single worker.
     """
 
     def __init__(
@@ -69,6 +69,7 @@ class PersistentTaskService:
         self.verification_plan = verification_plan
         self.agent_names = dict(agent_names)
         self._runs: dict[UUID, asyncio.Task[None]] = {}
+        self._cancelling: set[UUID] = set()
         self._lock = asyncio.Lock()
         self.tasks.initialize()
         self.contexts.initialize()
@@ -190,8 +191,23 @@ class PersistentTaskService:
                 raise TaskNotFound(str(exc)) from exc
             if snapshot.revision != request.expected_revision:
                 raise TaskStateConflict("task revision changed")
-            if task_id in self._runs:
-                raise TaskStateConflict("task is running; active cancellation is not yet supported")
+            if task_id in self._cancelling:
+                raise TaskStateConflict("task cancellation is already in progress")
+            if snapshot.task.is_terminal:
+                raise TaskStateConflict("terminal task cannot be cancelled")
+            self._cancelling.add(task_id)
+            run = self._runs.get(task_id)
+            if run is not None:
+                run.cancel()
+        try:
+            if run is not None:
+                try:
+                    await run
+                except asyncio.CancelledError:
+                    pass
+            snapshot = self.tasks.get(task_id)
+            if snapshot.revision != request.expected_revision:
+                raise TaskStateConflict("task revision changed while cancelling")
             task = snapshot.task
             try:
                 task.transition_to(TaskState.CANCELLED)
@@ -200,9 +216,64 @@ class PersistentTaskService:
             if request.reason:
                 task.metadata["cancellation_reason"] = request.reason
             try:
-                return self._view(self.tasks.save(task, expected_revision=snapshot.revision))
+                saved = self.tasks.save(task, expected_revision=snapshot.revision)
             except StaleTaskRevisionError as exc:
                 raise TaskStateConflict(str(exc)) from exc
+            self.router.trace_store.append(
+                TraceEvent(
+                    task_id=task.id,
+                    trace_id=task.trace_id,
+                    type=TraceEventType.TASK_STATE_CHANGED,
+                    actor_kind=TraceActorKind.HUMAN,
+                    actor_id="task_api",
+                    idempotency_key=f"task-cancelled:{task.id}",
+                    payload={"from": snapshot.task.state.value, "to": TaskState.CANCELLED.value},
+                )
+            )
+            return self._view(saved)
+        finally:
+            async with self._lock:
+                self._cancelling.discard(task_id)
+                if run is not None and run.done():
+                    self._runs.pop(task_id, None)
+
+    async def startup(self, recovery: WorkflowRecoveryCoordinator) -> None:
+        """Classify persisted tasks and dispatch only unambiguous pending events."""
+        entries = await recovery.scan()
+        async with self._lock:
+            for entry in entries:
+                if entry.disposition is not RecoveryDisposition.RESUMABLE:
+                    continue
+                if entry.task_id in self._runs or entry.task_id in self._cancelling:
+                    continue
+                self._runs[entry.task_id] = asyncio.create_task(
+                    self._resume(recovery, entry), name=f"codecrew-recovery-{entry.task_id}"
+                )
+
+    async def _resume(
+        self, recovery: WorkflowRecoveryCoordinator, entry: RecoveryEntry
+    ) -> None:
+        try:
+            await recovery.resume(entry)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - isolate recovered task failures
+            snapshot = self.tasks.get(entry.task_id)
+            self._mark_needs_human(
+                snapshot, f"workflow resume failed: {type(exc).__name__}: {exc}"
+            )
+        finally:
+            async with self._lock:
+                self._runs.pop(entry.task_id, None)
+
+    async def shutdown(self) -> None:
+        """Stop local executions without declaring persisted tasks cancelled."""
+        async with self._lock:
+            runs = tuple(self._runs.values())
+            for run in runs:
+                run.cancel()
+        if runs:
+            await asyncio.gather(*runs, return_exceptions=True)
 
     async def wait_for(self, task_id: UUID) -> None:
         """Wait for a locally dispatched run; useful for controlled shutdown/tests."""

@@ -1,15 +1,35 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from app.api.models import ApiErrorDetail, ApiErrorResponse, ApiValidationIssue
+from app.api.runtime import TaskRuntime
 from app.api.service import TaskApiServiceError, TaskService
 from app.api.tasks import router as tasks_router
 from app.config import get_settings
 
 
-def create_app(*, task_service: TaskService | None = None) -> FastAPI:
-    application = FastAPI(title="CodeCrew", version="0.1.0")
+def create_app(
+    *, task_service: TaskService | None = None, runtime: TaskRuntime | None = None
+) -> FastAPI:
+    if task_service is not None and runtime is not None:
+        raise ValueError("provide either task_service or runtime, not both")
+
+    @asynccontextmanager
+    async def lifespan(_application: FastAPI):
+        if runtime is not None:
+            await runtime.service.startup(runtime.recovery)
+        try:
+            yield
+        finally:
+            if runtime is not None:
+                await runtime.service.shutdown()
+
+    application = FastAPI(title="CodeCrew", version="0.1.0", lifespan=lifespan)
+    if runtime is not None:
+        task_service = runtime.service
     if task_service is not None:
         application.state.task_service = task_service
 
