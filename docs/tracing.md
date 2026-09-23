@@ -22,6 +22,7 @@ The current runtime records:
 - failed Agent Turn attempts with bounded error summaries;
 - deterministic Verification and CompletionGuard results with Artifact IDs;
 - conversation-budget violations and their human escalation.
+- recovery scan decisions, including resumable, waiting, needs-human, and terminal outcomes.
 
 ## Reliability semantics
 

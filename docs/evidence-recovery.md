@@ -15,4 +15,17 @@
 
 如果新的验证或评审发生在旧完成结论之后，旧结论会被视为过期而不注入运行时。
 缺失、损坏、跨任务或跨 trace 的证据会终止恢复并抛出 `EvidenceRecoveryError`。
-下一步的 Recovery Coordinator 将负责启动扫描、任务分级和安全续跑策略。
+
+## Workflow Recovery Coordinator
+
+`WorkflowRecoveryCoordinator.scan()` 分页扫描非终态任务，只读检查运行上下文、TeamRoom、
+Worktree 和证据链，并记录 `RECOVERY_DECIDED` Trace 事件。它按以下规则分类：
+
+- `resumable`：存在尚无 WorkflowController 决策的 Orchestrator 待处理消息；
+- `waiting`：运行状态完整，但当前没有 Orchestrator 待处理消息；
+- `needs_human`：上下文、房间、Worktree 或证据无效，或消息已产生状态决策但无法确认指令是否执行；
+- `terminal`：任务已经完成、失败、取消或转人工。
+
+`resume()` 仅接受 `resumable` 项，并在运行事件循环后保存 Task 状态与 Agent 原生会话 ID。
+`recover_startup()` 提供启动时的扫描和安全续跑入口；Agent 执行失败后会转人工，避免自动重放
+存在歧义的副作用。调用方仍需在应用生命周期中显式调用该入口，FastAPI 启动钩子留待后续集成。

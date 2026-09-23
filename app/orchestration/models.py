@@ -31,7 +31,9 @@ TERMINAL_STATES = {
 }
 
 ALLOWED_TRANSITIONS: dict[TaskState, frozenset[TaskState]] = {
-    TaskState.CREATED: frozenset({TaskState.PLANNING, TaskState.CANCELLED}),
+    TaskState.CREATED: frozenset(
+        {TaskState.PLANNING, TaskState.CANCELLED, TaskState.NEEDS_HUMAN}
+    ),
     TaskState.PLANNING: frozenset(
         {TaskState.IMPLEMENTING, TaskState.FAILED, TaskState.CANCELLED, TaskState.NEEDS_HUMAN}
     ),

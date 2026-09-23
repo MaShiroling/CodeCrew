@@ -9,8 +9,8 @@ Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不
 
 > 当前状态：底层协作、隔离执行、验证、完成守卫、独立只读 Reviewer、最多两轮
 > 返工闭环、TeamRoom、AgentTurnRunner、事件驱动 WorkflowController 和自动指令循环
-> 已实现；任务/运行上下文持久化、统一 Trace 和验证证据恢复已完成，自动恢复协调器
-> 与产品入口仍在开发中。
+> 已实现；任务/运行上下文持久化、统一 Trace、验证证据恢复和 Workflow Recovery
+> Coordinator 已完成。应用启动钩子和产品入口仍在开发中。
 
 ## 目标工作流
 
@@ -202,7 +202,7 @@ flowchart TB
 
 以下内容仍属于开发计划，不能视为现有功能：
 
-- 进程重启后的自动启动扫描与运行队列恢复
+- FastAPI 启动钩子和部署级自动恢复调度
 - Trace 与领域记录不一致时的自动回填
 - SSE 实时事件和完整任务 API
 - CLI 产品入口与任务控制台
@@ -332,7 +332,7 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段六之二：运行上下文持久化
 - [x] 阶段六之三：TraceStore 与统一事件记录
 - [x] 阶段六之四：验证证据恢复
-- [ ] 阶段六之五：Workflow Recovery Coordinator
+- [x] 阶段六之五：Workflow Recovery Coordinator
 - [ ] 阶段六之六：崩溃恢复集成测试
 - [ ] 阶段六后续：SSE、任务 API、CLI 和端到端 MVP
 - [ ] 阶段七：多语言编码任务评测集
@@ -343,6 +343,7 @@ docs/                # 架构和 Adapter 文档
 - [MVP 架构与边界](docs/architecture.md)
 - [Agent Adapter 生命周期与安全说明](docs/agent-adapters.md)
 - [TeamRoom 与 Agent 对话执行](docs/team-rooms.md)
+- [验证证据与任务恢复](docs/evidence-recovery.md)
 - [统一 Trace 与事件回放](docs/tracing.md)
 
 ## License

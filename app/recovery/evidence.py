@@ -94,11 +94,15 @@ class EvidenceRecoveryService:
         completion: CompletionDecision | None = None
         completion_sequence: int | None = None
         if completion_event is not None:
-            newest_input_sequence = max(
-                event.sequence
-                for event in (verification_event, review_event)
-                if event is not None
-            ) if verification_event is not None or review_event is not None else 0
+            newest_input_sequence = (
+                max(
+                    event.sequence
+                    for event in (verification_event, review_event)
+                    if event is not None
+                )
+                if verification_event is not None or review_event is not None
+                else 0
+            )
             if completion_event.sequence > newest_input_sequence:
                 completion, verification_id, review_id = self._load_completion(
                     self._event_artifact_id(completion_event),
@@ -155,21 +159,13 @@ class EvidenceRecoveryService:
                 trace_id=trace_id,
             )
             self._validate_identity(content, task_id=task_id, trace_id=trace_id)
-            checks = tuple(
-                VerificationCheck.model_validate(item) for item in content["checks"]
-            )
+            checks = tuple(VerificationCheck.model_validate(item) for item in content["checks"])
             passed = self._require_bool(content, "passed")
-            if passed != all(
-                check.status is VerificationStatus.PASSED for check in checks
-            ):
-                raise EvidenceRecoveryError(
-                    "verification passed flag disagrees with its checks"
-                )
+            if passed != all(check.status is VerificationStatus.PASSED for check in checks):
+                raise EvidenceRecoveryError("verification passed flag disagrees with its checks")
             for check in checks:
                 for evidence in check.evidence:
-                    self._validate_embedded_reference(
-                        evidence, task_id=task_id, trace_id=trace_id
-                    )
+                    self._validate_embedded_reference(evidence, task_id=task_id, trace_id=trace_id)
 
             change_set = self._load_change_set(
                 self._uuid(content, "change_set_artifact_id"),
@@ -183,9 +179,7 @@ class EvidenceRecoveryService:
                 else None
             )
             if expected_diff != actual_diff:
-                raise EvidenceRecoveryError(
-                    "verification and change-set diff references disagree"
-                )
+                raise EvidenceRecoveryError("verification and change-set diff references disagree")
             permission = self._load_permission_report(
                 self._uuid(content, "permission_artifact_id"),
                 task_id=task_id,
@@ -194,9 +188,7 @@ class EvidenceRecoveryService:
             if permission.task_id != change_set.task_id:
                 raise EvidenceRecoveryError("permission evidence crosses task boundaries")
             command_results = tuple(
-                self._load_command_result(
-                    UUID(value), task_id=task_id, trace_id=trace_id
-                )
+                self._load_command_result(UUID(value), task_id=task_id, trace_id=trace_id)
                 for value in content.get("command_audit_artifact_ids", [])
             )
             return VerificationReport(
@@ -262,9 +254,7 @@ class EvidenceRecoveryService:
             ValidationError,
             json.JSONDecodeError,
         ) as exc:
-            raise EvidenceRecoveryError(
-                f"invalid review artifact {artifact_id}: {exc}"
-            ) from exc
+            raise EvidenceRecoveryError(f"invalid review artifact {artifact_id}: {exc}") from exc
 
     def load_completion(
         self,
@@ -273,9 +263,7 @@ class EvidenceRecoveryService:
         task_id: UUID,
         trace_id: UUID,
     ) -> CompletionDecision:
-        decision, _, _ = self._load_completion(
-            artifact_id, task_id=task_id, trace_id=trace_id
-        )
+        decision, _, _ = self._load_completion(artifact_id, task_id=task_id, trace_id=trace_id)
         return decision
 
     def _load_completion(
@@ -298,9 +286,7 @@ class EvidenceRecoveryService:
             )
             for condition in conditions:
                 for evidence in condition.evidence:
-                    self._validate_embedded_reference(
-                        evidence, task_id=task_id, trace_id=trace_id
-                    )
+                    self._validate_embedded_reference(evidence, task_id=task_id, trace_id=trace_id)
             decision = CompletionDecision(
                 task_id=task_id,
                 trace_id=trace_id,
@@ -380,9 +366,7 @@ class EvidenceRecoveryService:
         )
         passed = self._require_bool(content, "passed")
         if passed != (not violations):
-            raise EvidenceRecoveryError(
-                "permission passed flag disagrees with recorded violations"
-            )
+            raise EvidenceRecoveryError("permission passed flag disagrees with recorded violations")
         return PermissionReport(
             task_id=task_id,
             trace_id=trace_id,
@@ -580,9 +564,7 @@ class EvidenceRecoveryService:
             )
 
     @staticmethod
-    def _validate_identity(
-        content: dict[str, Any], *, task_id: UUID, trace_id: UUID
-    ) -> None:
+    def _validate_identity(content: dict[str, Any], *, task_id: UUID, trace_id: UUID) -> None:
         if content.get("task_id") != str(task_id):
             raise EvidenceRecoveryError("artifact payload has a different task ID")
         if content.get("trace_id") != str(trace_id):

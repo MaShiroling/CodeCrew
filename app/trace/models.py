@@ -16,6 +16,7 @@ class TraceEventType(str, Enum):
     VERIFICATION_COMPLETED = "verification_completed"
     REVIEW_DECIDED = "review_decided"
     COMPLETION_DECIDED = "completion_decided"
+    RECOVERY_DECIDED = "recovery_decided"
     BUDGET_EXCEEDED = "budget_exceeded"
     HUMAN_INPUT_REQUESTED = "human_input_requested"
     SYSTEM_ERROR = "system_error"
