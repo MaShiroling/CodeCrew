@@ -82,6 +82,14 @@ async def test_create_bootstraps_durable_workflow_and_dispatches(tmp_path: Path)
     assert service.contexts.get(created.task_id).context.worktree.worktree_path.exists()
     assert events[0].message.content == "Fix parser"
     assert len(events[0].deliveries) == 2
+    trace_events = await service.list_trace_events(
+        created.task_id, after_sequence=0, limit=100
+    )
+    assert trace_events
+    assert all(item.event.task_id == created.task_id for item in trace_events)
+    assert await service.list_trace_events(
+        created.task_id, after_sequence=trace_events[-1].sequence, limit=100
+    ) == ()
     assert (await service.get_task(created.task_id)).revision == 1
     assert (await service.list_tasks(state=TaskState.CREATED, limit=1, offset=0)).items == (
         created,

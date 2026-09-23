@@ -30,6 +30,7 @@ from app.team.models import (
 from app.team.router import ConversationRouter
 from app.team.store import TeamRoomStore
 from app.trace import TraceActorKind, TraceEvent, TraceEventType
+from app.trace.models import StoredTraceEvent
 from app.verification import VerificationPlan
 from app.workspace import WorktreeError, WorktreeManager
 
@@ -179,6 +180,20 @@ class PersistentTaskService:
             limit=limit,
             offset=offset,
             next_offset=offset + limit if len(snapshots) > limit else None,
+        )
+
+    async def list_trace_events(
+        self, task_id: UUID, *, after_sequence: int, limit: int
+    ) -> tuple[StoredTraceEvent, ...]:
+        try:
+            snapshot = self.tasks.get(task_id)
+        except TaskNotFoundError as exc:
+            raise TaskNotFound(str(exc)) from exc
+        return self.router.trace_store.list(
+            task_id=task_id,
+            trace_id=snapshot.task.trace_id,
+            after_sequence=after_sequence,
+            limit=limit,
         )
 
     async def cancel_task(

@@ -1,4 +1,4 @@
-# 任务 API 契约与运行时服务（阶段七第 1～3 步）
+# 任务 API 契约与运行时服务（阶段七第 1～4 步）
 
 所有任务路由以 `/api/v1/tasks` 为前缀。当前已实现路由、Pydantic 请求/响应模型、
 OpenAPI 描述和统一错误响应。`PersistentTaskService` 可通过
@@ -12,6 +12,7 @@ OpenAPI 描述和统一错误响应。`PersistentTaskService` 可通过
 | `GET` | `/api/v1/tasks` | `state?`, `limit`（1～100）, `offset` | `200 TaskPage` |
 | `GET` | `/api/v1/tasks/{task_id}` | UUID 路径参数 | `200 TaskView` |
 | `POST` | `/api/v1/tasks/{task_id}/cancel` | `expected_revision`, `reason?` | `200 TaskView` |
+| `GET` | `/api/v1/tasks/{task_id}/events` | `after_sequence?` 或 `Last-Event-ID` | `200 text/event-stream` |
 
 `TaskView` 包含 `task_id`、`trace_id`、Issue、仓库路径、状态、返工轮次、乐观锁
 `revision` 和创建/更新时间。列表响应返回 `items`、`limit`、`offset` 和可选的
@@ -44,4 +45,12 @@ Planner 与 Orchestrator），然后在本进程异步启动事件循环。查�
 配置，不能仅靠启动 Uvicorn 获得真实 Agent 执行。运行时当前仅支持**单进程/单 worker**：
 尚无跨进程租约与派发锁；也没有真正的 Kimi K3 / DeepSeek Flash 适配器。
 
-下一步是 SSE 事件流与断线续接，之后再补端到端 API 与 CLI 入口测试。
+事件流按 TraceStore 的全局递增 `sequence` 发送，事件帧包含 `id`、事件类型和 JSON
+`data`（含序号与完整的小型 trace 事件）。客户端断线后带 `Last-Event-ID` 重连，或首次
+连接使用 `?after_sequence=N`；两者同时存在时以请求头为准。序号可能因其他任务的事件
+而跳号，客户端不应假设连续。路由先校验任务存在，再回放历史事件并轮询新事件；任务
+终结且积压事件已发送完毕后关闭连接。空闲时使用 SSE 注释心跳，心跳不占用游标。
+这只是持久化事件投递，不是成功判定，也不提供未经授权的对外访问控制；当前 API 应
+仅在可信本地环境使用。
+
+下一步补端到端 API 测试与 CLI 入口。

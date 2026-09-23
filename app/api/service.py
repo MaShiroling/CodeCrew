@@ -3,6 +3,7 @@ from uuid import UUID
 
 from app.api.models import CancelTaskRequest, CreateTaskRequest, TaskPage, TaskView
 from app.orchestration.models import TaskState
+from app.trace import StoredTraceEvent
 
 
 class TaskApiServiceError(RuntimeError):
@@ -44,3 +45,7 @@ class TaskService(Protocol):
     async def cancel_task(
         self, task_id: UUID, request: CancelTaskRequest
     ) -> TaskView: ...
+
+    async def list_trace_events(
+        self, task_id: UUID, *, after_sequence: int, limit: int
+    ) -> tuple[StoredTraceEvent, ...]: ...

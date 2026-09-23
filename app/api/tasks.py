@@ -1,8 +1,9 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Request, status
+from fastapi import APIRouter, Depends, Header, Query, Request, status
 
+from app.api.events import EventStreamResponse, stream_task_events
 from app.api.models import (
     ApiErrorResponse,
     CancelTaskRequest,
@@ -64,6 +65,31 @@ async def list_tasks(
 @router.get("/{task_id}", response_model=TaskView, responses=ERROR_RESPONSES)
 async def get_task(task_id: UUID, service: TaskServiceDependency) -> TaskView:
     return await service.get_task(task_id)
+
+
+@router.get(
+    "/{task_id}/events",
+    response_class=EventStreamResponse,
+    responses={
+        200: {"description": "Task trace event stream", "content": {"text/event-stream": {}}},
+        404: ERROR_RESPONSES[404],
+        422: ERROR_RESPONSES[422],
+        503: ERROR_RESPONSES[503],
+    },
+)
+async def task_events(
+    task_id: UUID,
+    request: Request,
+    service: TaskServiceDependency,
+    after_sequence: Annotated[int, Query(ge=0)] = 0,
+    last_event_id: Annotated[int | None, Header(alias="Last-Event-ID", ge=0)] = None,
+) -> EventStreamResponse:
+    await service.get_task(task_id)  # Return a normal 404 before streaming starts.
+    cursor = last_event_id if last_event_id is not None else after_sequence
+    return EventStreamResponse(
+        stream_task_events(request, service, task_id, after_sequence=cursor),
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/{task_id}/cancel", response_model=TaskView, responses=ERROR_RESPONSES)
