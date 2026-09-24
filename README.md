@@ -390,6 +390,7 @@ docs/                # 架构和 Adapter 文档
 - [验证证据与任务恢复](docs/evidence-recovery.md)
 - [统一 Trace 与事件回放](docs/tracing.md)
 - [任务 API 契约](docs/task-api.md)
+- [本地 UI 任务操作契约（待实现）](docs/ui-task-controls.md)
 - [真实模型接入决策与验收](docs/real-model-integration.md)
 - [团队人格系统](docs/personas.md)
 - [项目状态与后续路线](docs/project-status.md)
