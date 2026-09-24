@@ -1,3 +1,8 @@
+import shutil
+import subprocess
+from pathlib import Path
+
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
@@ -21,3 +26,11 @@ def test_task_ui_serves_local_assets_without_task_runtime() -> None:
         assert "workspace-grid" in stylesheet.text
         assert client.get("/ui/assets/missing.js").status_code == 404
         assert client.get("/health").status_code == 200
+
+
+def test_live_ui_state_transitions_with_mock_eventsource() -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is not installed; browser script harness unavailable")
+    script = Path(__file__).with_name("ui_live.test.cjs")
+    subprocess.run(["node", "--check", str(script)], check=True)
+    subprocess.run(["node", str(script)], check=True)
