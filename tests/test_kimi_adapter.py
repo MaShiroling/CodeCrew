@@ -156,9 +156,14 @@ async def test_kimi_lifecycle_uses_fresh_sandboxed_session_and_isolated_environm
 
 
 @pytest.mark.asyncio
-async def test_kimi_ignores_resume_hint_without_treating_it_as_answer(tmp_path: Path) -> None:
+async def test_kimi_ignores_known_meta_events_without_treating_them_as_answers(tmp_path: Path) -> None:
     process = StubProcess(
         [
+            json_chunk({"role": "meta", "type": "system.version", "version": "2.0.0"}),
+            json_chunk({
+                "role": "meta", "type": "turn.step.retrying", "failed_attempt": 1,
+                "next_attempt": 2, "max_attempts": 3, "delay_ms": 1000,
+            }),
             json_chunk({
                 "role": "meta", "type": "session.resume_hint",
                 "session_id": "private-native-id", "content": "To resume this session",
@@ -177,6 +182,9 @@ async def test_kimi_ignores_resume_hint_without_treating_it_as_answer(tmp_path: 
     assert result.output == {"message": "Implemented"}
     assert session.native_session_id is None
     assert "private-native-id" not in repr(events)
+    assert [event.data["meta_type"] for event in events if event.type is AgentEventType.STDOUT] == [
+        "system.version", "turn.step.retrying", "session.resume_hint"
+    ]
 
 
 @pytest.mark.asyncio
@@ -201,6 +209,7 @@ async def test_kimi_unknown_meta_event_still_fails_closed(tmp_path: Path) -> Non
     session = await adapter.start(request)
     result = await adapter.wait(session.session_id)
     assert result.reason is AgentExitReason.FAILED
+    assert result.error == "Kimi CLI returned an unexpected stream-json meta type: unknown"
     assert process.cancelled
 
 

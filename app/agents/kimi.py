@@ -53,6 +53,9 @@ class _ProcessRunner(Protocol):
 
 _END_OF_EVENTS = object()
 _ALLOWED_TOOLS = frozenset({"Read", "Grep", "Glob", "Write", "Edit"})
+_INFORMATIONAL_META_TYPES = frozenset(
+    {"system.version", "turn.step.retrying", "session.resume_hint"}
+)
 _AGENT_FRONTMATTER = """name: codecrew-restricted-implementer
 description: Implement a CodeCrew task inside its assigned worktree without shell access
 tools:
@@ -334,10 +337,27 @@ class KimiCodeAdapter(AgentAdapter):
                 native_event_type="tool",
             )
             return True
-        if role == "meta" and payload.get("type") == "session.resume_hint":
-            # The CLI emits this protocol hint on stdout. Native resume remains
-            # disabled because our restricted --agent-file cannot be resumed.
-            return True
+        if role == "meta":
+            meta_type = payload.get("type")
+            if isinstance(meta_type, str) and meta_type in _INFORMATIONAL_META_TYPES:
+                # These are CLI protocol notices, not model answers. Native
+                # resume remains disabled with our restricted --agent-file.
+                self._emit(
+                    state,
+                    AgentEventType.STDOUT,
+                    data={"meta_type": meta_type},
+                    native_event_type=f"meta.{meta_type}",
+                )
+                return True
+            safe_type = (
+                meta_type
+                if isinstance(meta_type, str)
+                and 0 < len(meta_type) <= 64
+                and all(char.isascii() and (char.isalnum() or char in "._-") for char in meta_type)
+                else "unknown"
+            )
+            state.error = f"Kimi CLI returned an unexpected stream-json meta type: {safe_type}"
+            return False
         state.error = f"Kimi CLI returned an unexpected stream-json role: {role!r}"
         return False
 

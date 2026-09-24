@@ -86,7 +86,7 @@ def _effective_tool_names(kimi_home: Path) -> tuple[set[str] | None, set[str]]:
     record_types: set[str] = set()
     candidates: dict[str, set[str]] = {}
     for wire in (kimi_home / "sessions").rglob("wire.jsonl"):
-        if wire.parent.name != "main":
+        if wire.parent.parent.name != "agents":
             continue
         with wire.open(encoding="utf-8") as stream:
             for line in stream:
@@ -103,15 +103,15 @@ def _effective_tool_names(kimi_home: Path) -> tuple[set[str] | None, set[str]]:
                 if record_type in {"llm.tools_snapshot", "llm.request", "profile.bind"}:
                     names = _tool_names(record)
                     if names:
-                        candidates[record_type] = names
-    for record_type in ("llm.tools_snapshot", "llm.request", "profile.bind"):
+                        candidates.setdefault(record_type, set()).update(names)
+    for record_type in ("llm.request", "llm.tools_snapshot", "profile.bind"):
         if record_type in candidates:
             return candidates[record_type], record_types
     return None, record_types
 
 
 def test_tool_schema_probe_reads_only_names(tmp_path: Path) -> None:
-    wire = tmp_path / "sessions" / "workdir" / "session" / "agents" / "main" / "wire.jsonl"
+    wire = tmp_path / "sessions" / "workdir" / "session" / "agents" / "custom-agent" / "wire.jsonl"
     wire.parent.mkdir(parents=True)
     wire.write_text(
         json.dumps(
@@ -126,6 +126,23 @@ def test_tool_schema_probe_reads_only_names(tmp_path: Path) -> None:
     assert _effective_tool_names(tmp_path) == (
         {"Read", "Write"}, {"llm.tools_snapshot"}
     )
+
+
+def test_tool_schema_probe_unions_all_actual_requests(tmp_path: Path) -> None:
+    wire = tmp_path / "sessions" / "workdir" / "session" / "agents" / "custom-agent" / "wire.jsonl"
+    wire.parent.mkdir(parents=True)
+    wire.write_text(
+        "\n".join(
+            json.dumps(record)
+            for record in (
+                {"type": "llm.tools_snapshot", "tools": [{"name": "Glob"}]},
+                {"type": "llm.request", "tools": [{"name": "Read"}]},
+                {"type": "llm.request", "tools": [{"name": "Bash"}]},
+            )
+        ) + "\n",
+        encoding="utf-8",
+    )
+    assert _effective_tool_names(tmp_path)[0] == {"Read", "Bash"}
 
 
 @pytest.mark.asyncio
@@ -186,8 +203,14 @@ async def test_live_kimi_restricted_file_edit(tmp_path: Path) -> None:
             error_class = next(
                 (status for status in ("401", "403", "429") if status in stderr), "other"
             )
+            meta_types = sorted({
+                event.data["meta_type"]
+                for event in events
+                if event.type is AgentEventType.STDOUT and "meta_type" in event.data
+            })
             assert result.reason is AgentExitReason.COMPLETED, (
-                f"Kimi turn failed: exit={result.exit_code}, category={error_class}"
+                f"Kimi turn failed: exit={result.exit_code}, category={error_class}, "
+                f"meta_types={meta_types}"
             )
             assert "CODECREW_KIMI_SMOKE_DONE" in result.output.get("message", "")
             assert (handle.worktree_path / "src" / "kimi_smoke.txt").read_text(
