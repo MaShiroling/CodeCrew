@@ -280,6 +280,8 @@ Code CLI（仅限 macOS，并需在 shell 环境提供新的 Kimi Code **会员*
 不能据此宣称实际后端固定为 K3。启动前须安装并配置
 所选 CLI，且根据目标仓库修改示例的验证命令、
 允许目录及 `CODECREW_WORKTREE_ROOT`；Worktree 根目录必须在目标仓库外。
+可选的单次 Kimi 真实冒烟命令和安全限制见
+[真实模型接入说明](docs/real-model-integration.md)。
 示例中的 `tests/hidden` **只是配置占位路径，不是保密的隐藏测试**。真正对 Agent
 不可见的隐藏测试隔离环境尚未实现，不能把示例配置用于正式可靠性评测。
 

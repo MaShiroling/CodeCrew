@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import shutil
 import stat
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
@@ -102,9 +103,12 @@ class KimiCodeAdapter(AgentAdapter):
         runner: _ProcessRunner | None = None,
         env_source: Mapping[str, str] | None = None,
         boundary_factory: Callable[..., KimiWriteBoundary] = KimiWriteBoundary,
+        max_steps_per_turn: int | None = None,
     ) -> None:
         if not executable:
             raise ValueError("executable must not be empty")
+        if max_steps_per_turn is not None and max_steps_per_turn <= 0:
+            raise ValueError("max_steps_per_turn must be positive")
         self._worktree_root = worktree_root.resolve()
         self._runtime_root = runtime_root.absolute()
         self._policy = policy
@@ -112,6 +116,7 @@ class KimiCodeAdapter(AgentAdapter):
         self._runner = runner or AsyncProcessRunner()
         self._env_source = os.environ if env_source is None else env_source
         self._boundary_factory = boundary_factory
+        self._max_steps_per_turn = max_steps_per_turn
         self._agent_file = Path(__file__).resolve().parent / "assets" / "kimi_restricted_implementer.md"
         self._sessions: dict[UUID, _KimiSessionState] = {}
 
@@ -149,7 +154,13 @@ class KimiCodeAdapter(AgentAdapter):
         self._validate_agent_file()
         try:
             boundary = self._boundary_factory(
-                worktree=worktree, runtime_directory=runtime, policy=self._policy
+                worktree=worktree,
+                runtime_directory=runtime,
+                policy=self._policy,
+                readable_files=(
+                    self._agent_file,
+                    Path(shutil.which(self._executable) or self._executable),
+                ),
             )
             command = boundary.wrap(self.build_command(request))
         except KimiBoundaryError as exc:
@@ -191,8 +202,12 @@ class KimiCodeAdapter(AgentAdapter):
                 "KIMI_MODEL_BASE_URL": self.BASE_URL,
                 "KIMI_MODEL_API_KEY": key,
                 "KIMI_DISABLE_CRON": "1",
+                "KIMI_DISABLE_TELEMETRY": "1",
+                "KIMI_CODE_NO_AUTO_UPDATE": "1",
             }
         )
+        if self._max_steps_per_turn is not None:
+            environment["KIMI_LOOP_MAX_STEPS_PER_TURN"] = str(self._max_steps_per_turn)
         return environment
 
     def _validate_worktree(self, request: AgentRequest) -> Path:

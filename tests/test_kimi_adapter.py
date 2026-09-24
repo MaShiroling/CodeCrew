@@ -95,6 +95,22 @@ def json_chunk(payload: dict[str, Any]) -> ProcessChunk:
     return ProcessChunk(ProcessStream.STDOUT, json.dumps(payload) + "\n")
 
 
+def test_kimi_step_budget_is_explicit_and_validated(tmp_path: Path) -> None:
+    adapter, _, _ = make_adapter(
+        tmp_path, StubProcess([], ProcessResult(exit_code=0, duration_ms=1))
+    )
+    assert "KIMI_LOOP_MAX_STEPS_PER_TURN" not in adapter.build_process_env(tmp_path, "key")
+    adapter._max_steps_per_turn = 4
+    assert adapter.build_process_env(tmp_path, "key")["KIMI_LOOP_MAX_STEPS_PER_TURN"] == "4"
+    with pytest.raises(ValueError, match="max_steps_per_turn"):
+        KimiCodeAdapter(
+            worktree_root=tmp_path / "worktrees",
+            runtime_root=tmp_path / "runtime",
+            policy=PermissionPolicy(allowed_paths=("src",)),
+            max_steps_per_turn=0,
+        )
+
+
 @pytest.mark.asyncio
 async def test_kimi_lifecycle_uses_fresh_sandboxed_session_and_isolated_environment(tmp_path: Path) -> None:
     process = StubProcess(
@@ -132,6 +148,8 @@ async def test_kimi_lifecycle_uses_fresh_sandboxed_session_and_isolated_environm
     assert env["KIMI_MODEL_BASE_URL"] != "https://api.moonshot.ai/v1"
     assert env["KIMI_MODEL_API_KEY"] == "test-key"
     assert env["KIMI_DISABLE_CRON"] == "1"
+    assert env["KIMI_DISABLE_TELEMETRY"] == "1"
+    assert env["KIMI_CODE_NO_AUTO_UPDATE"] == "1"
     assert "ANTHROPIC_API_KEY" not in env
     assert str(session.session_id) in env["KIMI_CODE_HOME"]
     assert runner.calls[0]["cwd"] == request.working_directory

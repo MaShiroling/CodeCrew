@@ -1,3 +1,4 @@
+import os
 import platform
 import shutil
 import subprocess
@@ -31,6 +32,8 @@ def test_profile_allows_only_configured_write_roots(tmp_path: Path) -> None:
     profile = boundary.profile()
 
     assert "(deny file-write*)" in profile
+    assert f'(deny file-read-data (require-all (subpath "{boundary.protected_home}")' in profile
+    assert f'(require-not (subpath "{boundary.worktree}"))' in profile
     assert f'(allow file-write* (subpath "{boundary.worktree / "app"}"))' in profile
     assert f'(allow file-write* (subpath "{boundary.runtime_directory}"))' in profile
     assert f'(deny file-write* (subpath "{boundary.worktree / ".git"}"))' in profile
@@ -109,7 +112,7 @@ def test_seatbelt_rejects_forbidden_writes_before_execution(tmp_path: Path) -> N
     ):
         command = boundary.wrap(
             [
-                sys.executable,
+                "/usr/bin/python3",
                 "-c",
                 "from pathlib import Path; import sys; Path(sys.argv[1]).write_text('probe')",
                 str(target),
@@ -127,15 +130,52 @@ def test_seatbelt_rejects_forbidden_writes_before_execution(tmp_path: Path) -> N
         assert target.exists() is should_succeed
 
 
+@pytest.mark.skipif(platform.system() != "Darwin", reason="Seatbelt is macOS-only")
+def test_seatbelt_blocks_real_home_reads_but_allows_worktree(tmp_path: Path) -> None:
+    boundary = make_boundary(tmp_path)
+    inside = boundary.worktree / "app" / "readable.txt"
+    inside.write_text("public", encoding="utf-8")
+    protected = boundary.protected_home / ".ssh"
+    if not protected.is_dir():
+        pytest.skip("no home .ssh directory to probe")
+    for target, should_succeed in ((inside, True), (protected, False)):
+        result = subprocess.run(
+            boundary.wrap([
+                "/usr/bin/python3", "-c",
+                "from pathlib import Path; import sys; Path(sys.argv[1]).read_text()",
+                str(target),
+            ]),
+            cwd=boundary.worktree,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        assert (result.returncode == 0) is should_succeed
+
+
 @pytest.mark.skipif(
     platform.system() != "Darwin" or shutil.which("kimi") is None,
     reason="requires macOS Seatbelt and an installed Kimi CLI",
 )
 def test_kimi_binary_can_start_inside_write_boundary_without_model_call(tmp_path: Path) -> None:
-    boundary = make_boundary(tmp_path)
+    binary = Path(shutil.which("kimi"))
+    original = make_boundary(tmp_path)
+    boundary = KimiWriteBoundary(
+        worktree=original.worktree,
+        runtime_directory=original.runtime_directory,
+        policy=original.policy,
+        readable_files=(binary,),
+    )
     result = subprocess.run(
-        boundary.wrap([shutil.which("kimi"), "--version"]),
+        boundary.wrap([str(binary), "--version"]),
         cwd=boundary.worktree,
+        env={
+            **os.environ,
+            "HOME": str(boundary.runtime_directory),
+            "KIMI_CODE_HOME": str(boundary.runtime_directory),
+            "TMPDIR": str(boundary.runtime_directory),
+        },
         capture_output=True,
         text=True,
         timeout=15,

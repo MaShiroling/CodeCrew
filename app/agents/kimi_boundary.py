@@ -1,8 +1,9 @@
-"""Fail-closed macOS write boundary for a future Kimi Code implementer.
+"""Fail-closed macOS filesystem boundary for a Kimi Code implementer.
 
-This controls filesystem writes by the CLI and its children. It does not make
-arbitrary CLI shell execution safe; the Kimi agent profile must omit Bash, and
-CodeCrew must run tests through its separate CommandExecutor.
+This controls writes and blocks reads from the user's real home except for the
+managed worktree, private runtime and explicitly supplied CLI resources. It
+does not make arbitrary CLI shell execution safe; the restricted agent profile
+must omit Bash, and tests run through CodeCrew's separate CommandExecutor.
 """
 
 from __future__ import annotations
@@ -30,11 +31,20 @@ class KimiWriteBoundary:
         worktree: Path,
         runtime_directory: Path,
         policy: PermissionPolicy,
+        readable_files: Sequence[Path] = (),
         sandbox_executable: str = "/usr/bin/sandbox-exec",
     ) -> None:
         self.worktree = self._existing_directory(worktree, "worktree")
         self.runtime_directory = self._existing_directory(runtime_directory, "runtime directory")
         self.policy = policy
+        self.protected_home = Path.home().resolve(strict=True)
+        self.readable_files = tuple(
+            dict.fromkeys(
+                item
+                for path in readable_files
+                for item in self._existing_file_paths(path)
+            )
+        )
         self.sandbox_executable = sandbox_executable
         if (
             self.runtime_directory.is_relative_to(self.worktree)
@@ -56,6 +66,12 @@ class KimiWriteBoundary:
             raise KimiBoundaryError(f"{label} does not resolve to a directory: {path}")
         return resolved
 
+    @staticmethod
+    def _existing_file_paths(path: Path) -> tuple[Path, Path]:
+        if not path.is_file():
+            raise KimiBoundaryError(f"readable CLI resource must be a file: {path}")
+        return path.absolute(), path.resolve(strict=True)
+
     def _allowed_directory(self, rule: str) -> Path:
         candidate = self.worktree / rule
         if not candidate.is_dir():
@@ -74,10 +90,19 @@ class KimiWriteBoundary:
         return candidate
 
     def profile(self) -> str:
-        """Build a Seatbelt profile; explicit deny rules override broad write roots."""
+        """Build a Seatbelt profile; protect the real home and constrain writes."""
+        read_exceptions = [
+            *(f"(require-not (subpath {json.dumps(str(path))}))"
+              for path in (self.worktree, self.runtime_directory)),
+            *(f"(require-not (literal {json.dumps(str(path))}))"
+              for path in self.readable_files),
+        ]
         lines = [
             "(version 1)",
             "(allow default)",
+            "(deny file-read-data (require-all "
+            f"(subpath {json.dumps(str(self.protected_home))}) "
+            + " ".join(read_exceptions) + "))",
             "(deny file-write*)",
         ]
         for path in (*self.allowed_directories, self.runtime_directory):

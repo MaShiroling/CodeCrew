@@ -1,0 +1,214 @@
+"""One opt-in, bounded Kimi Code membership smoke test.
+
+Run only from a terminal with a newly rotated KIMI_MODEL_API_KEY. The test never
+prints the key or raw CLI/wire output and removes the private CLI runtime.
+"""
+
+import asyncio
+import json
+import os
+import platform
+import shutil
+import subprocess
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Any
+from uuid import uuid4
+
+import pytest
+
+import app.storage  # noqa: F401 - initialize the existing workspace import graph.
+from app.agents import (
+    AgentEventType,
+    AgentExitReason,
+    AgentRequest,
+    AgentRole,
+    KimiCodeAdapter,
+    PermissionMode,
+)
+from app.workspace import PermissionPolicy, WorktreeManager
+
+pytestmark = pytest.mark.integration
+
+_ALLOWED_TOOLS = {"Read", "Grep", "Glob", "Write", "Edit"}
+
+
+def _git(directory: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", *args],
+        cwd=directory,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+
+
+def _git_status(directory: Path) -> list[str]:
+    result = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all"],
+        cwd=directory,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    return result.stdout.splitlines()
+
+
+def _tool_names(value: Any) -> set[str] | None:
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if key in {"activeToolNames", "tools", "tool_schemas", "toolSchemas"} and isinstance(
+                nested, list
+            ):
+                names = {
+                    item if isinstance(item, str) else item.get("name")
+                    for item in nested
+                    if isinstance(item, (str, dict))
+                }
+                names.discard(None)
+                if names:
+                    return {name for name in names if isinstance(name, str)}
+            found = _tool_names(nested)
+            if found is not None:
+                return found
+    elif isinstance(value, list):
+        for item in value:
+            found = _tool_names(item)
+            if found is not None:
+                return found
+    return None
+
+
+def _effective_tool_names(kimi_home: Path) -> tuple[set[str] | None, set[str]]:
+    """Read only schema metadata from private wire records; never return raw content."""
+    record_types: set[str] = set()
+    candidates: dict[str, set[str]] = {}
+    for wire in (kimi_home / "sessions").rglob("wire.jsonl"):
+        if wire.parent.name != "main":
+            continue
+        with wire.open(encoding="utf-8") as stream:
+            for line in stream:
+                try:
+                    record = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                record_type = record.get("type")
+                if not isinstance(record_type, str):
+                    continue
+                record_types.add(record_type)
+                if record_type in {"llm.tools_snapshot", "llm.request", "profile.bind"}:
+                    names = _tool_names(record)
+                    if names:
+                        candidates[record_type] = names
+    for record_type in ("llm.tools_snapshot", "llm.request", "profile.bind"):
+        if record_type in candidates:
+            return candidates[record_type], record_types
+    return None, record_types
+
+
+def test_tool_schema_probe_reads_only_names(tmp_path: Path) -> None:
+    wire = tmp_path / "sessions" / "workdir" / "session" / "agents" / "main" / "wire.jsonl"
+    wire.parent.mkdir(parents=True)
+    wire.write_text(
+        json.dumps(
+            {
+                "type": "llm.tools_snapshot",
+                "tools": [{"name": "Read"}, {"name": "Write"}],
+                "private_payload": "never returned by the probe",
+            }
+        ) + "\n",
+        encoding="utf-8",
+    )
+    assert _effective_tool_names(tmp_path) == (
+        {"Read", "Write"}, {"llm.tools_snapshot"}
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.skipif(
+    os.getenv("CODECREW_RUN_KIMI_LIVE") != "1",
+    reason="set CODECREW_RUN_KIMI_LIVE=1 to spend one Kimi Code model turn",
+)
+async def test_live_kimi_restricted_file_edit(tmp_path: Path) -> None:
+    if platform.system() != "Darwin":
+        pytest.fail("Kimi live smoke requires macOS Seatbelt")
+    if shutil.which("kimi") is None:
+        pytest.fail("Kimi CLI is not on PATH")
+    if not os.environ.get("KIMI_MODEL_API_KEY", "").strip():
+        pytest.fail("set KIMI_MODEL_API_KEY in this terminal; do not put it in the command")
+
+    repository = tmp_path / "repository"
+    repository.mkdir()
+    _git(repository, "init", "-b", "main")
+    source = repository / "src"
+    source.mkdir()
+    (source / "README.txt").write_text("Temporary Kimi smoke fixture\n", encoding="utf-8")
+    _git(repository, "add", ".")
+    _git(repository, "-c", "user.name=CodeCrew Smoke", "-c", "user.email=smoke@codecrew.invalid", "commit", "-m", "fixture")
+
+    task_id = uuid4()
+    manager = WorktreeManager(tmp_path / "worktrees")
+    handle = await manager.create(task_id=task_id, repository=repository)
+    try:
+        with TemporaryDirectory(prefix="kimi-smoke-", dir=tmp_path) as private_dir:
+            runtime_root = Path(private_dir) / "runtime"
+            adapter = KimiCodeAdapter(
+                worktree_root=manager.root,
+                runtime_root=runtime_root,
+                policy=PermissionPolicy(allowed_paths=("src",)),
+                max_steps_per_turn=8,
+            )
+            request = AgentRequest(
+                task_id=task_id,
+                trace_id=uuid4(),
+                role=AgentRole.IMPLEMENTER,
+                prompt=(
+                    "In this temporary Git worktree, use the Write or Edit tool to create "
+                    "src/kimi_smoke.txt with exactly one line: CODECREW_KIMI_SMOKE. "
+                    "Do not run shell commands or edit any other file. "
+                    "When done, reply with CODECREW_KIMI_SMOKE_DONE."
+                ),
+                working_directory=handle.worktree_path,
+                permission_mode=PermissionMode.WORKSPACE_WRITE,
+                timeout_seconds=120,
+            )
+            session = await adapter.start(request)
+            events = [event async for event in adapter.stream(session.session_id)]
+            result = await adapter.wait(session.session_id)
+
+            stderr = "".join(
+                event.text or "" for event in events if event.type is AgentEventType.STDERR
+            )
+            error_class = next(
+                (status for status in ("401", "403", "429") if status in stderr), "other"
+            )
+            assert result.reason is AgentExitReason.COMPLETED, (
+                f"Kimi turn failed: exit={result.exit_code}, category={error_class}"
+            )
+            assert "CODECREW_KIMI_SMOKE_DONE" in result.output.get("message", "")
+            assert (handle.worktree_path / "src" / "kimi_smoke.txt").read_text(
+                encoding="utf-8"
+            ) == "CODECREW_KIMI_SMOKE\n"
+            assert await asyncio.to_thread(_git_status, handle.worktree_path) == [
+                "?? src/kimi_smoke.txt"
+            ]
+            observed_calls = {
+                event.data.get("name")
+                for event in events
+                if event.type is AgentEventType.TOOL_CALL
+            }
+            assert observed_calls <= _ALLOWED_TOOLS
+
+            private_home = runtime_root / str(task_id) / str(session.session_id) / "kimi-home"
+            available_tools, record_types = _effective_tool_names(private_home)
+            assert available_tools is not None, (
+                "Kimi wire did not expose verifiable tool-schema evidence; "
+                f"record types: {sorted(record_types)}"
+            )
+            assert available_tools <= _ALLOWED_TOOLS, "Kimi exposed a forbidden tool"
+    finally:
+        await manager.remove(task_id, force=True)

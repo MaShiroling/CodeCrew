@@ -74,10 +74,25 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
 `KIMI_MODEL_API_KEY` 注入 `kimi-for-coding` + `https://api.kimi.com/coding/v1`
 临时会员模型配置；没有该环境变量或没有 macOS Seatbelt 即拒绝
 启动。离线测试覆盖 JSONL、拒绝异常工具、退出码、超时、取消和环境隔离；本机实际 CLI
-仅验证了在 Seatbelt 内运行 `--version`。**尚未用真实模型验证 `Bash` 拒绝，也未做
+仅验证了在 Seatbelt 内运行 `--version`。Seatbelt 还阻止 CLI 读取真实 Home 的文件内容，
+只对 Worktree、私有运行目录以及指定的 CLI/Agent 文件做例外；这不是完整的只读隔离，
+Home 之外的系统路径仍可能可读。**尚未用真实模型验证 `Bash` 拒绝，也未做
 端到端编码任务**。由于 `--agent-file` 不能和 `--session` 同用，原生恢复明确禁用，
 后续回合靠结构化消息开启新会话；JSONL 不提供可靠的原生会话 ID / Token 用量，
 当前不推测这两个字段。
+
+Kimi Code 会员真实冒烟测试是显式选择的单次短任务。先在**已经导出新密钥的同一个终端**运行
+`test -n "$KIMI_MODEL_API_KEY"`（不要输出密钥），再运行：
+
+```bash
+CODECREW_RUN_KIMI_LIVE=1 .venv/bin/pytest -q tests/integration/test_kimi_code_live.py
+```
+
+该测试会创建临时仓库和独立 Worktree，最多允许 8 步、120 秒；检查目标文件、唯一变更、
+允许工具集及 CLI 会话内的工具声明，之后删除临时运行目录。它会消耗一次会员额度。
+若本地 Seatbelt 不可用、未配置密钥或工具声明无法核验，测试会失败而非宣布成功；
+不要把密钥放到命令行、聊天或仓库中。桌面 Codex 进程通常不会继承其他终端导出的密钥，
+因此请从原终端执行。
 默认服务器配置继续使用原 Claude Code Reviewer，必须显式配置
 `reviewer_adapter: "deepseek-claude-reviewer"` 才切换，且启动时需要
 `DEEPSEEK_API_KEY`。真实模型身份仍待联网冒烟验证。
