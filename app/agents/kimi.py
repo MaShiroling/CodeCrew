@@ -83,8 +83,10 @@ class KimiCodeAdapter(AgentAdapter):
     not present in the documented stream-json protocol, so neither is inferred.
     """
 
-    MODEL = "kimi-k3"
-    BASE_URL = "https://api.moonshot.ai/v1"
+    # Kimi Code membership API is separate from the Moonshot Platform API.
+    # The fixed model alias may point to a changing backend model over time.
+    MODEL = "kimi-for-coding"
+    BASE_URL = "https://api.kimi.com/coding/v1"
     _PASSTHROUGH_ENV = (
         "PATH", "LANG", "LC_ALL", "USER", "TERM", "NODE_EXTRA_CA_CERTS",
         "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
@@ -132,7 +134,9 @@ class KimiCodeAdapter(AgentAdapter):
             raise AgentAdapterError("Kimi resume is disabled with the restricted agent file")
         key = self._env_source.get("KIMI_MODEL_API_KEY", "").strip()
         if not key:
-            raise AgentAdapterError("KIMI_MODEL_API_KEY is required for isolated Kimi CLI")
+            raise AgentAdapterError(
+                "KIMI_MODEL_API_KEY (Kimi Code membership key) is required for isolated Kimi CLI"
+            )
         worktree = self._validate_worktree(request)
         session = AgentSession(
             task_id=request.task_id,
@@ -183,6 +187,7 @@ class KimiCodeAdapter(AgentAdapter):
                 "KIMI_CODE_HOME": str(runtime / "kimi-home"),
                 "TMPDIR": str(runtime / "tmp"),
                 "KIMI_MODEL_NAME": self.MODEL,
+                "KIMI_MODEL_PROVIDER_TYPE": "kimi",
                 "KIMI_MODEL_BASE_URL": self.BASE_URL,
                 "KIMI_MODEL_API_KEY": key,
                 "KIMI_DISABLE_CRON": "1",

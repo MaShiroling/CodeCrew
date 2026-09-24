@@ -1,8 +1,9 @@
 # 真实模型接入与权限边界（2026-09-24）
 
-本页记录接口事实、已实现的离线边界及未完成的接入工作；**尚未使用真实 Kimi K3 /
-DeepSeek Flash 模型执行或消费 API 额度**。角色仍是白金（Codex/GPT）规划、月见（Kimi K3）
-实现、鲸鲸（Claude Code 接入 DeepSeek Flash）评审。这里的 CLI 是 Agent 执行环境，
+本页记录接口事实、已实现的离线边界及未完成的接入工作；**尚未使用真实 Kimi Code
+会员模型 / DeepSeek Flash 执行或消费 API 额度**。角色仍是白金（Codex/GPT）规划、
+月见（Kimi Code CLI 接会员模型）实现、鲸鲸（Claude Code 接入 DeepSeek Flash）评审。
+这里的 CLI 是 Agent 执行环境，
 模型是其背后的推理服务，两者不可混同。
 
 ## 现有代码边界
@@ -23,11 +24,13 @@ DeepSeek Flash 模型执行或消费 API 额度**。角色仍是白金（Codex/G
 
 | 角色 | 官方入口与模型 | 鉴权及输出 | 工具边界 |
 | --- | --- | --- | --- |
-| 月见 / Implementer | Kimi Chat Completions：`https://api.moonshot.ai/v1`，`kimi-k3`；或 Kimi Code CLI `kimi -p ... --output-format stream-json` | API 使用 `MOONSHOT_API_KEY`；K3 流式区分 `reasoning_content` 与 `content`，多轮工具调用须保留完整 assistant 消息。CLI 支持 JSONL 和 `--session <id>` 恢复 | API 只生成工具调用，文件编辑/命令执行必须由 CodeCrew 实现并授权；CLI 自带文件与 shell 工具 |
+| 月见 / Implementer | Kimi Code 会员 API：`https://api.kimi.com/coding/v1`，`kimi-for-coding`；Kimi Code CLI 使用 `kimi -p ... --output-format stream-json` | 会员密钥只经子进程 `KIMI_MODEL_API_KEY` 传入；CLI 的 `KIMI_MODEL_*` 变量在内存中创建临时模型配置。`kimi-for-coding` 是别名，实际后端版本可能变化 | CLI 受限 Agent 只暴露文件工具，Seatbelt 限制写入；测试由 CodeCrew 的命令白名单执行器运行 |
 | 鲸鲸 / Reviewer | Claude Code CLI 接 DeepSeek Anthropic 兼容地址 `https://api.deepseek.com/anthropic`；明确选择 `deepseek-flash` | DeepSeek 官方 Claude Code 配置使用 `ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL` 与模型环境变量；供应商 API Key 只能进入 Reviewer 子进程环境 | 复用 Claude Code Adapter 的只读工具限制，仍需验证实际 provider、模型及最终 JSON 评审结果 |
 
-Kimi K3 的官方文档支持 `reasoning_effort=low/high/max`，并给出工具调用、流式和
-`kimi-k3` 模型 ID。Kimi Code CLI 的 `--prompt` 非交互模式默认使用 auto 权限策略，
+**Kimi Code 会员密钥与 Moonshot Platform API Key 不是同一种接入**：后者的
+`https://api.moonshot.ai/v1` / `kimi-k3` 组合不适用于当前会员密钥 Adapter。
+官方会员 API 文档要求使用 `kimi-for-coding` 模型别名；这不等于能证明底层固定为 K3。
+Kimi Code CLI 的 `--prompt` 非交互模式默认使用 auto 权限策略，
 且不能与 `--yolo`、`--auto` 组合；它**不等于** CodeCrew 的命令白名单。
 官方 CLI 文档也明确其普通模式能改文件和运行 shell 命令。用户已确定月见采用本机
 Kimi Code CLI。不能仅凭独立 Worktree 和事后 Diff/命令审计就声称“禁止命令不会
@@ -68,7 +71,8 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
 
 `KimiCodeAdapter` 已把两者固定到启动路径，并接入可选的 Implementer 角色配置。
 它仅接受任务专属 Worktree，使用每回合新建的私有运行目录，通过
-`KIMI_MODEL_API_KEY` 注入临时模型配置；没有该环境变量或没有 macOS Seatbelt 即拒绝
+`KIMI_MODEL_API_KEY` 注入 `kimi-for-coding` + `https://api.kimi.com/coding/v1`
+临时会员模型配置；没有该环境变量或没有 macOS Seatbelt 即拒绝
 启动。离线测试覆盖 JSONL、拒绝异常工具、退出码、超时、取消和环境隔离；本机实际 CLI
 仅验证了在 Seatbelt 内运行 `--version`。**尚未用真实模型验证 `Bash` 拒绝，也未做
 端到端编码任务**。由于 `--agent-file` 不能和 `--session` 同用，原生恢复明确禁用，
@@ -80,7 +84,8 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
 
 ## 官方资料
 
-- [Kimi K3 官方快速开始](https://platform.kimi.ai/docs/guide/kimi-k3-quickstart)
+- [Kimi Code 会员 API 模型与地址](https://www.kimi.com/en/help/kimi-code/membership-guide)
+- [Kimi CLI 临时模型环境变量](https://www.kimi.com/code/docs/en/kimi-code-cli/configuration/env-vars)
 - [Kimi Code CLI 命令参考](https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command.html)
 - [Kimi Code CLI 工具能力](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html)
 - [Kimi Code CLI 自定义 Agent 工具白名单](https://github.com/moonshotai/kimi-code/blob/main/docs/en/customization/agents.md)

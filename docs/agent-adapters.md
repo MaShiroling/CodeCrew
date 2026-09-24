@@ -48,7 +48,8 @@ Kimi Code CLI is present locally and is the intended Implementer harness. Its `-
 tool calls without human approval. Kimi's official Hooks are fail-open on error/timeout, so they
 cannot be the sole command/path security barrier. `KimiCodeAdapter` is an **explicit opt-in**
 Implementer: it checks the task-owned worktree, gives each turn a fresh private `HOME` and
-`KIMI_CODE_HOME`, injects `KIMI_MODEL_API_KEY` only in the child environment, and launches the
+`KIMI_CODE_HOME`, injects a Kimi Code membership `KIMI_MODEL_API_KEY` only in the child environment,
+selects `kimi-for-coding` at `https://api.kimi.com/coding/v1`, and launches the
 CLI inside macOS `KimiWriteBoundary`. Its packaged agent file exposes only
 `Read/Grep/Glob/Write/Edit`; CodeCrew's `CommandExecutor`, not Kimi's `Bash`, runs tests.
 Unexpected JSONL tool names or malformed output fail the turn. The write boundary has system-level
@@ -56,6 +57,8 @@ tests for permitted paths, denied repository metadata, outside paths, and symlin
 Kimi binary has been started under it with `--version` only. **A real model turn has not yet verified
 the CLI tool restriction.** Kimi's documented `--agent-file`/`--session` incompatibility means
 native resume is disabled; structured mailbox messages start a fresh session on subsequent turns.
+The membership model alias does not prove that the underlying model is K3; provider/model identity
+still requires a live check before comparative evaluation.
 See [the integration decision](real-model-integration.md).
 
 ## Codex CLI

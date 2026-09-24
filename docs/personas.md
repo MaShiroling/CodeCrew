@@ -16,8 +16,10 @@
 
 `mention_patterns` 目前只是角色资料，**尚未解析自由文本 `@称呼` 来派发消息**。
 实际收件人仍必须使用结构化 `MessageRecipient`，避免一句聊天文本绕过路由权限。
-人格也没有绑定模型厂商：目前的 CLI 仍只接入已有 Claude Code / Codex CLI 适配器，
-Kimi K3 和 DeepSeek Flash 接入属于后续步骤。具体头像和图案等待用户提供素材。
+人格本身不绑定模型厂商：CLI 已提供可选的 Kimi Code 会员 API Implementer 和
+DeepSeek Flash Reviewer 离线适配路径，但尚未通过真实模型端到端验收。
+`kimi-for-coding` 是会员模型别名，不能把实际后端固定称为 K3。具体头像和图案等待
+用户提供素材。
 
 `restrictions` 是给模型的自然语言行为提示，不是安全沙箱。真正的边界仍由代码执行：
 AgentTurnRunner/Registry 按角色确定只读或工作区写入权限；ConversationRouter 限制

@@ -56,7 +56,9 @@ def build_server_app(config: ServerConfig, *, settings: Settings) -> FastAPI:
         raise ValueError("DEEPSEEK_API_KEY is required for the DeepSeek reviewer")
     if config.implementer_adapter == "kimi-code-cli":
         if not os.environ.get("KIMI_MODEL_API_KEY", "").strip():
-            raise ValueError("KIMI_MODEL_API_KEY is required for isolated Kimi CLI")
+            raise ValueError(
+                "KIMI_MODEL_API_KEY (Kimi Code membership key) is required for isolated Kimi CLI"
+            )
         if platform.system() != "Darwin" or not Path("/usr/bin/sandbox-exec").is_file():
             raise ValueError("Kimi Code implementer requires macOS sandbox-exec")
     registry = AgentRegistry()

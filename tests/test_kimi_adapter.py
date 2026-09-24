@@ -126,7 +126,10 @@ async def test_kimi_lifecycle_uses_fresh_sandboxed_session_and_isolated_environm
     assert "--yolo" not in command and "--auto" not in command
     assert "test-key" not in " ".join(command)
     env = runner.calls[0]["env"]
-    assert env["KIMI_MODEL_NAME"] == "kimi-k3"
+    assert env["KIMI_MODEL_NAME"] == "kimi-for-coding"
+    assert env["KIMI_MODEL_PROVIDER_TYPE"] == "kimi"
+    assert env["KIMI_MODEL_BASE_URL"] == "https://api.kimi.com/coding/v1"
+    assert env["KIMI_MODEL_BASE_URL"] != "https://api.moonshot.ai/v1"
     assert env["KIMI_MODEL_API_KEY"] == "test-key"
     assert env["KIMI_DISABLE_CRON"] == "1"
     assert "ANTHROPIC_API_KEY" not in env

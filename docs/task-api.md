@@ -94,6 +94,7 @@ Planner 适配器、验证计划、允许写入路径与命令白名单；示例
 并通过环境变量提供 `DEEPSEEK_API_KEY`，由独立 Claude Code 子进程调用 DeepSeek Flash。
 该路径尚未做在线验证。Implementer 默认使用 Codex CLI，也可显式设置
 `"implementer_adapter": "kimi-code-cli"`；此选项仅限 macOS，需要设置
-`KIMI_MODEL_API_KEY` 环境变量，并受限工具配置与 Seatbelt 写入边界保护。真实 Kimi
+`KIMI_MODEL_API_KEY` 环境变量（Kimi Code 会员密钥），并受限工具配置与 Seatbelt 写入
+边界保护。Adapter 使用 `kimi-for-coding` 会员模型别名，实际后端版本尚未验证。真实 Kimi
 工具拒绝和编码任务尚未验证，不应纳入正式评测。示例中的 `tests/hidden` 只是
 占位，不能保证测试对 Agent 保密；真正的隐藏测试隔离仍属于后续工作。
