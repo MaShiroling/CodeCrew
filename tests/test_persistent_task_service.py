@@ -193,3 +193,49 @@ def test_http_routes_use_persistent_service(tmp_path: Path) -> None:
         )
         assert invalid.status_code == 422
         assert invalid.json()["error"]["code"] == "invalid_repository"
+
+
+def test_local_ui_api_create_cancel_roundtrip(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path)
+    service, _loop = make_service(tmp_path)
+
+    with TestClient(create_app(task_service=service)) as client:
+        page = client.get("/ui/")
+        assert page.status_code == 200
+        assert 'id="create-form"' in page.text
+        assert 'id="cancel-task"' in page.text
+
+        created = client.post(
+            "/api/v1/tasks",
+            json={"issue": "Fix parser", "repository_path": str(repository)},
+        )
+        assert created.status_code == 201
+        task_id = created.json()["task_id"]
+        assert created.json()["revision"] == 1
+        listed = client.get("/api/v1/tasks", params={"limit": 30, "offset": 0})
+        assert listed.status_code == 200
+        assert listed.json()["items"][0]["task_id"] == task_id
+        assert client.get(f"/api/v1/tasks/{task_id}").json()["state"] == "created"
+        assert client.get(f"/api/v1/tasks/{task_id}/room").status_code == 200
+        messages = client.get(f"/api/v1/tasks/{task_id}/messages")
+        assert messages.status_code == 200
+        assert messages.json()["items"][0]["content"] == "Fix parser"
+
+        cancelled = client.post(
+            f"/api/v1/tasks/{task_id}/cancel", json={"expected_revision": 1}
+        )
+        assert cancelled.status_code == 200
+        assert cancelled.json()["state"] == "cancelled"
+        assert cancelled.json()["revision"] == 2
+        assert client.get(f"/api/v1/tasks/{task_id}").json()["state"] == "cancelled"
+        assert client.get("/api/v1/tasks", params={"state": "cancelled"}).json()[
+            "items"
+        ][0]["task_id"] == task_id
+        stale = client.post(
+            f"/api/v1/tasks/{task_id}/cancel", json={"expected_revision": 1}
+        )
+        assert stale.status_code == 409
+        assert stale.json()["error"]["code"] == "task_state_conflict"
+        events = client.get(f"/api/v1/tasks/{task_id}/events")
+        assert events.status_code == 200
+        assert "event: task_state_changed" in events.text
