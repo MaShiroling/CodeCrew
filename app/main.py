@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.api.models import ApiErrorDetail, ApiErrorResponse, ApiValidationIssue
 from app.api.runtime import TaskRuntime
@@ -74,6 +76,14 @@ def create_app(
         return {"status": "ok", "environment": settings.environment}
 
     application.include_router(tasks_router)
+    web_root = Path(__file__).resolve().parent / "web"
+    application.mount("/ui/assets", StaticFiles(directory=web_root), name="ui-assets")
+
+    @application.get("/ui", include_in_schema=False)
+    @application.get("/ui/", include_in_schema=False)
+    def task_ui() -> FileResponse:
+        return FileResponse(web_root / "index.html")
+
     return application
 
 

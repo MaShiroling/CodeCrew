@@ -37,6 +37,14 @@ Artifact 接口同时校验 `task_id` 与 `trace_id` 归属；其他任务的 Ar
 `preview_unavailable_reason`，不开放任意路径或文件下载。尚无用户身份认证，仍仅适合
 可信本地环境。
 
+本地只读工作台位于 `/ui/`，由同一个 FastAPI 进程提供静态 HTML/CSS/JavaScript；
+不需要额外的前端构建或服务。它使用上述 API 展示任务列表、状态、团队消息、Plan
+版本与 Artifact 预览，并可手动刷新、筛选与分页。当前**没有**实时推送、创建任务表单、
+登录或远程访问控制；默认未装配运行时的应用会显示任务 API 不可用提示。使用
+`codecrew serve --config <JSON>` 显式装配运行时后，在本机打开
+`http://127.0.0.1:8000/ui/`。界面不把 Agent 的自然语言结论当作成功证据；任务状态
+仍由后端完成守卫决定。
+
 默认应用未配置任务服务时，路由会先返回 503。注入持久化服务后，创建任务会先创建
 独立 Git Worktree、保存 Task/TeamRoom/RuntimeContext 和首条 Issue 消息（同时投递给
 Planner 与 Orchestrator），然后在本进程异步启动事件循环。查询和分页读取 SQLite；

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>CodeCrew · 任务工作台</title>
+  <link rel="stylesheet" href="/ui/assets/styles.css">
+  <script src="/ui/assets/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <a class="brand" href="/ui/" aria-label="CodeCrew 首页">
+        <span class="brand-mark">C<span>·</span>C</span>
+        <span class="brand-copy"><strong>CodeCrew</strong><small>AGENT WORKSPACE</small></span>
+      </a>
+      <div class="sidebar-section-label">WORKSPACE</div>
+      <div class="sidebar-link active"><span class="sidebar-icon">▦</span> 任务工作台</div>
+      <div class="sidebar-bottom"><span class="online-dot"></span> LOCAL WORKSPACE <span class="sidebar-version">v0.1</span></div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div class="breadcrumb">WORKSPACE <span>/</span> <strong>任务</strong></div>
+        <div class="topbar-right"><span class="read-only-pill">只读视图</span><span id="clock"></span></div>
+      </header>
+
+      <div class="content">
+        <div class="page-heading">
+          <div><div class="eyebrow">MISSION CONTROL <span class="eyebrow-line"></span> 任务中心</div><h1>开发任务工作台<span class="heading-dot">.</span></h1><p>跟踪协作进展，回看团队对话与验证证据。</p></div>
+          <button class="refresh-button" id="refresh-button" type="button"><span>↻</span> 刷新数据</button>
+        </div>
+
+        <div id="notice" class="notice" hidden role="status"></div>
+        <div class="workspace-grid">
+          <section class="panel task-panel" aria-labelledby="tasks-title">
+            <div class="panel-head"><div><div class="section-kicker">01 / OVERVIEW</div><h2 id="tasks-title">任务列表 <span id="task-count" class="count">0</span></h2></div><span class="panel-head-symbol">⌘</span></div>
+            <div class="task-filters" aria-label="任务筛选"><button type="button" class="filter active" data-filter="all">全部</button><button type="button" class="filter" data-filter="active">进行中</button><button type="button" class="filter" data-filter="terminal">已结束</button></div>
+            <div id="task-list" class="task-list" aria-live="polite"><div class="empty-state">正在加载任务…</div></div>
+            <button type="button" id="load-more" class="load-more" hidden>加载更多任务 ↓</button>
+          </section>
+
+          <section class="panel detail-panel" aria-labelledby="detail-title">
+            <div id="empty-detail" class="detail-placeholder"><div class="placeholder-art">⌁</div><div class="section-kicker">SELECT A TASK</div><h2>从左侧选择一个任务</h2><p>这里会展示 Agent 对话、方案版本与证据摘要。</p></div>
+            <div id="task-detail" hidden>
+              <div class="detail-top"><div class="section-kicker">02 / TASK DETAIL <span id="detail-short-id"></span></div><div id="detail-status"></div></div>
+              <h2 id="detail-title" class="detail-title"></h2>
+              <p id="detail-issue" class="detail-issue"></p>
+              <div class="meta-strip"><div><small>TRACE ID</small><code id="detail-trace"></code></div><div><small>返工轮次</small><strong id="detail-reworks"></strong></div><div><small>创建时间</small><strong id="detail-created"></strong></div></div>
+              <div class="tabbar" role="tablist" aria-label="任务详情"><button id="tab-room" type="button" class="tab active" role="tab" aria-selected="true" data-tab="room">团队对话</button><button id="tab-plans" type="button" class="tab" role="tab" aria-selected="false" data-tab="plans">方案版本</button></div>
+              <div id="room-pane" class="tab-pane"><div id="room-members" class="member-row"></div><div id="message-list" class="message-list"></div><button type="button" id="load-messages" class="load-more" hidden>加载后续对话 ↓</button></div>
+              <div id="plans-pane" class="tab-pane" hidden><div id="plan-list" class="plan-list"></div></div>
+            </div>
+          </section>
+
+          <section class="panel evidence-panel" aria-labelledby="evidence-title">
+            <div class="panel-head"><div><div class="section-kicker">03 / ARTIFACT</div><h2 id="evidence-title">证据查看</h2></div><span class="panel-head-symbol">↗</span></div>
+            <div id="artifact-placeholder" class="evidence-empty"><div class="evidence-glyph">◈</div><p>点击对话中的证据引用<br>或方案版本查看内容</p></div>
+            <div id="artifact-detail" hidden><div class="artifact-meta"><span id="artifact-type" class="artifact-type"></span><span id="artifact-size"></span></div><h3 id="artifact-name"></h3><div class="artifact-hash">SHA-256 <code id="artifact-hash"></code></div><pre id="artifact-preview" class="artifact-preview"></pre><p id="artifact-unavailable" class="artifact-unavailable" hidden></p></div>
+          </section>
+        </div>
+        <footer class="footer">CODECREW / LOCAL-FIRST AGENT COLLABORATION <span>数据来自本地任务 API · 只读</span></footer>
+      </div>
+    </main>
+  </div>
+</body>
+</html>
