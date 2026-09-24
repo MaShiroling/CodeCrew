@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -14,6 +15,7 @@ from app.agents.models import (
     AgentExitReason,
     AgentRequest,
     AgentResult,
+    AgentRole,
     AgentSession,
     AgentSessionStatus,
     PermissionMode,
@@ -89,11 +91,13 @@ class ClaudeCodeAdapter(AgentAdapter):
             raise AgentAdapterError("Claude Code adapter currently accepts read-only requests only")
 
         argv = self.build_command(request)
+        process_env = self.build_process_env(request)
         try:
             process = await self._runner.start(
                 argv,
                 cwd=request.working_directory,
                 timeout_seconds=request.timeout_seconds,
+                env=process_env,
             )
         except ProcessStartError as exc:
             raise AgentAdapterError(str(exc)) from exc
@@ -109,6 +113,10 @@ class ClaudeCodeAdapter(AgentAdapter):
         self._sessions[session.session_id] = state
         state.completion = asyncio.create_task(self._consume(state))
         return session
+
+    def build_process_env(self, request: AgentRequest) -> Mapping[str, str] | None:
+        """Return a complete child environment, or inherit the parent by default."""
+        return None
 
     def stream(self, session_id: UUID) -> AsyncIterator[AgentEvent]:
         return self._stream(session_id)
@@ -344,3 +352,60 @@ class ClaudeCodeAdapter(AgentAdapter):
     def _duration_ms(payload: dict[str, Any], process_result: ProcessResult) -> int:
         duration = payload.get("duration_ms")
         return duration if isinstance(duration, int) and duration >= 0 else process_result.duration_ms
+
+
+class DeepSeekClaudeReviewerAdapter(ClaudeCodeAdapter):
+    """Read-only Claude Code reviewer with a DeepSeek-only subprocess environment.
+
+    The CLI is the agent harness; DeepSeek Flash is the model provider. This
+    adapter does not claim that an API key or the actual remote model was tested.
+    """
+
+    MODEL = "deepseek-flash[1m]"
+    BASE_URL = "https://api.deepseek.com/anthropic"
+    _PASSTHROUGH_ENV = (
+        "PATH", "HOME", "TMPDIR", "TEMP", "TMP", "LANG", "LC_ALL", "USER", "SHELL", "TERM",
+        "NODE_EXTRA_CA_CERTS", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
+    )
+
+    def __init__(
+        self,
+        *,
+        executable: str = "claude",
+        runner: _ProcessRunner | None = None,
+        env_source: Mapping[str, str] | None = None,
+    ) -> None:
+        super().__init__(executable=executable, runner=runner)
+        self._env_source = os.environ if env_source is None else env_source
+
+    @property
+    def name(self) -> str:
+        return "deepseek-claude-reviewer"
+
+    async def start(self, request: AgentRequest) -> AgentSession:
+        if request.role is not AgentRole.REVIEWER:
+            raise AgentAdapterError("DeepSeek Claude adapter accepts reviewer requests only")
+        return await super().start(request)
+
+    def build_process_env(self, request: AgentRequest) -> Mapping[str, str]:
+        key = self._env_source.get("DEEPSEEK_API_KEY", "").strip()
+        if not key:
+            raise AgentAdapterError("DEEPSEEK_API_KEY is required for the reviewer")
+        environment = {
+            name: value
+            for name in self._PASSTHROUGH_ENV
+            if (value := self._env_source.get(name)) is not None
+        }
+        environment.update(
+            {
+                "ANTHROPIC_BASE_URL": self.BASE_URL,
+                "ANTHROPIC_AUTH_TOKEN": key,
+                "ANTHROPIC_MODEL": self.MODEL,
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": self.MODEL,
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": self.MODEL,
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "deepseek-flash",
+                "CLAUDE_CODE_SUBAGENT_MODEL": "deepseek-flash",
+                "CLAUDE_CODE_EFFORT_LEVEL": "max",
+            }
+        )
+        return environment

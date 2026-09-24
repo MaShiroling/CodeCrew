@@ -48,3 +48,23 @@ def test_cli_rejects_missing_config_and_unavailable_agent(tmp_path: Path, monkey
     with pytest.raises(SystemExit) as exc:
         cli.main(["serve", "--config", str(EXAMPLE)])
     assert exc.value.code == 2
+
+
+def test_explicit_deepseek_reviewer_binding_requires_key(tmp_path: Path, monkeypatch) -> None:
+    config = cli.load_server_config(EXAMPLE).model_copy(
+        update={"reviewer_adapter": "deepseek-claude-reviewer"}
+    )
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'tasks.sqlite3'}",
+        artifact_root=tmp_path / "artifacts",
+        worktree_root=tmp_path / "worktrees",
+    )
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
+        cli.build_server_app(config, settings=settings)
+
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    app = cli.build_server_app(config, settings=settings)
+    assert app.state.task_service.agent_names[cli.MemberRole.REVIEWER] == (
+        "deepseek-claude-reviewer"
+    )

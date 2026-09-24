@@ -73,7 +73,8 @@ Planner 与 Orchestrator），然后在本进程异步启动事件循环。查�
 
 当前默认 `app.main:app` 仍未注入运行时，任务路由返回 503；部署方需要显式提供上述
 配置，不能仅靠启动 Uvicorn 获得真实 Agent 执行。运行时当前仅支持**单进程/单 worker**：
-尚无跨进程租约与派发锁；也没有真正的 Kimi K3 / DeepSeek Flash 适配器。
+尚无跨进程租约与派发锁；Kimi Code CLI 尚未接入无人值守 Implementer。
+DeepSeek Flash Reviewer 已有离线测试的 Claude Code 适配路径，尚未做真实模型调用验证。
 
 事件流按 TraceStore 的全局递增 `sequence` 发送，事件帧包含 `id`、事件类型和 JSON
 `data`（含序号与完整的小型 trace 事件）。客户端断线后带 `Last-Event-ID` 重连，或首次
@@ -88,6 +89,8 @@ Reviewer 审批和 CompletionGuard 后完成，以及无有效 Diff 时不得完
 本地 CLI 入口为 `python -m app.cli serve --config <JSON> --port 8000`（安装后也可
 使用 `codecrew serve`），只绑定 `127.0.0.1` 且固定单 worker。JSON 显式配置
 Planner 适配器、验证计划、允许写入路径与命令白名单；示例见
-`examples/server-config.python.json`。当前 CLI 只能使用已有 Claude Code / Codex CLI
-适配器，不能配置尚未实现的 Kimi K3 / DeepSeek Flash。示例中的 `tests/hidden` 只是
+`examples/server-config.python.json`。Planner 可选 Claude Code / Codex CLI；Reviewer
+默认使用 Claude Code，也可显式设置 `"reviewer_adapter": "deepseek-claude-reviewer"`
+并通过环境变量提供 `DEEPSEEK_API_KEY`，由独立 Claude Code 子进程调用 DeepSeek Flash。
+该路径尚未做在线验证，Kimi Code CLI 暂不可选为 Implementer。示例中的 `tests/hidden` 只是
 占位，不能保证测试对 Agent 保密；真正的隐藏测试隔离仍属于后续工作。

@@ -36,6 +36,19 @@ always with `READ_ONLY` permission and a fresh session. It gives the reviewer th
 to immutable Plan, Diff, changeset, and verification artifacts, then accepts only a schema-valid
 JSON verdict. It never resumes the Planner session or treats reviewer prose as completion proof.
 
+`DeepSeekClaudeReviewerAdapter` is an explicit Reviewer-only variant of this read-only harness.
+When selected with `reviewer_adapter: "deepseek-claude-reviewer"`, it requires a nonempty
+`DEEPSEEK_API_KEY` environment variable, sets the official DeepSeek Anthropic-compatible endpoint
+and Flash model **only in the Reviewer child process**, and does not pass the key on the command
+line. The child receives a small allowlist of inherited environment variables rather than other
+providers' credentials. This is an adapter and offline-tested configuration path, not yet a live
+provider authentication or model-identity test.
+
+Kimi Code CLI is present locally and is the intended Implementer harness. Its `-p` mode performs
+tool calls without human approval. Kimi's official Hooks are fail-open on error/timeout, so they
+cannot be the sole command/path security barrier. CodeCrew does not yet register it as an unattended
+Implementer. See [the integration decision](real-model-integration.md).
+
 ## Codex CLI
 
 `CodexCliAdapter` uses non-interactive `exec --json`. Permission mode maps to the CLI's
@@ -52,6 +65,9 @@ surface: <https://developers.openai.com/codex/cli/reference>.
 Commands are passed as argument arrays to `asyncio.create_subprocess_exec`; no shell is used.
 stdin is closed with `DEVNULL`. stdout and stderr are read concurrently. Output buffering is
 bounded, and processes are terminated then killed after a configured grace period when needed.
+If an adapter supplies `env`, that mapping is the **complete** child environment, not an overlay
+on the parent; adapters needing isolation must explicitly pass the required non-secret runtime
+variables. With `env=None`, the child retains the normal inherited environment.
 
 This boundary is not a substitute for the future `PermissionGate`, worktree path validation, or
 post-run unauthorized-change detection.

@@ -138,3 +138,24 @@ async def test_child_stdin_is_closed_for_non_interactive_execution(tmp_path: Pat
 
     assert result.exit_code == 0
     assert [chunk.text for chunk in chunks] == ["True\n"]
+
+
+@pytest.mark.asyncio
+async def test_explicit_child_environment_does_not_inherit_parent_secrets(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setenv("CODECREW_PARENT_SECRET", "should-not-be-inherited")
+    process = await AsyncProcessRunner().start(
+        [
+            sys.executable,
+            "-c",
+            "import os; print(os.getenv('CODECREW_PARENT_SECRET')); print(os.getenv('CHILD_VALUE'))",
+        ],
+        cwd=tmp_path,
+        timeout_seconds=5,
+        env={"CHILD_VALUE": "isolated"},
+    )
+
+    chunks = [chunk async for chunk in process.stream()]
+    assert (await process.wait()).exit_code == 0
+    assert [chunk.text for chunk in chunks] == ["None\n", "isolated\n"]

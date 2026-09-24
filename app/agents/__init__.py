@@ -1,7 +1,7 @@
 """Provider-neutral agent models and adapters."""
 
 from app.agents.base import AgentAdapter, AgentAdapterError, AgentSessionNotFoundError
-from app.agents.claude import ClaudeCodeAdapter
+from app.agents.claude import ClaudeCodeAdapter, DeepSeekClaudeReviewerAdapter
 from app.agents.codex import CodexCliAdapter
 from app.agents.fake import FakeAgentAdapter, FakeAgentScenario, FakeEventSpec
 from app.agents.models import (
@@ -59,6 +59,7 @@ __all__ = [
     "AsyncProcessRunner",
     "ClaudeCodeAdapter",
     "CodexCliAdapter",
+    "DeepSeekClaudeReviewerAdapter",
     "FakeAgentAdapter",
     "FakeAgentScenario",
     "FakeEventSpec",

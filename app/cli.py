@@ -1,6 +1,7 @@
 """Local single-worker HTTP entry point with explicit verification policy."""
 
 import argparse
+import os
 import shutil
 from collections.abc import Sequence
 from pathlib import Path
@@ -15,6 +16,7 @@ from app.agents import (
     AgentRole,
     ClaudeCodeAdapter,
     CodexCliAdapter,
+    DeepSeekClaudeReviewerAdapter,
     PermissionMode,
 )
 from app.api.runtime import build_task_runtime
@@ -31,6 +33,7 @@ class ServerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     planner_adapter: Literal["claude-code", "codex-cli"]
+    reviewer_adapter: Literal["claude-code", "deepseek-claude-reviewer"] = "claude-code"
     verification_plan: VerificationPlan
     permission_policy: PermissionPolicy
     command_policy: CommandPolicy
@@ -44,18 +47,29 @@ def load_server_config(path: Path) -> ServerConfig:
 
 
 def build_server_app(config: ServerConfig, *, settings: Settings) -> FastAPI:
+    if config.reviewer_adapter == "deepseek-claude-reviewer" and not os.environ.get(
+        "DEEPSEEK_API_KEY", ""
+    ).strip():
+        raise ValueError("DEEPSEEK_API_KEY is required for the DeepSeek reviewer")
     registry = AgentRegistry()
-    claude_roles = {AgentRole.REVIEWER}
+    claude_roles = {AgentRole.REVIEWER} if config.reviewer_adapter == "claude-code" else set()
     codex_roles = {AgentRole.IMPLEMENTER}
     if config.planner_adapter == "claude-code":
         claude_roles.add(AgentRole.PLANNER)
     else:
         codex_roles.add(AgentRole.PLANNER)
-    registry.register(
-        ClaudeCodeAdapter(executable=settings.claude_cli_path),
-        roles=claude_roles,
-        permission_modes={PermissionMode.READ_ONLY},
-    )
+    if claude_roles:
+        registry.register(
+            ClaudeCodeAdapter(executable=settings.claude_cli_path),
+            roles=claude_roles,
+            permission_modes={PermissionMode.READ_ONLY},
+        )
+    if config.reviewer_adapter == "deepseek-claude-reviewer":
+        registry.register(
+            DeepSeekClaudeReviewerAdapter(executable=settings.claude_cli_path),
+            roles={AgentRole.REVIEWER},
+            permission_modes={PermissionMode.READ_ONLY},
+        )
     registry.register(
         CodexCliAdapter(executable=settings.codex_cli_path),
         roles=codex_roles,
@@ -67,7 +81,7 @@ def build_server_app(config: ServerConfig, *, settings: Settings) -> FastAPI:
         agent_names={
             MemberRole.PLANNER: config.planner_adapter,
             MemberRole.IMPLEMENTER: "codex-cli",
-            MemberRole.REVIEWER: "claude-code",
+            MemberRole.REVIEWER: config.reviewer_adapter,
         },
         verification_plan=config.verification_plan,
         permission_policy=config.permission_policy,

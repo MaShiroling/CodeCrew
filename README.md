@@ -359,7 +359,8 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段八之三：选中任务的 SSE 实时更新与断线续接
 - [x] 阶段八之四：页面/API/SSE 联调、异常状态处理与界面收尾
 - [x] 真实模型接入之一：核对 Kimi K3 / DeepSeek Flash 官方接口、CLI 与安全边界
-- [ ] 真实模型接入之二：受控 Kimi Implementer 与独立 DeepSeek Reviewer Adapter
+- [x] 真实模型接入之二 A：独立 DeepSeek Reviewer Adapter、配置绑定与环境隔离（离线测试）
+- [ ] 真实模型接入之二 B：Kimi CLI 执行前强制权限边界与 Implementer Adapter
 - [ ] 阶段九：多语言编码任务评测集
 - [ ] 阶段十：单 Agent / 多 Agent 对照实验与指标报告
 - [ ] 阶段十一：演示样例、部署文档和简历材料

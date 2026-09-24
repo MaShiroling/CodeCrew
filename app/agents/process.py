@@ -1,5 +1,4 @@
 import asyncio
-import os
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -176,7 +175,9 @@ class AsyncProcessRunner:
         if timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
 
-        process_env = None if env is None else {**os.environ, **env}
+        # A supplied environment is complete, not an overlay: provider subprocesses
+        # must not accidentally inherit another provider's credentials.
+        process_env = None if env is None else dict(env)
         try:
             process = await asyncio.create_subprocess_exec(
                 *argv,

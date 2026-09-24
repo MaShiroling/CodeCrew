@@ -14,6 +14,7 @@ from app.agents import (
     AgentRole,
     AgentSessionStatus,
     ClaudeCodeAdapter,
+    DeepSeekClaudeReviewerAdapter,
     PermissionMode,
 )
 from app.agents.process import ProcessChunk, ProcessResult, ProcessStartError, ProcessStream
@@ -253,3 +254,47 @@ async def test_resume_adds_native_session_to_command() -> None:
     await adapter.wait(session.session_id)
 
     assert runner.calls[0]["argv"][-3:-1] == ["--resume", "native-42"]
+
+
+@pytest.mark.asyncio
+async def test_deepseek_reviewer_uses_dedicated_read_only_environment() -> None:
+    runner = StubRunner(StubProcess([], ProcessResult(exit_code=0, duration_ms=1)))
+    adapter = DeepSeekClaudeReviewerAdapter(
+        runner=runner,
+        env_source={
+            "DEEPSEEK_API_KEY": "test-key",
+            "MOONSHOT_API_KEY": "must-not-leak",
+            "ANTHROPIC_API_KEY": "wrong-provider",
+            "PATH": "/usr/bin",
+            "HOME": "/tmp/test-home",
+        },
+    )
+    request = make_request(role=AgentRole.REVIEWER)
+
+    session = await adapter.start(request)
+    result = await adapter.wait(session.session_id)
+
+    assert session.agent_name == "deepseek-claude-reviewer"
+    assert result.reason is AgentExitReason.COMPLETED
+    assert "--tools=Read,Glob,Grep" in runner.calls[0]["argv"]
+    assert "test-key" not in " ".join(runner.calls[0]["argv"])
+    environment = runner.calls[0]["env"]
+    assert environment["ANTHROPIC_AUTH_TOKEN"] == "test-key"
+    assert environment["ANTHROPIC_BASE_URL"] == "https://api.deepseek.com/anthropic"
+    assert environment["ANTHROPIC_MODEL"] == "deepseek-flash[1m]"
+    assert environment["PATH"] == "/usr/bin"
+    assert "MOONSHOT_API_KEY" not in environment
+    assert "ANTHROPIC_API_KEY" not in environment
+    assert "DEEPSEEK_API_KEY" not in environment
+
+
+@pytest.mark.asyncio
+async def test_deepseek_reviewer_fails_closed_on_missing_key_or_wrong_role() -> None:
+    runner = StubRunner(StubProcess([], ProcessResult(exit_code=0, duration_ms=1)))
+    adapter = DeepSeekClaudeReviewerAdapter(runner=runner, env_source={})
+
+    with pytest.raises(AgentAdapterError, match="reviewer requests only"):
+        await adapter.start(make_request(role=AgentRole.PLANNER))
+    with pytest.raises(AgentAdapterError, match="DEEPSEEK_API_KEY"):
+        await adapter.start(make_request(role=AgentRole.REVIEWER))
+    assert runner.calls == []

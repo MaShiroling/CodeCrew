@@ -28,11 +28,12 @@
 Kimi K3 的官方文档支持 `reasoning_effort=low/high/max`，并给出工具调用、流式和
 `kimi-k3` 模型 ID。Kimi Code CLI 的 `--prompt` 非交互模式默认使用 auto 权限策略，
 且不能与 `--yolo`、`--auto` 组合；它**不等于** CodeCrew 的命令白名单。
-官方 CLI 文档也明确其普通模式能改文件和运行 shell 命令。因此，虽然 CLI 适合做
-连接/输出格式的只读冒烟验证，不能仅凭独立 Worktree 和事后 Diff/命令审计就声称
-“禁止命令不会执行”。实现阶段优先采用 Kimi API + CodeCrew 受控工具执行层；
-若选择 CLI 作为无人值守 Implementer，必须先增加执行前可强制的工具/OS 沙箱，
-并用禁止命令测试证明其生效。工具不可用或拒绝时应失败并转人工，不得退回开放执行。
+官方 CLI 文档也明确其普通模式能改文件和运行 shell 命令。用户已确定月见采用本机
+Kimi Code CLI。不能仅凭独立 Worktree 和事后 Diff/命令审计就声称“禁止命令不会
+执行”。官方 [Hooks 文档](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html)
+确认 `PreToolUse` 可阻止调用，但 Hook 出错或超时会 fail-open，不能单独承担安全边界。
+在引入执行前可强制的工具/OS 沙箱并通过禁止命令测试前，不将 CLI 注册为无人值守
+Implementer。工具不可用或拒绝时应失败并转人工，不得退回开放执行。
 
 DeepSeek 官方当前模型 ID 是 `deepseek-flash`（当前对应 V4.1-Flash），并支持
 Anthropic 兼容接口、流式和工具调用。官方 Claude Code 指南使用
@@ -53,6 +54,12 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
    明确启用集成测试后做最小只读冒烟，再做一条小型 Worktree 编码任务。
 5. Trace/报告记录供应商、请求模型、实际返回模型、CLI 版本和 Token 使用量，
    不记录密钥或原始认证头；无法确认实际模型时标为“未验证”，不纳入对照评测。
+
+当前进度：已实现 `DeepSeekClaudeReviewerAdapter` 的本地只读装配和子进程环境隔离，
+用模拟进程测试；未做付费 API 请求。Kimi CLI 的工作区写入路径因上述 fail-open
+边界仍未启用。默认服务器配置继续使用原 Claude Code Reviewer，必须显式配置
+`reviewer_adapter: "deepseek-claude-reviewer"` 才切换，且启动时需要
+`DEEPSEEK_API_KEY`。真实模型身份仍待联网冒烟验证。
 
 ## 官方资料
 
