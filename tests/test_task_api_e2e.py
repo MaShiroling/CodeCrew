@@ -132,6 +132,8 @@ def test_http_task_success_path_includes_trace_and_completion_evidence(tmp_path:
     repository = make_repository(tmp_path)
     runtime, agents = make_runtime(tmp_path)
     with TestClient(create_app(runtime=runtime)) as client:
+        assert client.get("/ui/").status_code == 200
+        assert client.get("/ui/assets/app.js").status_code == 200
         created = client.post(
             "/api/v1/tasks", json={"issue": "Set value to two", "repository_path": str(repository)}
         )
@@ -225,6 +227,15 @@ def test_http_task_success_path_includes_trace_and_completion_evidence(tmp_path:
         assert events.status_code == 200
         assert "event: verification_completed" in events.text
         assert "event: completion_decided" in events.text
+        assert "event: chat_message_persisted" in events.text
+        last_event_id = int(
+            [line for line in events.text.splitlines() if line.startswith("id: ")][-1][4:]
+        )
+        resumed = client.get(
+            f"/api/v1/tasks/{task_id}/events", headers={"Last-Event-ID": str(last_event_id)}
+        )
+        assert resumed.status_code == 200
+        assert "event: " not in resumed.text
         assert client.get("/api/v1/tasks", params={"state": "completed"}).json()["items"][0][
             "task_id"
         ] == task_id

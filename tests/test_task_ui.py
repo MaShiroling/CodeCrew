@@ -26,6 +26,7 @@ def test_task_ui_serves_local_assets_without_task_runtime() -> None:
         assert "workspace-grid" in stylesheet.text
         assert client.get("/ui/assets/missing.js").status_code == 404
         assert client.get("/health").status_code == 200
+        assert client.get("/api/v1/tasks").status_code == 503
 
 
 def test_live_ui_state_transitions_with_mock_eventsource() -> None:

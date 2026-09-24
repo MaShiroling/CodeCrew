@@ -4,25 +4,28 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 class Element {
-  constructor() { this.children = []; this.hidden = false; this.textContent = ''; this.className = ''; }
+  constructor(tag = '') { this.tag = tag; this.children = []; this.hidden = false; this.textContent = ''; this.className = ''; }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   addEventListener() {}
   setAttribute() {}
-  querySelector(selector) { return this.children.find((child) => child.className === selector.slice(1)) || null; }
+  querySelector(selector) { return this.children.find((child) => selector.startsWith('.') ? child.className === selector.slice(1) : child.tag === selector) || null; }
 }
 
 const elements = new Map();
 const document = {
   getElementById(id) { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); },
-  createElement() { return new Element(); },
+  createElement(tag) { return new Element(tag); },
   querySelectorAll() { return []; },
 };
 const get = (id) => document.getElementById(id);
+get('empty-detail').append(new Element('h2'), new Element('p'));
 const timers = [];
 const streams = [];
 let taskState = 'planning';
 let messages = [];
+let failRoomFor = null;
+let failList = false;
 class FakeEventSource {
   constructor(url) { this.url = url; this.listeners = new Map(); this.closed = false; streams.push(this); }
   addEventListener(type, callback) { this.listeners.set(type, callback); }
@@ -32,8 +35,14 @@ class FakeEventSource {
 const task = (id, state) => ({ task_id: id, trace_id: `trace-${id}`, issue: `Issue ${id}`, state, rework_rounds: 0, created_at: '2026-09-24T00:00:00Z' });
 const fetch = async (url) => {
   let data;
-  if (url.startsWith('/api/v1/tasks?')) data = { items: [task('task-a', taskState), task('task-b', 'planning')], next_offset: null };
-  else if (url.endsWith('/room')) data = { room: { members: [] } };
+  if (url.startsWith('/api/v1/tasks?')) {
+    if (failList) return { ok: false, json: async () => ({ error: { code: 'task_service_unavailable', message: 'Service unavailable' } }) };
+    data = { items: [task('task-a', taskState), task('task-b', 'planning')], next_offset: null };
+  }
+  else if (url.endsWith('/room')) {
+    if (url.includes(failRoomFor)) return { ok: false, json: async () => ({ error: { message: 'Room unavailable' } }) };
+    data = { room: { members: [] } };
+  }
   else if (url.endsWith('/plans')) data = { items: [] };
   else if (url.includes('/messages?')) {
     const cursor = Number(new URL(url, 'http://localhost').searchParams.get('after_sequence'));
@@ -73,11 +82,27 @@ const runTimers = async () => { while (timers.length) { timers.shift()(); await 
   await runTimers();
   assert.equal(get('detail-title').textContent, 'Issue task-b');
 
+  taskState = 'rework';
   await vm.runInContext('selectTask("task-a")', context);
+  assert.equal(get('detail-status').children[0].textContent, '返工中');
   taskState = 'completed';
   streams[2].emit('completion_decided');
   await runTimers();
   assert.equal(get('detail-status').children[0].textContent, '已完成');
   assert.equal(streams[2].closed, true);
   assert.match(get('live-status').textContent, /任务已结束/);
+
+  failList = true;
+  assert.equal(await vm.runInContext('loadTasks()', context), false);
+  assert.equal(get('task-list').children.length, 2);
+  assert.match(get('notice').textContent, /任务服务尚未配置/);
+  failList = false;
+
+  failRoomFor = 'task-b';
+  await vm.runInContext('selectTask("task-b")', context);
+  assert.equal(get('task-detail').hidden, true);
+  assert.equal(get('empty-detail').hidden, false);
+  assert.equal(get('empty-detail').querySelector('h2').textContent, '任务详情暂不可用');
+  assert.match(get('notice').textContent, /Room unavailable/);
+  assert.equal(streams.length, 3);
 })().catch((error) => { console.error(error); process.exitCode = 1; });

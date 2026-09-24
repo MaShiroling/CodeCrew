@@ -48,6 +48,12 @@ Artifact 接口同时校验 `task_id` 与 `trace_id` 归属；其他任务的 Ar
 `http://127.0.0.1:8000/ui/`。界面不把 Agent 的自然语言结论当作成功证据；任务状态
 仍由后端完成守卫决定。
 
+阶段八联调覆盖同一 FastAPI 运行时的页面静态资源、任务创建后状态与详情读取、
+Artifact 归属校验、Trace SSE 回放与游标续接。前端模拟事件流测试覆盖新消息、切换
+任务关闭旧连接、终态关闭连接，以及列表/详情读取失败时的降级呈现。未配置运行时的
+本地页面已人工检查；真实 Claude/Kimi/DeepSeek 组合的浏览器端到端演示尚未实现，
+不应把 Fake Agent 联调视作真实模型评测。
+
 默认应用未配置任务服务时，路由会先返回 503。注入持久化服务后，创建任务会先创建
 独立 Git Worktree、保存 Task/TeamRoom/RuntimeContext 和首条 Issue 消息（同时投递给
 Planner 与 Orchestrator），然后在本进程异步启动事件循环。查询和分页读取 SQLite；

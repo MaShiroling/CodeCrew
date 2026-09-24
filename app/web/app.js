@@ -3,12 +3,20 @@ const $ = (id) => document.getElementById(id);
 const api = async (path) => {
   const response = await fetch(`/api/v1${path}`, { headers: { Accept: 'application/json' } });
   const data = await response.json();
-  if (!response.ok) throw new Error(data.error?.message || `HTTP ${response.status}`);
+  if (!response.ok) {
+    const knownErrors = {
+      task_service_unavailable: '任务服务尚未配置，请使用运行时配置启动服务',
+      task_not_found: '任务不存在或已被移除',
+      task_detail_unavailable: '任务详情暂不可用',
+      task_artifact_not_found: '证据不存在或不属于当前任务',
+    };
+    throw new Error(knownErrors[data.error?.code] || data.error?.message || `HTTP ${response.status}`);
+  }
   return data;
 };
 const time = (value) => value ? new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(new Date(value)) : '—';
 const short = (value) => value ? value.slice(0, 8) : '—';
-const stateNames = { completed: '已完成', failed: '失败', cancelled: '已取消', needs_human: '待人工处理', created: '已创建', planning: '规划中', implementing: '实现中', verifying: '验证中', reviewing: '评审中', reworking: '返工中' };
+const stateNames = { completed: '已完成', failed: '失败', cancelled: '已取消', needs_human: '待人工处理', created: '已创建', planning: '规划中', implementing: '实现中', verifying: '验证中', reviewing: '评审中', rework: '返工中' };
 const terminal = new Set(['completed', 'failed', 'cancelled', 'needs_human']);
 const statusNode = (taskState) => {
   const span = document.createElement('span');
@@ -71,13 +79,13 @@ async function refreshSelected(taskId, requestId) {
     const task = await api(`/tasks/${encodeURIComponent(taskId)}`);
     if (requestId !== state.requestId) return;
     showTask(task);
-    const [plans] = await Promise.all([
+    const [plans, messagesLoaded] = await Promise.all([
       api(`/tasks/${encodeURIComponent(taskId)}/plans`),
       loadMessages(taskId, true, requestId),
     ]);
     if (requestId !== state.requestId) return;
     renderPlans(plans.items, taskId);
-    notice('');
+    if (messagesLoaded) notice('');
     if (terminal.has(task.state)) {
       closeStream();
       $('live-status').textContent = '任务已结束 · 显示最终记录';
@@ -131,9 +139,11 @@ async function loadTasks(more = false) {
     renderTasks();
     notice('');
     if (!state.selectedId && state.tasks.length) await selectTask(state.tasks[0].task_id);
+    return true;
   } catch (error) {
     notice(`任务列表读取失败：${error.message}`);
-    if (!more) $('task-list').replaceChildren(node('div', 'empty-state', '暂时无法获取任务'));
+    if (!more && !state.tasks.length) $('task-list').replaceChildren(node('div', 'empty-state', '暂时无法获取任务'));
+    return false;
   }
 }
 
@@ -168,7 +178,11 @@ async function loadMessages(taskId, more = false, requestId = state.requestId) {
     if (messages.length) state.messageCursor = messages.at(-1).sequence;
     state.messageHasMore = page.next_after_sequence !== null;
     $('load-messages').hidden = !state.messageHasMore;
-  } catch (error) { if (requestId === state.requestId) notice(`对话读取失败：${error.message}`); }
+    return true;
+  } catch (error) {
+    if (requestId === state.requestId) notice(`对话读取失败：${error.message}`);
+    return false;
+  }
 }
 
 function renderPlans(plans, taskId) {
@@ -201,7 +215,7 @@ async function loadArtifact(taskId, artifactId) {
     $('artifact-unavailable').hidden = artifact.preview_unavailable_reason === null;
     $('artifact-unavailable').textContent = `此证据不支持在线预览（${artifact.preview_unavailable_reason || ''}）。`;
     notice('');
-  } catch (error) { notice(`证据读取失败：${error.message}`); }
+  } catch (error) { if (taskId === state.selectedId) notice(`证据读取失败：${error.message}`); }
 }
 
 async function selectTask(taskId) {
@@ -213,6 +227,11 @@ async function selectTask(taskId) {
   renderTasks();
   $('empty-detail').hidden = true;
   $('task-detail').hidden = false;
+  $('live-status').textContent = '正在读取任务…';
+  $('detail-title').textContent = '正在加载…';
+  $('detail-issue').textContent = '';
+  $('detail-status').replaceChildren();
+  $('room-members').replaceChildren();
   $('artifact-placeholder').hidden = false;
   $('artifact-detail').hidden = true;
   $('message-list').replaceChildren(node('div', 'empty-state', '正在加载对话…'));
@@ -231,11 +250,18 @@ async function selectTask(taskId) {
       return chip;
     }));
     renderPlans(plans.items, taskId);
-    await loadMessages(taskId, false, requestId);
     notice('');
+    await loadMessages(taskId, false, requestId);
     if (terminal.has(task.state)) $('live-status').textContent = '任务已结束 · 显示最终记录';
     else followTask(taskId, requestId);
-  } catch (error) { if (requestId === state.requestId) notice(`任务详情读取失败：${error.message}`); }
+  } catch (error) {
+    if (requestId !== state.requestId) return;
+    $('task-detail').hidden = true;
+    $('empty-detail').hidden = false;
+    $('empty-detail').querySelector('h2').textContent = '任务详情暂不可用';
+    $('empty-detail').querySelector('p').textContent = '请检查任务是否存在，或稍后重试。';
+    notice(`任务详情读取失败：${error.message}`);
+  }
 }
 
 document.querySelectorAll('.filter').forEach((button) => button.addEventListener('click', () => {
@@ -251,7 +277,7 @@ document.querySelectorAll('.tab').forEach((button) => button.addEventListener('c
   $('room-pane').hidden = button.dataset.tab !== 'room';
   $('plans-pane').hidden = button.dataset.tab !== 'plans';
 }));
-$('refresh-button').addEventListener('click', async () => { await loadTasks(); if (state.selectedId) await selectTask(state.selectedId); });
+$('refresh-button').addEventListener('click', async () => { if (await loadTasks() && state.selectedId) await selectTask(state.selectedId); });
 $('load-more').addEventListener('click', () => loadTasks(true));
 $('load-messages').addEventListener('click', () => loadMessages(state.selectedId, true));
 $('clock').textContent = new Intl.DateTimeFormat('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
