@@ -51,7 +51,7 @@ Artifact 接口同时校验 `task_id` 与 `trace_id` 归属；其他任务的 Ar
 阶段八联调覆盖同一 FastAPI 运行时的页面静态资源、任务创建后状态与详情读取、
 Artifact 归属校验、Trace SSE 回放与游标续接。前端模拟事件流测试覆盖新消息、切换
 任务关闭旧连接、终态关闭连接，以及列表/详情读取失败时的降级呈现。未配置运行时的
-本地页面已人工检查；真实 Claude/Kimi/DeepSeek 组合的浏览器端到端演示尚未实现，
+本地页面已人工检查；真实 Codex/Kimi/DeepSeek 组合的浏览器端到端演示尚未实现，
 不应把 Fake Agent 联调视作真实模型评测。
 
 默认应用未配置任务服务时，路由会先返回 503。注入持久化服务后，创建任务会先创建
@@ -97,6 +97,7 @@ Planner 适配器、验证计划、允许写入路径与命令白名单；示例
 `"implementer_adapter": "kimi-code-cli"`；此选项仅限 macOS，需要设置
 `KIMI_MODEL_API_KEY` 环境变量（Kimi Code 会员密钥），并受限工具配置与 Seatbelt 写入
 边界保护。Adapter 使用 `kimi-for-coding` 会员模型别名，实际后端版本尚未验证。真实 Kimi
-单任务文件写入和工具清单核查已通过；主动禁止命令尝试和经 Verifier 判定的编码任务
-尚未验证，不应纳入正式评测。示例中的 `tests/hidden` 只是
+单任务文件写入、工具清单核查和一个小型 Bug 修复后的独立 Verifier 运行已由用户本机验证；
+主动禁止命令尝试、真实 DeepSeek Reviewer 与三角色完整工作流尚未验证，不应纳入正式评测。
+示例中的 `tests/hidden` 只是
 占位，不能保证测试对 Agent 保密；真正的隐藏测试隔离仍属于后续工作。

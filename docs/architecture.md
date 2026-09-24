@@ -22,7 +22,8 @@ state transitions.
 ## Key contracts
 
 - `AgentAdapter`: start a role-specific session, stream normalized events, cancel, and resume.
-  Concrete Claude Code, Codex CLI, and fake adapters arrive in milestone two.
+  Claude Code, Codex CLI, Kimi Code CLI, and fake adapters are implemented; the Kimi adapter
+  intentionally does not support native session resume.
 - `AgentRegistry`: capabilities, permissions, availability, and concurrency limits.
 - `Orchestrator`: the sole writer of task state, applying explicit legal transitions.
 - `TaskRepository`: stores detached Task snapshots in SQLite. Every save requires the caller's
@@ -56,7 +57,7 @@ state transitions.
 - `Verifier`: produces deterministic build, public-test, hidden-test, and permission evidence.
 - `CompletionGuard`: pure policy evaluation; agent prose is never evidence.
 - `TraceStore`: append-only, idempotent events sharing a task `trace_id`, with correlation and
-  causation links plus cursor reads for replay, attribution, and future SSE delivery.
+  causation links plus cursor reads for replay, attribution, and task SSE delivery.
 
 ## Dependency direction
 
@@ -66,8 +67,9 @@ outer-layer implementations. This keeps fake adapters and in-memory stores usabl
 
 ## Current exclusions
 
-Task and runtime-input snapshots are durable, and `WorkflowRuntime` can be reconstructed from them.
-Recovery of structured verification evidence and the in-flight event queue is not implemented yet.
-SSE streaming, the complete task API, and the evaluation runner also remain future work. Reviewer
-rejection can trigger at most two bounded rework rounds; budget exhaustion deterministically routes
-the task to `needs_human`.
+Task and runtime-input snapshots, structured evidence recovery, the local task API, SSE, and the
+read-only UI are implemented. Recovery conservatively resumes only unambiguous pending work;
+there is no multi-worker lease or cross-process dispatch lock. UI write controls, genuinely
+hidden-test isolation, a three-real-agent end-to-end acceptance run, and the evaluation runner
+remain future work. Reviewer rejection can trigger at most two bounded rework rounds; budget
+exhaustion deterministically routes the task to `needs_human`.

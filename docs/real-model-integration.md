@@ -39,7 +39,7 @@ Kimi Code CLI。不能仅凭独立 Worktree 和事后 Diff/命令审计就声称
 确认 `PreToolUse` 可阻止调用，但 Hook 出错或超时会 fail-open，不能单独承担安全边界。
 Kimi Adapter 已采用严格工具列表加 macOS 写入沙箱。真实冒烟核对了 CLI 会话的工具
 声明和实际调用，均未出现 `Bash`；但尚未做主动诱导执行禁止命令的拒绝测试，也未完成
-带 Verifier 的真实编码任务。这一路径只允许显式选择，不能纳入正式评测。工具不可用或
+三真实 Agent 的完整任务。这一路径只允许显式选择，不能纳入正式评测。工具不可用或
 拒绝时应失败并转人工，不得退回开放执行。
 
 DeepSeek 官方当前模型 ID 是 `deepseek-flash`（当前对应 V4.1-Flash），并支持
@@ -48,19 +48,16 @@ Anthropic 兼容接口、流式和工具调用。官方 Claude Code 指南使用
 Claude 模型名的自动映射，避免评测中无意使用不同模型。Reviewer 只读是 CodeCrew
 进程工具限制与独立会话的要求，不是模型 API 自带的文件系统隔离。
 
-## 下一步实现验收
+## 剩余真实接入验收
 
-1. 为每角色定义显式供应商/模型绑定，启动时检查所需环境变量**是否存在**，不打印值；
-   单独启动 Reviewer 子进程，并清除与目标供应商冲突的继承环境变量。
-2. 月见 Adapter 对齐现有生命周期：启动、流式、超时、取消、退出结果、Token 使用量和
-   原生会话 ID；工具执行须先检查工作目录、允许路径和命令规则。多轮状态不得隐式复制
-   其他 Agent 的聊天历史。
-3. 鲸鲸 Adapter 验证只读工具、DeepSeek 端点/模型、独立会话、结构化 JSON 审批、
-   无有效证据时拒绝审批。Reviewer 批准仍不绕过 Verifier 与 CompletionGuard。
-4. Fake/录制响应已覆盖错误、取消、越权与超时；Kimi 已完成显式启用的单任务真实
-   Worktree 文件写入冒烟。下一步做有确定性测试和 Verifier 判定的小型编码任务。
-5. Trace/报告记录供应商、请求模型、实际返回模型、CLI 版本和 Token 使用量，
-   不记录密钥或原始认证头；无法确认实际模型时标为“未验证”，不纳入对照评测。
+1. 对鲸鲸进行 DeepSeek Flash 在线冒烟，核对只读工具、独立会话、结构化 JSON 审批，
+   并验证无有效证据时拒绝审批。Reviewer 批准仍不能绕过 Verifier 与 CompletionGuard。
+2. 对白金 → 月见 → Verifier → 鲸鲸 → CompletionGuard 跑一条完整真实任务，再覆盖
+   Reviewer 拒绝返工和预算耗尽。
+3. 主动诱导月见执行禁止命令，验证边界确实拒绝；独立 Verifier 小任务通过不能替代该测试。
+4. Trace/报告记录可核实的供应商、请求模型、实际返回模型、CLI 版本和 Token 用量；
+   不记录密钥或认证头。Kimi JSONL 当前没有可靠的原生会话 ID / Token 用量，不能推测
+   或把未知值记为零；无法确认实际模型时标为“未验证”，不纳入对照评测。
 
 当前进度：已实现 `DeepSeekClaudeReviewerAdapter` 的本地只读装配和子进程环境隔离，
 用模拟进程测试；DeepSeek 仍未做真实 API 请求。Kimi 侧新增了只暴露
@@ -78,8 +75,9 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
 启动。离线测试覆盖 JSONL、拒绝异常工具、退出码、超时、取消和环境隔离；本机实际 CLI
 还验证了在 Seatbelt 内运行 `--version`。Seatbelt 还阻止 CLI 读取真实 Home 的文件内容，
 只对 Worktree、私有运行目录以及指定的 CLI/Agent 文件做例外；这不是完整的只读隔离，
-Home 之外的系统路径仍可能可读。**真实冒烟验证了工具清单不含 `Bash`，但尚未主动
-尝试禁止命令，也未做带 Verifier 的端到端编码任务**。由于 `--agent-file` 不能和
+Home 之外的系统路径仍可能可读。**真实冒烟验证了工具清单不含 `Bash`，随后一个
+小型 Bug 修复任务也通过独立 Verifier；但尚未主动尝试禁止命令，且未做三 Agent
+端到端任务**。由于 `--agent-file` 不能和
 `--session` 同用，原生恢复明确禁用，
 后续回合靠结构化消息开启新会话；JSONL 不提供可靠的原生会话 ID / Token 用量，
 当前不推测这两个字段。
@@ -103,7 +101,7 @@ CompletionGuard 的验收，也不能据此确认底层模型固定为 K3。
 不要把密钥放到命令行、聊天或仓库中。桌面 Codex 进程通常不会继承其他终端导出的密钥，
 因此请从原终端执行。
 
-下一条小型 Bug 修复任务位于 `tests/integration/test_kimi_verifier_live.py`。临时仓库只含
+小型 Bug 修复任务位于 `tests/integration/test_kimi_verifier_live.py`。临时仓库只含
 有缺陷的 `chunked` 实现与公开 pytest 用例；额外边界断言留在测试驱动代码中，直到
 Kimi 回合结束才由 Verifier 运行。它们只是**未交给 Agent 的额外断言**，目前没有
 独立容器/用户隔离，不能当作正式评测的保密隐藏测试。离线用例已验证：种子 Bug 使
@@ -123,8 +121,9 @@ CODECREW_RUN_KIMI_VERIFIER_LIVE=1 .venv/bin/pytest -q tests/integration/test_kim
 ```
 
 真实用例最多配置 8 步和 120 秒，随后由独立 Verifier 执行 Python 语法、公开 pytest、
-额外断言及目录权限检查；它会消耗会员额度。**该真实用例尚未运行**。即使 Verifier
-通过，也不等于三角色工作流已获 Reviewer 批准或 CompletionGuard 已作成功判定。
+额外断言及目录权限检查；它会消耗会员额度。2026-09-24，用户在本机运行该命令，
+提供的结果为 `3 passed`。即使 Verifier 通过，也不等于三角色工作流已获 Reviewer
+批准或 CompletionGuard 已作成功判定。
 默认服务器配置继续使用原 Claude Code Reviewer，必须显式配置
 `reviewer_adapter: "deepseek-claude-reviewer"` 才切换，且启动时需要
 `DEEPSEEK_API_KEY`。真实模型身份仍待联网冒烟验证。

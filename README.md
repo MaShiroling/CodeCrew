@@ -1,8 +1,8 @@
 # CodeCrew｜异构编码 Agent 协作与可靠性评测平台
 
-CodeCrew 是一个面向软件变更任务的独立开源项目。它把 Claude Code、Codex CLI
-等不同模型组织成一支职责明确的编码团队，并使用确定性程序验证代码变更，而不是
-接受 Agent 对“任务已经完成”的自然语言声明。
+CodeCrew 是一个面向软件变更任务的独立开源项目。它把 Codex CLI、Kimi Code CLI、
+Claude Code 等不同 Agent 执行环境组织成一支职责明确的编码团队，并使用确定性程序
+验证代码变更，而不是接受 Agent 对“任务已经完成”的自然语言声明。
 
 项目受 Clowder AI 的异构 Agent 团队思想启发，但从零独立实现，不复制其代码、
 Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不建设通用聊天或陪伴平台。
@@ -12,25 +12,31 @@ Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不
 > 已实现；任务/运行上下文持久化、统一 Trace、验证证据恢复、Workflow Recovery
 > Coordinator 和跨进程崩溃恢复测试已完成。阶段七已打通任务 API、SSE、
 > 显式配置的本地 CLI 服务入口与 Fake Agent 端到端验证；三位成员的人格资料与
-> 团队原则已接入 Agent 回合。前端和正式评测集尚未开发。
+> 团队原则已接入 Agent 回合；本地只读任务工作台已实现。UI 发起/干预任务、
+> 三真实模型完整闭环和正式评测集尚未完成。最新验证状态见
+> [项目状态与后续路线](docs/project-status.md)。
 
 ## 目标工作流
 
 ```text
-用户提交 Issue
+用户提交 Issue（当前通过 API；UI 表单待开发）
       ↓
-Claude Code Planner（只读分析与实施计划）
+Planner（白金：Codex CLI，只读分析与实施计划）
       ↓ 结构化 A2A Handoff
-Codex CLI Implementer（独立 Git Worktree）
+Implementer（月见：Kimi Code CLI，独立 Git Worktree）
       ↓
 确定性 Verifier（Diff、权限、编译、公开测试、隐藏测试）
       ↓
-独立 Claude Code Reviewer（只读 Review）
-      ├── 拒绝：返回 Codex 返工，最多两轮
+独立 Reviewer（鲸鲸：Claude Code 接 DeepSeek Flash，只读 Review）
+      ├── 拒绝：返回 Implementer 返工，最多两轮
       └── 批准：进入 CompletionGuard
                          ↓
               Patch、测试证据和任务报告
 ```
+
+上图是目标团队配置，不表示这套真实三 Agent 组合已经端到端验证。当前服务示例默认
+使用 Codex CLI Planner / Implementer 与 Claude Code Reviewer；Kimi 与 DeepSeek
+需要分别显式选择，且 DeepSeek 尚未完成在线冒烟。
 
 ## 核心原则
 
@@ -208,8 +214,8 @@ flowchart TB
 
 - 多 worker 分布式派发与跨进程租约
 - Trace 与领域记录不一致时的自动回填
-- Kimi Code 会员模型 / DeepSeek Flash 的在线模型身份与端到端任务验证（已提供离线适配路径）
-- 前端任务控制台与 API 身份认证
+- 三真实模型完整任务闭环、DeepSeek Flash 在线验证及实际模型身份确认
+- UI 创建/取消任务与人工对话干预；远程使用所需的 API 身份认证
 - 真正对 Agent 不可见的隐藏测试隔离环境
 - 12～15 条正式编码评测集
 - 单 Agent 与多 Agent 对照实验
@@ -249,8 +255,8 @@ cp .env.example .env
 .venv/bin/ruff check .
 ```
 
-两个默认跳过的测试会调用真实 Claude Code/Codex CLI，可能需要网络并消耗 Token。
-显式运行方式：
+真实 CLI / Kimi 在线测试默认跳过；启用后可能需要网络并消耗 Token 或会员额度。
+Claude Code/Codex CLI 集成测试的显式运行方式：
 
 ```bash
 CODECREW_RUN_CLI_INTEGRATION=1 .venv/bin/pytest -m integration
@@ -370,7 +376,8 @@ docs/                # 架构和 Adapter 文档
 - [x] 真实模型接入之二 B2a：Kimi Implementer Adapter、受限启动路径和离线会话测试
 - [x] 真实模型接入之二 B2b-1：Kimi CLI 会员模型单任务真实冒烟（文件写入、变更范围和工具清单）
 - [x] 真实模型接入之二 B2b-2a：小型 Bug 修复夹具、公开/额外断言、Verifier 与假完成离线测试
-- [ ] 真实模型接入之二 B2b-2b：Kimi→Verifier 真实运行与禁止命令主动拒绝验证
+- [x] 真实模型接入之二 B2b-2b：Kimi→Verifier 真实小型编码任务（用户本机运行）
+- [ ] 真实模型接入之二 B2b-2c：禁止命令主动拒绝验证
 - [ ] 阶段九：多语言编码任务评测集
 - [ ] 阶段十：单 Agent / 多 Agent 对照实验与指标报告
 - [ ] 阶段十一：演示样例、部署文档和简历材料
@@ -385,6 +392,7 @@ docs/                # 架构和 Adapter 文档
 - [任务 API 契约](docs/task-api.md)
 - [真实模型接入决策与验收](docs/real-model-integration.md)
 - [团队人格系统](docs/personas.md)
+- [项目状态与后续路线](docs/project-status.md)
 
 ## License
 

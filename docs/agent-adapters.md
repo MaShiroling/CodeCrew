@@ -57,7 +57,9 @@ tests for permitted paths, denied repository metadata, outside paths, and symlin
 Kimi binary has been started under it with `--version`. A user-run opt-in live smoke test
 also passed (`8 passed` on 2026-09-24): it verified one file edit in a task Worktree,
 the changed-file scope, observed tool calls and the session's tool declarations.
-This does not yet verify an active forbidden-command attempt or a full Verifier-gated coding task.
+The user also ran the opt-in small bug-fix fixture with an independent Verifier and reported
+`3 passed` on 2026-09-24. This does not verify an active forbidden-command attempt or the
+three-real-agent workflow with Reviewer and CompletionGuard.
 Kimi's documented `--agent-file`/`--session` incompatibility means
 native resume is disabled; structured mailbox messages start a fresh session on subsequent turns.
 The membership model alias does not prove that the underlying model is K3; provider/model identity
