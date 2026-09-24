@@ -102,6 +102,29 @@ CompletionGuard 的验收，也不能据此确认底层模型固定为 K3。
 若本地 Seatbelt 不可用、未配置密钥或工具声明无法核验，测试会失败而非宣布成功；
 不要把密钥放到命令行、聊天或仓库中。桌面 Codex 进程通常不会继承其他终端导出的密钥，
 因此请从原终端执行。
+
+下一条小型 Bug 修复任务位于 `tests/integration/test_kimi_verifier_live.py`。临时仓库只含
+有缺陷的 `chunked` 实现与公开 pytest 用例；额外边界断言留在测试驱动代码中，直到
+Kimi 回合结束才由 Verifier 运行。它们只是**未交给 Agent 的额外断言**，目前没有
+独立容器/用户隔离，不能当作正式评测的保密隐藏测试。离线用例已验证：种子 Bug 使
+公开测试和额外断言失败；修复后 Verifier 全通过；Fake Agent 自称成功时，即使使用
+合成的批准评审，CompletionGuard 仍拒绝无有效 Diff 和失败验证。
+
+只做不消费会员额度的夹具检查：
+
+```bash
+.venv/bin/pytest -q tests/integration/test_kimi_verifier_live.py
+```
+
+要在已配置新密钥的同一终端显式运行一次真实 Kimi → Verifier 任务：
+
+```bash
+CODECREW_RUN_KIMI_VERIFIER_LIVE=1 .venv/bin/pytest -q tests/integration/test_kimi_verifier_live.py
+```
+
+真实用例最多配置 8 步和 120 秒，随后由独立 Verifier 执行 Python 语法、公开 pytest、
+额外断言及目录权限检查；它会消耗会员额度。**该真实用例尚未运行**。即使 Verifier
+通过，也不等于三角色工作流已获 Reviewer 批准或 CompletionGuard 已作成功判定。
 默认服务器配置继续使用原 Claude Code Reviewer，必须显式配置
 `reviewer_adapter: "deepseek-claude-reviewer"` 才切换，且启动时需要
 `DEEPSEEK_API_KEY`。真实模型身份仍待联网冒烟验证。
