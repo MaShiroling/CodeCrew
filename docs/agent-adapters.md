@@ -47,7 +47,11 @@ provider authentication or model-identity test.
 Kimi Code CLI is present locally and is the intended Implementer harness. Its `-p` mode performs
 tool calls without human approval. Kimi's official Hooks are fail-open on error/timeout, so they
 cannot be the sole command/path security barrier. CodeCrew does not yet register it as an unattended
-Implementer. See [the integration decision](real-model-integration.md).
+Implementer. A restricted Kimi agent file now exposes only `Read/Grep/Glob/Write/Edit`, and the
+macOS `KimiWriteBoundary` has kernel-level tests for permitted paths, denied repository metadata,
+outside paths, and symlink escape. These components are not yet connected to a Kimi Adapter or
+validated against a real Kimi session; a write sandbox alone does not enforce a command allowlist.
+See [the integration decision](real-model-integration.md).
 
 ## Codex CLI
 

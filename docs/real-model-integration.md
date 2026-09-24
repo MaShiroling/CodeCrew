@@ -1,7 +1,7 @@
-# 真实模型接入：第 1 步技术核对（2026-09-24）
+# 真实模型接入与权限边界（2026-09-24）
 
-本页只记录已核对的接口事实和接入决策；**尚未实现 Kimi K3 / DeepSeek Flash Adapter，
-也未使用真实模型执行或消费 API 额度**。角色仍是白金（Codex/GPT）规划、月见（Kimi K3）
+本页记录接口事实、已实现的离线边界及未完成的接入工作；**尚未使用真实 Kimi K3 /
+DeepSeek Flash 模型执行或消费 API 额度**。角色仍是白金（Codex/GPT）规划、月见（Kimi K3）
 实现、鲸鲸（Claude Code 接入 DeepSeek Flash）评审。这里的 CLI 是 Agent 执行环境，
 模型是其背后的推理服务，两者不可混同。
 
@@ -9,11 +9,11 @@
 
 - `AgentAdapter` 规定 `start`、`stream`、`wait`、`cancel`、`resume`；每次请求含
   `task_id`、`trace_id`、角色、工作目录、权限模式、超时和可选原生会话 ID。
-- `ClaudeCodeAdapter` 当前只读，限制为 `Read/Glob/Grep`，但固定使用进程继承的环境，
-  尚不能为 Reviewer 单独注入 DeepSeek 地址、模型和密钥。
+- `ClaudeCodeAdapter` 当前只读，限制为 `Read/Glob/Grep`；独立的
+  `DeepSeekClaudeReviewerAdapter` 已支持 Reviewer 子进程的专属地址、模型和密钥环境。
 - `CodexCliAdapter` 已可作为白金的 Planner；当前 CLI 装配需要显式指定 Planner，
-  Implementer 固定为 Codex CLI、Reviewer 固定为 Claude Code。
-- `AsyncProcessRunner` 支持向单个子进程传递环境变量覆盖；这是隔离不同供应商密钥的
+  Implementer 仍固定为 Codex CLI，Reviewer 可显式切换到 DeepSeek Claude 变体。
+- `AsyncProcessRunner` 支持向单个子进程传递完整环境变量映射；这是隔离不同供应商密钥的
   可复用入口。不要把密钥写进 JSON 配置、命令行参数、Artifact 或 Trace。
 - 本机只验证了 `kimi --version` / `kimi --help`，检测到 Kimi Code CLI 2.0.0；
   Claude Code 与 Codex 可执行文件也在 `PATH`。未读取本地账户配置或检查密钥值。
@@ -56,8 +56,18 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
    不记录密钥或原始认证头；无法确认实际模型时标为“未验证”，不纳入对照评测。
 
 当前进度：已实现 `DeepSeekClaudeReviewerAdapter` 的本地只读装配和子进程环境隔离，
-用模拟进程测试；未做付费 API 请求。Kimi CLI 的工作区写入路径因上述 fail-open
-边界仍未启用。默认服务器配置继续使用原 Claude Code Reviewer，必须显式配置
+用模拟进程测试；未做付费 API 请求。Kimi 侧新增了只暴露
+`Read/Grep/Glob/Write/Edit` 的独立 Agent 文件（没有 `Bash` 或子 Agent），以及
+`KimiWriteBoundary`：在 macOS 上用 Seatbelt 限制 CLI 及其子进程只能写授权目录和
+独立运行目录，明确拒绝 `.git`、`.codecrew`、`.env` 等路径。系统测试验证了授权写入、
+工作区外写入、`.git`/`.env` 写入和符号链接逃逸；缺少 Seatbelt 或非 macOS 时拒绝
+启动，不回退为裸 CLI。`sandbox-exec` 已被标记为弃用，后续需保留失败关闭行为并持续
+做平台兼容测试。
+
+**Kimi CLI 仍未注册为 Implementer**：Agent 文件的工具白名单只有静态测试，尚未
+以实际 CLI 会话验证；写入沙箱也不等于命令白名单。下一步需把两者与 Adapter 启动路径
+绑定，验证 Kimi 无法调用 `Bash`，并让测试仅由 CodeCrew `CommandExecutor` 执行。
+默认服务器配置继续使用原 Claude Code Reviewer，必须显式配置
 `reviewer_adapter: "deepseek-claude-reviewer"` 才切换，且启动时需要
 `DEEPSEEK_API_KEY`。真实模型身份仍待联网冒烟验证。
 
@@ -66,6 +76,8 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
 - [Kimi K3 官方快速开始](https://platform.kimi.ai/docs/guide/kimi-k3-quickstart)
 - [Kimi Code CLI 命令参考](https://www.kimi.com/code/docs/en/kimi-code-cli/reference/kimi-command.html)
 - [Kimi Code CLI 工具能力](https://www.kimi.com/code/docs/en/kimi-code-cli/guides/getting-started.html)
+- [Kimi Code CLI 自定义 Agent 工具白名单](https://github.com/moonshotai/kimi-code/blob/main/docs/en/customization/agents.md)
+- [macOS sandbox-exec 手册（已弃用）](https://man.freebsd.org/cgi/man.cgi?manpath=macOS+13.6.5&query=sandbox-exec&sektion=1)
 - [DeepSeek 模型与定价](https://api-docs.deepseek.com/quick_start/pricing/)
 - [DeepSeek Anthropic API 兼容说明](https://api-docs.deepseek.com/guides/anthropic_api/)
 - [DeepSeek 接入 Claude Code](https://api-docs.deepseek.com/quick_start/agent_integrations/claude_code/)

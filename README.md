@@ -360,7 +360,8 @@ docs/                # 架构和 Adapter 文档
 - [x] 阶段八之四：页面/API/SSE 联调、异常状态处理与界面收尾
 - [x] 真实模型接入之一：核对 Kimi K3 / DeepSeek Flash 官方接口、CLI 与安全边界
 - [x] 真实模型接入之二 A：独立 DeepSeek Reviewer Adapter、配置绑定与环境隔离（离线测试）
-- [ ] 真实模型接入之二 B：Kimi CLI 执行前强制权限边界与 Implementer Adapter
+- [x] 真实模型接入之二 B1：Kimi CLI 受限工具配置与 macOS 写入沙箱（系统级离线测试）
+- [ ] 真实模型接入之二 B2：边界接入 Kimi Implementer Adapter、CLI 工具拒绝验证与会话测试
 - [ ] 阶段九：多语言编码任务评测集
 - [ ] 阶段十：单 Agent / 多 Agent 对照实验与指标报告
 - [ ] 阶段十一：演示样例、部署文档和简历材料
