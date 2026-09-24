@@ -391,6 +391,7 @@ docs/                # 架构和 Adapter 文档
 - [x] UI 任务操作之一：创建表单、创建后选中与最新任务优先列表
 - [x] UI 任务操作之二：取消任务与冲突处理
 - [x] UI 任务操作之三：页面/API 创建与取消联调、离线回归和浏览器冒烟
+- [x] DeepSeek Reviewer 真实冒烟之一：本机 CLI 选项、只读工具装配和密钥隔离预检（无模型调用）
 - [ ] 真实模型接入之二 B2b-2c：禁止命令主动拒绝验证
 - [ ] 阶段九：多语言编码任务评测集
 - [ ] 阶段十：单 Agent / 多 Agent 对照实验与指标报告
@@ -406,6 +407,7 @@ docs/                # 架构和 Adapter 文档
 - [任务 API 契约](docs/task-api.md)
 - [本地 UI 任务操作契约（创建/取消已实现）](docs/ui-task-controls.md)
 - [真实模型接入决策与验收](docs/real-model-integration.md)
+- [DeepSeek Reviewer 分步冒烟](docs/deepseek-reviewer-smoke.md)
 - [团队人格系统](docs/personas.md)
 - [项目状态与后续路线](docs/project-status.md)
 

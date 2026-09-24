@@ -276,12 +276,23 @@ async def test_deepseek_reviewer_uses_dedicated_read_only_environment() -> None:
 
     assert session.agent_name == "deepseek-claude-reviewer"
     assert result.reason is AgentExitReason.COMPLETED
-    assert "--tools=Read,Glob,Grep" in runner.calls[0]["argv"]
-    assert "test-key" not in " ".join(runner.calls[0]["argv"])
+    argv = runner.calls[0]["argv"]
+    assert "--tools=Read,Glob,Grep" in argv
+    assert "--safe-mode" in argv
+    assert "--disable-slash-commands" in argv
+    assert "--strict-mcp-config" in argv
+    assert '--mcp-config={"mcpServers":{}}' in argv
+    assert argv[argv.index("--permission-mode") + 1] == "plan"
+    assert "--resume" not in argv
+    assert "test-key" not in " ".join(argv)
     environment = runner.calls[0]["env"]
     assert environment["ANTHROPIC_AUTH_TOKEN"] == "test-key"
     assert environment["ANTHROPIC_BASE_URL"] == "https://api.deepseek.com/anthropic"
     assert environment["ANTHROPIC_MODEL"] == "deepseek-flash[1m]"
+    assert environment["ANTHROPIC_DEFAULT_OPUS_MODEL"] == "deepseek-flash[1m]"
+    assert environment["ANTHROPIC_DEFAULT_SONNET_MODEL"] == "deepseek-flash[1m]"
+    assert environment["ANTHROPIC_DEFAULT_HAIKU_MODEL"] == "deepseek-flash"
+    assert environment["CLAUDE_CODE_SUBAGENT_MODEL"] == "deepseek-flash"
     assert environment["PATH"] == "/usr/bin"
     assert "MOONSHOT_API_KEY" not in environment
     assert "ANTHROPIC_API_KEY" not in environment

@@ -59,8 +59,10 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
    不记录密钥或认证头。Kimi JSONL 当前没有可靠的原生会话 ID / Token 用量，不能推测
    或把未知值记为零；无法确认实际模型时标为“未验证”，不纳入对照评测。
 
-当前进度：已实现 `DeepSeekClaudeReviewerAdapter` 的本地只读装配和子进程环境隔离，
-用模拟进程测试；DeepSeek 仍未做真实 API 请求。Kimi 侧新增了只暴露
+当前进度：已实现 `DeepSeekClaudeReviewerAdapter` 的只读工具装配和子进程环境隔离，
+用模拟进程测试，并验证了本机 Claude Code CLI 的所需选项。详见
+[DeepSeek Reviewer 分步冒烟](deepseek-reviewer-smoke.md)；DeepSeek 仍未做真实 API 请求，
+且工具限制不等同于操作系统只读沙箱。Kimi 侧新增了只暴露
 `Read/Grep/Glob/Write/Edit` 的独立 Agent 文件（没有 `Bash` 或子 Agent），以及
 `KimiWriteBoundary`：在 macOS 上用 Seatbelt 限制 CLI 及其子进程只能写授权目录和
 独立运行目录，明确拒绝 `.git`、`.codecrew`、`.env` 等路径。系统测试验证了授权写入、
