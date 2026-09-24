@@ -50,6 +50,7 @@ from app.team.models import (
     StoredChatMessage,
     TeamRoom,
 )
+from app.team.personas import PersonaProfile, TeamPersonaCatalog, default_team_personas
 from app.team.router import (
     ConversationArtifactError,
     ConversationRouter,
@@ -105,6 +106,7 @@ __all__ = [
     "MessageDeliveryStatus",
     "MessageRecipient",
     "MessageType",
+    "PersonaProfile",
     "PlanRevision",
     "RecipientKind",
     "RoomConflictError",
@@ -114,6 +116,7 @@ __all__ = [
     "RouteNotAllowedError",
     "SenderAuthenticationError",
     "StoredChatMessage",
+    "TeamPersonaCatalog",
     "TeamRoom",
     "TeamRoomStore",
     "TeamRoomStoreError",
@@ -127,5 +130,6 @@ __all__ = [
     "WorkflowExecutionError",
     "WorkflowRunResult",
     "WorkflowRuntime",
+    "default_team_personas",
     "parse_agent_chat_turn",
 ]

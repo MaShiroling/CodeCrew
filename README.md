@@ -11,7 +11,8 @@ Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不
 > 返工闭环、TeamRoom、AgentTurnRunner、事件驱动 WorkflowController 和自动指令循环
 > 已实现；任务/运行上下文持久化、统一 Trace、验证证据恢复、Workflow Recovery
 > Coordinator 和跨进程崩溃恢复测试已完成。阶段七已打通任务 API、SSE、
-> 显式配置的本地 CLI 服务入口与 Fake Agent 端到端验证；前端和正式评测集尚未开发。
+> 显式配置的本地 CLI 服务入口与 Fake Agent 端到端验证；三位成员的人格资料与
+> 团队原则已接入 Agent 回合。前端和正式评测集尚未开发。
 
 ## 目标工作流
 
@@ -111,6 +112,8 @@ Codex CLI Implementer（独立 Git Worktree）
 - 系统消息防伪、回复因果约束及 Artifact 完整性校验
 - 严格的 Agent 聊天动作 JSON 协议
 - `AgentTurnRunner` 增量读取消息、启动/恢复会话并收集流式事件
+- 白金、月见、鲸鲸三层人格资料、团队关系原则与角色回合 prompt 注入
+- 新任务 TeamRoom 使用人格展示名；`@称呼` 暂不自动路由，仍按结构化收件人派发
 - 动作全部路由成功后才 ACK，失败输入保留待重试
 - 聊天事件驱动 Task 状态迁移并生成 Agent/Verifier/CompletionGuard 调度指令
 - 工作流事件持久化去重，支持控制器重复消费和有限恢复
@@ -363,6 +366,7 @@ docs/                # 架构和 Adapter 文档
 - [验证证据与任务恢复](docs/evidence-recovery.md)
 - [统一 Trace 与事件回放](docs/tracing.md)
 - [任务 API 契约](docs/task-api.md)
+- [团队人格系统](docs/personas.md)
 
 ## License
 

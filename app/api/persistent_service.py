@@ -27,6 +27,7 @@ from app.team.models import (
     StoredChatMessage,
     TeamRoom,
 )
+from app.team.personas import TeamPersonaCatalog, default_team_personas
 from app.team.router import ConversationRouter
 from app.team.store import TeamRoomStore
 from app.trace import TraceActorKind, TraceEvent, TraceEventType
@@ -52,6 +53,7 @@ class PersistentTaskService:
         event_loop: WorkflowEventLoop,
         verification_plan: VerificationPlan,
         agent_names: dict[MemberRole, str],
+        personas: TeamPersonaCatalog | None = None,
     ) -> None:
         paths = (tasks.database.path, contexts.database.path, rooms.database.path,
                  router.artifacts.database.path)
@@ -69,6 +71,7 @@ class PersistentTaskService:
         self.event_loop = event_loop
         self.verification_plan = verification_plan
         self.agent_names = dict(agent_names)
+        self.personas = personas or default_team_personas()
         self._runs: dict[UUID, asyncio.Task[None]] = {}
         self._cancelling: set[UUID] = set()
         self._lock = asyncio.Lock()
@@ -91,9 +94,12 @@ class PersistentTaskService:
         members = tuple(
             RoomMember(room_id=room_id, name=name, role=role, kind=kind)
             for name, role, kind in (
-                ("planner", MemberRole.PLANNER, MemberKind.AGENT),
-                ("implementer", MemberRole.IMPLEMENTER, MemberKind.AGENT),
-                ("reviewer", MemberRole.REVIEWER, MemberKind.AGENT),
+                (self.personas.for_role(MemberRole.PLANNER).display_name,
+                 MemberRole.PLANNER, MemberKind.AGENT),
+                (self.personas.for_role(MemberRole.IMPLEMENTER).display_name,
+                 MemberRole.IMPLEMENTER, MemberKind.AGENT),
+                (self.personas.for_role(MemberRole.REVIEWER).display_name,
+                 MemberRole.REVIEWER, MemberKind.AGENT),
                 ("verifier", MemberRole.VERIFIER, MemberKind.SYSTEM),
                 ("orchestrator", MemberRole.ORCHESTRATOR, MemberKind.SYSTEM),
                 ("human", MemberRole.HUMAN, MemberKind.HUMAN),

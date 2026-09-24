@@ -107,6 +107,19 @@ def send_trigger(router, room, sender, recipient, **updates):
     )
 
 
+def test_persona_mention_in_content_does_not_bypass_structured_recipient(tmp_path: Path) -> None:
+    _runner, router, rooms, _, _, _task, room, members = make_context(
+        tmp_path, FakeAgentScenario()
+    )
+    event = send_trigger(
+        router, room, members[MemberRole.ORCHESTRATOR],
+        members[MemberRole.IMPLEMENTER], content="@鲸鲸 please review now",
+    )
+    assert len(event.deliveries) == 1
+    assert event.deliveries[0].recipient_id == members[MemberRole.IMPLEMENTER].member_id
+    assert rooms.pending_for(members[MemberRole.REVIEWER].member_id) == ()
+
+
 @pytest.mark.asyncio
 async def test_cancelling_turn_stops_adapter_and_preserves_pending_message(tmp_path: Path) -> None:
     runner, router, rooms, _, adapter, task, room, members = make_context(

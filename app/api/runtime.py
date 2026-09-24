@@ -22,6 +22,7 @@ from app.team import (
     WorkflowDirectiveExecutor,
     WorkflowEventLoop,
 )
+from app.team.personas import TeamPersonaCatalog, default_team_personas
 from app.trace import TraceStore
 from app.verification import (
     CompletionGuard,
@@ -53,6 +54,7 @@ def build_task_runtime(
     verification_plan: VerificationPlan,
     permission_policy: PermissionPolicy,
     command_policy: CommandPolicy,
+    personas: TeamPersonaCatalog | None = None,
 ) -> TaskRuntime:
     """Build one runnable single-worker service from explicit Agent and safety policy."""
     if not settings.database_url.startswith("sqlite:///"):
@@ -95,6 +97,8 @@ def build_task_runtime(
         if not any(rule.matches(command.argv) for rule in command_policy.rules):
             raise ValueError(f"verification command {command.name!r} is not allowlisted")
 
+    catalog = personas or default_team_personas()
+
     database = SQLiteDatabase(Path(database_path))
     tasks = TaskRepository(database)
     contexts = RuntimeContextRepository(database)
@@ -102,7 +106,9 @@ def build_task_runtime(
     rooms = TeamRoomStore(database)
     traces = TraceStore(database)
     router = ConversationRouter(rooms, artifacts, traces)
-    turns = AgentTurnRunner(registry, router, timeout_seconds=settings.agent_timeout_seconds)
+    turns = AgentTurnRunner(
+        registry, router, timeout_seconds=settings.agent_timeout_seconds, personas=catalog
+    )
     verifier = Verifier(
         artifacts,
         WorkspaceChangeCollector(artifacts),
@@ -128,6 +134,7 @@ def build_task_runtime(
         event_loop=event_loop,
         verification_plan=verification_plan,
         agent_names=agent_names,
+        personas=catalog,
     )
     recovery = WorkflowRecoveryCoordinator(
         tasks=tasks,
