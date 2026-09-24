@@ -334,6 +334,10 @@ class KimiCodeAdapter(AgentAdapter):
                 native_event_type="tool",
             )
             return True
+        if role == "meta" and payload.get("type") == "session.resume_hint":
+            # The CLI emits this protocol hint on stdout. Native resume remains
+            # disabled because our restricted --agent-file cannot be resumed.
+            return True
         state.error = f"Kimi CLI returned an unexpected stream-json role: {role!r}"
         return False
 

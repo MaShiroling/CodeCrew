@@ -156,6 +156,55 @@ async def test_kimi_lifecycle_uses_fresh_sandboxed_session_and_isolated_environm
 
 
 @pytest.mark.asyncio
+async def test_kimi_ignores_resume_hint_without_treating_it_as_answer(tmp_path: Path) -> None:
+    process = StubProcess(
+        [
+            json_chunk({
+                "role": "meta", "type": "session.resume_hint",
+                "session_id": "private-native-id", "content": "To resume this session",
+            }),
+            json_chunk({"role": "assistant", "content": "Implemented"}),
+        ],
+        ProcessResult(exit_code=0, duration_ms=12),
+    )
+    adapter, _, request = make_adapter(tmp_path, process)
+
+    session = await adapter.start(request)
+    events = [event async for event in adapter.stream(session.session_id)]
+    result = await adapter.wait(session.session_id)
+
+    assert result.reason is AgentExitReason.COMPLETED
+    assert result.output == {"message": "Implemented"}
+    assert session.native_session_id is None
+    assert "private-native-id" not in repr(events)
+
+
+@pytest.mark.asyncio
+async def test_kimi_resume_hint_alone_is_not_success(tmp_path: Path) -> None:
+    process = StubProcess(
+        [json_chunk({"role": "meta", "type": "session.resume_hint", "content": "resume"})],
+        ProcessResult(exit_code=0, duration_ms=1),
+    )
+    adapter, _, request = make_adapter(tmp_path, process)
+    session = await adapter.start(request)
+    result = await adapter.wait(session.session_id)
+    assert result.reason is AgentExitReason.FAILED
+
+
+@pytest.mark.asyncio
+async def test_kimi_unknown_meta_event_still_fails_closed(tmp_path: Path) -> None:
+    process = StubProcess(
+        [json_chunk({"role": "meta", "type": "unknown", "content": "ignored?"})],
+        ProcessResult(exit_code=0, duration_ms=1),
+    )
+    adapter, _, request = make_adapter(tmp_path, process)
+    session = await adapter.start(request)
+    result = await adapter.wait(session.session_id)
+    assert result.reason is AgentExitReason.FAILED
+    assert process.cancelled
+
+
+@pytest.mark.asyncio
 async def test_kimi_fails_on_unexpected_tool_and_invalid_json(tmp_path: Path) -> None:
     for chunk in (
         json_chunk({"role": "assistant", "tool_calls": [{"function": {"name": "Bash"}}]}),
