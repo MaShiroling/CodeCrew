@@ -1,7 +1,7 @@
 # DeepSeek Reviewer 真实冒烟：分步验收
 
-目前已完成 **子步骤 1～2**，均不发起模型请求；离线检查不能算作 DeepSeek Flash
-已接通。后续子步骤每次独立验证和提交。
+已完成 **子步骤 1～2**；子步骤 3 的可选在线测试入口已准备好，但尚未使用真实
+DeepSeek API Key 执行。离线检查不能算作 DeepSeek Flash 已接通。
 
 ## 子步骤 1：本地预检（已完成）
 
@@ -49,10 +49,42 @@
 ## 后续子步骤
 
 3. 显式启用真实 DeepSeek 回合：先测证据充分的审批，再测证据不足时的拒绝；核查
-   实际工具事件、仓库是否被改动，以及能够核实的 provider/模型信息。无法确认的
-   实际模型版本必须标记为“未验证”。这一步会消耗 API 额度。
+   实际工具事件与仓库、Artifact 文件状态。能够核实的 provider/模型信息单独记录；
+   无法确认的实际模型版本标记为“未验证”。这一步会消耗 API 额度。
 4. 运行离线回归与静态检查，记录结果和限制，更新项目状态。Reviewer 批准始终不
    替代 Verifier 与 CompletionGuard 的确定性成功判定。
+
+## 子步骤 3 在线测试入口（待实际运行）
+
+`tests/integration/test_deepseek_reviewer_live.py` 默认跳过。它最多发起两次真实
+Reviewer 回合，每次 180 秒超时：有效 Diff/全部验证通过时要求批准；无有效 Diff、
+公开及额外断言失败时要求拒绝。测试复用子步骤 2 的临时仓库与 Artifact，用独立
+临时 `HOME` 避免依赖本机已有 Claude 登录状态，检查实际 `Read/Glob/Grep` 调用、
+每份证据的读取路径、两次不同的原生会话 ID，以及 Worktree/Artifact 前后哈希。
+临时 `HOME` 在测试结束（包括断言失败）后清理；其他 pytest 临时夹具按 pytest
+自身策略保留若干轮。它不证明操作系统级只读隔离，也不调用 CompletionGuard。
+
+先运行不会消费额度的检查：
+
+```bash
+.venv/bin/pytest -q tests/test_deepseek_reviewer_smoke.py tests/test_deepseek_reviewer_live_checks.py tests/integration/test_deepseek_reviewer_live.py
+```
+
+真实运行前，在**同一个 zsh 终端**安全输入 DeepSeek Platform API Key（不要把
+密钥写在命令行、仓库文件或聊天中）：
+
+```zsh
+read -rs 'DEEPSEEK_API_KEY?DeepSeek API Key: '
+echo
+export DEEPSEEK_API_KEY
+[[ -n "$DEEPSEEK_API_KEY" ]] && echo '密钥已设置'
+CODECREW_RUN_DEEPSEEK_REVIEWER_LIVE=1 .venv/bin/pytest -q tests/integration/test_deepseek_reviewer_live.py
+```
+
+如果第一回合失败，测试不会继续消耗第二回合；不要因失败而移除只读限制或改用
+本机 Claude 账户。当前 CodeCrew 桌面任务进程没有此密钥，因此没有代替用户运行。
+Claude Code 的流式结果若不暴露实际远端模型 ID，不能仅凭环境变量宣称底层模型
+身份已证实。Artifact 位于 Worktree 外，在线测试也会确认 CLI 是否真的能读取。
 
 只有子步骤 3 的真实调用成功，才能声称 DeepSeek Reviewer 已通过在线冒烟；
 三真实 Agent 的完整任务仍是后续独立验收。

@@ -393,6 +393,7 @@ docs/                # 架构和 Adapter 文档
 - [x] UI 任务操作之三：页面/API 创建与取消联调、离线回归和浏览器冒烟
 - [x] DeepSeek Reviewer 真实冒烟之一：本机 CLI 选项、只读工具装配和密钥隔离预检（无模型调用）
 - [x] DeepSeek Reviewer 真实冒烟之二：真实 Diff/Verifier 证据夹具、模拟 CLI 双会话与错误失败关闭（无模型调用）
+- [ ] DeepSeek Reviewer 真实冒烟之三：在线测试入口已备妥，真实 API 调用与结果尚待用户本机验收
 - [ ] 真实模型接入之二 B2b-2c：禁止命令主动拒绝验证
 - [ ] 阶段九：多语言编码任务评测集
 - [ ] 阶段十：单 Agent / 多 Agent 对照实验与指标报告

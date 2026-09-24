@@ -87,6 +87,8 @@ async def test_runs_independent_read_only_reviewer_and_parses_output(tmp_path: P
     assert request.metadata["independent_session"] is True
     assert str(plan.artifact_id) == request.metadata["plan_artifact_id"]
     assert str(runner.artifacts.blob_path_for(plan.artifact_id)) in request.prompt
+    assert "Read each listed artifact" in request.prompt
+    assert "if evidence is missing, failed, or uncertain, reject" in request.prompt
 
 
 @pytest.mark.asyncio

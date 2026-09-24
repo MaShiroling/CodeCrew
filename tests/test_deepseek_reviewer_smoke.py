@@ -167,14 +167,18 @@ class _QueuedProcessRunner:
         return _CompletedProcess(payload, exit_code)
 
 
-async def make_review_case(tmp_path: Path):
-    """Create a disposable worktree with a real Diff and passing verifier artifacts."""
+async def make_review_case(tmp_path: Path, *, fixed: bool = True):
+    """Create a disposable worktree with real verifier artifacts.
+
+    The unfixed variant has no effective Diff and failing public/held-out checks.
+    """
     handle, store, verifier, verification_plan = await _make_fixture(tmp_path)
-    (handle.worktree_path / "src/pricing.py").write_text(_FIXED_SOURCE, encoding="utf-8")
+    if fixed:
+        (handle.worktree_path / "src/pricing.py").write_text(_FIXED_SOURCE, encoding="utf-8")
     trace_id = uuid4()
     verification = await verifier.verify(handle, trace_id=trace_id, plan=verification_plan)
-    assert verification.passed
-    assert verification.change_set.diff_artifact is not None
+    assert verification.passed is fixed
+    assert (verification.change_set.diff_artifact is not None) is fixed
     plan_metadata = store.put_json(
         {"steps": ["Include every input item in src/pricing.py total()"], "allowed_paths": ["src"]},
         task_id=handle.task_id,
@@ -213,9 +217,7 @@ def _response(result: str, *, is_error: bool = False) -> tuple[dict[str, Any], i
 
 @pytest.mark.asyncio
 async def test_review_fixture_baseline_really_fails(tmp_path: Path) -> None:
-    handle, _, verifier, verification_plan = await _make_fixture(tmp_path)
-
-    report = await verifier.verify(handle, trace_id=uuid4(), plan=verification_plan)
+    _, _, _, _, report = await make_review_case(tmp_path, fixed=False)
 
     assert not report.passed
     assert {

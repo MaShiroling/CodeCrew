@@ -114,9 +114,12 @@ class AgentReviewerRunner:
             f"Issue:\n{task.issue}\n\n"
             "Inspect the worktree and these immutable evidence artifacts:\n"
             f"{rendered}\n\n"
+            "Read each listed artifact before deciding; do not rely on a summary alone.\n"
             "Return only one JSON object with keys: verdict ('approved' or 'rejected'), "
             "summary, and issues. Each issue must contain priority "
-            "('low', 'medium', 'high', or 'critical'), summary, and resolved."
+            "('low', 'medium', 'high', or 'critical'), summary, and resolved. "
+            "Approve only when the code Diff and verification evidence support the Issue; "
+            "if evidence is missing, failed, or uncertain, reject and explain why."
         )
 
     @staticmethod
