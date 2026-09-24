@@ -169,7 +169,7 @@ class TaskRepository:
         if state is not None:
             query += " WHERE state = ?"
             parameters.append(state.value)
-        query += " ORDER BY created_at, task_id LIMIT ? OFFSET ?"
+        query += " ORDER BY created_at DESC, task_id DESC LIMIT ? OFFSET ?"
         parameters.extend((limit, offset))
         with self.database.connect() as connection:
             rows = connection.execute(query, parameters).fetchall()

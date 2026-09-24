@@ -1,16 +1,23 @@
-const state = { tasks: [], nextOffset: null, selectedId: null, filter: 'all', messageCursor: 0, messageHasMore: false, requestId: 0, eventSource: null, refreshTimer: null, refreshingFor: null, refreshQueuedFor: null };
+const state = { tasks: [], nextOffset: null, selectedId: null, filter: 'all', messageCursor: 0, messageHasMore: false, requestId: 0, eventSource: null, refreshTimer: null, refreshingFor: null, refreshQueuedFor: null, creating: false };
 const $ = (id) => document.getElementById(id);
-const api = async (path) => {
-  const response = await fetch(`/api/v1${path}`, { headers: { Accept: 'application/json' } });
-  const data = await response.json();
+const api = async (path, options = {}) => {
+  const response = await fetch(`/api/v1${path}`, {
+    ...options,
+    headers: { Accept: 'application/json', ...(options.body ? { 'Content-Type': 'application/json' } : {}) },
+  });
+  let data;
+  try { data = await response.json(); }
+  catch { throw new Error('服务返回的响应无法读取'); }
   if (!response.ok) {
     const knownErrors = {
       task_service_unavailable: '任务服务尚未配置，请使用运行时配置启动服务',
       task_not_found: '任务不存在或已被移除',
       task_detail_unavailable: '任务详情暂不可用',
       task_artifact_not_found: '证据不存在或不属于当前任务',
+      invalid_repository: '仓库路径无效或无法创建独立工作区',
+      validation_error: '输入不符合要求，请检查仓库路径和开发需求',
     };
-    throw new Error(knownErrors[data.error?.code] || data.error?.message || `HTTP ${response.status}`);
+    throw Object.assign(new Error(knownErrors[data?.error?.code] || data?.error?.message || `HTTP ${response.status}`), { status: response.status });
   }
   return data;
 };
@@ -37,7 +44,7 @@ function renderTasks() {
   list.replaceChildren();
   const tasks = state.tasks.filter((task) => state.filter === 'all' || (state.filter === 'terminal') === terminal.has(task.state));
   $('task-count').textContent = String(state.tasks.length);
-  if (!tasks.length) list.append(node('div', 'empty-state', state.tasks.length ? '此筛选下暂无任务' : '暂无任务。可通过任务 API 创建。'));
+  if (!tasks.length) list.append(node('div', 'empty-state', state.tasks.length ? '此筛选下暂无任务' : '暂无任务。点击“新建任务”开始。'));
   for (const task of tasks) {
     const card = node('button', `task-card${task.task_id === state.selectedId ? ' selected' : ''}`);
     card.type = 'button';
@@ -63,6 +70,67 @@ function showTask(task) {
   const index = state.tasks.findIndex((item) => item.task_id === task.task_id);
   if (index !== -1) state.tasks[index] = task;
   renderTasks();
+}
+
+function createError(message) {
+  $('create-error').textContent = message;
+  $('create-error').hidden = !message;
+}
+
+function setCreateOpen(open) {
+  if (state.creating && !open) return;
+  $('create-form').hidden = !open;
+  $('create-toggle').setAttribute('aria-expanded', String(open));
+  if (open) $('create-repository').focus();
+  else { createError(''); $('create-toggle').focus(); }
+}
+
+async function createTask() {
+  if (state.creating) return;
+  const repositoryPath = $('create-repository').value.trim();
+  const issue = $('create-issue').value.trim();
+  if (!repositoryPath || !issue) {
+    createError('请填写 Git 仓库路径和开发需求。');
+    return;
+  }
+  if (repositoryPath.length > 4096 || issue.length > 16000) {
+    createError('仓库路径或开发需求超过长度限制。');
+    return;
+  }
+  state.creating = true;
+  $('create-submit').disabled = true;
+  $('create-submit').textContent = '正在创建…';
+  $('create-close').disabled = true;
+  createError('');
+  let created;
+  try {
+    created = await api('/tasks', {
+      method: 'POST',
+      body: JSON.stringify({ repository_path: repositoryPath, issue }),
+    });
+  } catch (error) {
+    const uncertain = error.status === undefined || (error.status >= 500 && error.status !== 503);
+    createError(uncertain ? `提交结果不明：${error.message}。任务可能已创建，请先刷新列表确认。` : error.message);
+    return;
+  } finally {
+    state.creating = false;
+    $('create-submit').disabled = false;
+    $('create-submit').textContent = '创建并查看任务';
+    $('create-close').disabled = false;
+  }
+  if (!created?.task_id) {
+    createError('服务未返回任务 ID；任务可能已创建，请先刷新列表确认。');
+    return;
+  }
+  $('create-repository').value = '';
+  $('create-issue').value = '';
+  setCreateOpen(false);
+  state.filter = 'all';
+  document.querySelectorAll('.filter').forEach((button) => button.classList.toggle('active', button.dataset.filter === 'all'));
+  state.tasks = [created, ...state.tasks.filter((item) => item.task_id !== created.task_id)];
+  renderTasks();
+  await selectTask(created.task_id);
+  await loadTasks();
 }
 
 function closeStream() {
@@ -269,6 +337,9 @@ document.querySelectorAll('.filter').forEach((button) => button.addEventListener
   state.filter = button.dataset.filter;
   renderTasks();
 }));
+$('create-toggle').addEventListener('click', () => setCreateOpen($('create-form').hidden));
+$('create-close').addEventListener('click', () => setCreateOpen(false));
+$('create-form').addEventListener('submit', (event) => { event.preventDefault(); void createTask(); });
 document.querySelectorAll('.tab').forEach((button) => button.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach((item) => {
     item.classList.toggle('active', item === button);

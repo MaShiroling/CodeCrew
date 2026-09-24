@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from threading import Barrier
 from uuid import uuid4
@@ -154,6 +155,22 @@ def test_list_filters_state_and_paginates(tmp_path: Path) -> None:
     assert len(repository.list(limit=1, offset=1)) == 1
     with pytest.raises(ValueError, match="positive"):
         repository.list(limit=0)
+
+
+def test_list_orders_newest_tasks_first_with_stable_pagination(tmp_path: Path) -> None:
+    repository = make_repository(tmp_path)
+    older_time = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    older = Task(issue="older", repository_path="/tmp/one", created_at=older_time,
+                 updated_at=older_time)
+    newer = Task(issue="newer", repository_path="/tmp/two",
+                 created_at=older_time + timedelta(seconds=1),
+                 updated_at=older_time + timedelta(seconds=1))
+    repository.create(older)
+    repository.create(newer)
+
+    assert [item.task.id for item in repository.list()] == [newer.id, older.id]
+    assert [item.task.id for item in repository.list(limit=1, offset=0)] == [newer.id]
+    assert [item.task.id for item in repository.list(limit=1, offset=1)] == [older.id]
 
 
 def test_corrupt_indexed_columns_are_not_silently_loaded(tmp_path: Path) -> None:

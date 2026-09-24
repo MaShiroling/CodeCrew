@@ -12,14 +12,14 @@ Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不
 > 已实现；任务/运行上下文持久化、统一 Trace、验证证据恢复、Workflow Recovery
 > Coordinator 和跨进程崩溃恢复测试已完成。阶段七已打通任务 API、SSE、
 > 显式配置的本地 CLI 服务入口与 Fake Agent 端到端验证；三位成员的人格资料与
-> 团队原则已接入 Agent 回合；本地只读任务工作台已实现。UI 发起/干预任务、
+> 团队原则已接入 Agent 回合；本地任务工作台已可创建任务。UI 取消/人工干预、
 > 三真实模型完整闭环和正式评测集尚未完成。最新验证状态见
 > [项目状态与后续路线](docs/project-status.md)。
 
 ## 目标工作流
 
 ```text
-用户提交 Issue（当前通过 API；UI 表单待开发）
+用户提交 Issue（API 或本地 UI 创建表单）
       ↓
 Planner（白金：Codex CLI，只读分析与实施计划）
       ↓ 结构化 A2A Handoff
@@ -215,7 +215,7 @@ flowchart TB
 - 多 worker 分布式派发与跨进程租约
 - Trace 与领域记录不一致时的自动回填
 - 三真实模型完整任务闭环、DeepSeek Flash 在线验证及实际模型身份确认
-- UI 创建/取消任务与人工对话干预；远程使用所需的 API 身份认证
+- UI 取消任务与人工对话干预；远程使用所需的 API 身份认证
 - 真正对 Agent 不可见的隐藏测试隔离环境
 - 12～15 条正式编码评测集
 - 单 Agent 与多 Agent 对照实验
@@ -377,6 +377,8 @@ docs/                # 架构和 Adapter 文档
 - [x] 真实模型接入之二 B2b-1：Kimi CLI 会员模型单任务真实冒烟（文件写入、变更范围和工具清单）
 - [x] 真实模型接入之二 B2b-2a：小型 Bug 修复夹具、公开/额外断言、Verifier 与假完成离线测试
 - [x] 真实模型接入之二 B2b-2b：Kimi→Verifier 真实小型编码任务（用户本机运行）
+- [x] UI 任务操作之一：创建表单、创建后选中与最新任务优先列表
+- [ ] UI 任务操作之二：取消任务与冲突处理
 - [ ] 真实模型接入之二 B2b-2c：禁止命令主动拒绝验证
 - [ ] 阶段九：多语言编码任务评测集
 - [ ] 阶段十：单 Agent / 多 Agent 对照实验与指标报告
@@ -390,7 +392,7 @@ docs/                # 架构和 Adapter 文档
 - [验证证据与任务恢复](docs/evidence-recovery.md)
 - [统一 Trace 与事件回放](docs/tracing.md)
 - [任务 API 契约](docs/task-api.md)
-- [本地 UI 任务操作契约（待实现）](docs/ui-task-controls.md)
+- [本地 UI 任务操作契约（创建已实现）](docs/ui-task-controls.md)
 - [真实模型接入决策与验收](docs/real-model-integration.md)
 - [团队人格系统](docs/personas.md)
 - [项目状态与后续路线](docs/project-status.md)

@@ -68,8 +68,8 @@ outer-layer implementations. This keeps fake adapters and in-memory stores usabl
 ## Current exclusions
 
 Task and runtime-input snapshots, structured evidence recovery, the local task API, SSE, and the
-read-only UI are implemented. Recovery conservatively resumes only unambiguous pending work;
-there is no multi-worker lease or cross-process dispatch lock. UI write controls, genuinely
-hidden-test isolation, a three-real-agent end-to-end acceptance run, and the evaluation runner
-remain future work. Reviewer rejection can trigger at most two bounded rework rounds; budget
-exhaustion deterministically routes the task to `needs_human`.
+task UI with creation controls are implemented. Recovery conservatively resumes only unambiguous
+pending work; there is no multi-worker lease or cross-process dispatch lock. UI cancellation and
+human intervention, genuinely hidden-test isolation, a three-real-agent end-to-end acceptance run,
+and the evaluation runner remain future work. Reviewer rejection can trigger at most two bounded
+rework rounds; budget exhaustion deterministically routes the task to `needs_human`.
