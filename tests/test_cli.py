@@ -68,3 +68,28 @@ def test_explicit_deepseek_reviewer_binding_requires_key(tmp_path: Path, monkeyp
     assert app.state.task_service.agent_names[cli.MemberRole.REVIEWER] == (
         "deepseek-claude-reviewer"
     )
+
+
+def test_explicit_kimi_implementer_binding_requires_key_and_sandbox(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config = cli.load_server_config(EXAMPLE).model_copy(
+        update={"implementer_adapter": "kimi-code-cli"}
+    )
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'tasks.sqlite3'}",
+        artifact_root=tmp_path / "artifacts",
+        worktree_root=tmp_path / "worktrees",
+    )
+    monkeypatch.delenv("KIMI_MODEL_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="KIMI_MODEL_API_KEY"):
+        cli.build_server_app(config, settings=settings)
+
+    monkeypatch.setenv("KIMI_MODEL_API_KEY", "test-key")
+    monkeypatch.setattr(cli.platform, "system", lambda: "Linux")
+    with pytest.raises(ValueError, match="macOS sandbox-exec"):
+        cli.build_server_app(config, settings=settings)
+
+    monkeypatch.setattr(cli.platform, "system", lambda: "Darwin")
+    app = cli.build_server_app(config, settings=settings)
+    assert app.state.task_service.agent_names[cli.MemberRole.IMPLEMENTER] == "kimi-code-cli"

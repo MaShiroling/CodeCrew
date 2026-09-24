@@ -12,7 +12,8 @@ DeepSeek Flash 模型执行或消费 API 额度**。角色仍是白金（Codex/G
 - `ClaudeCodeAdapter` 当前只读，限制为 `Read/Glob/Grep`；独立的
   `DeepSeekClaudeReviewerAdapter` 已支持 Reviewer 子进程的专属地址、模型和密钥环境。
 - `CodexCliAdapter` 已可作为白金的 Planner；当前 CLI 装配需要显式指定 Planner，
-  Implementer 仍固定为 Codex CLI，Reviewer 可显式切换到 DeepSeek Claude 变体。
+  Implementer 默认仍为 Codex CLI，可显式选择 Kimi Code CLI；Reviewer 可显式切换到
+  DeepSeek Claude 变体。
 - `AsyncProcessRunner` 支持向单个子进程传递完整环境变量映射；这是隔离不同供应商密钥的
   可复用入口。不要把密钥写进 JSON 配置、命令行参数、Artifact 或 Trace。
 - 本机只验证了 `kimi --version` / `kimi --help`，检测到 Kimi Code CLI 2.0.0；
@@ -32,8 +33,9 @@ Kimi K3 的官方文档支持 `reasoning_effort=low/high/max`，并给出工具�
 Kimi Code CLI。不能仅凭独立 Worktree 和事后 Diff/命令审计就声称“禁止命令不会
 执行”。官方 [Hooks 文档](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html)
 确认 `PreToolUse` 可阻止调用，但 Hook 出错或超时会 fail-open，不能单独承担安全边界。
-在引入执行前可强制的工具/OS 沙箱并通过禁止命令测试前，不将 CLI 注册为无人值守
-Implementer。工具不可用或拒绝时应失败并转人工，不得退回开放执行。
+Kimi Adapter 已采用严格工具列表加 macOS 写入沙箱，但真实模型会话对 `Bash` 禁用的
+验证仍未完成；这一路径只允许显式选择，不能纳入正式评测。工具不可用或拒绝时应失败
+并转人工，不得退回开放执行。
 
 DeepSeek 官方当前模型 ID 是 `deepseek-flash`（当前对应 V4.1-Flash），并支持
 Anthropic 兼容接口、流式和工具调用。官方 Claude Code 指南使用
@@ -64,9 +66,14 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
 启动，不回退为裸 CLI。`sandbox-exec` 已被标记为弃用，后续需保留失败关闭行为并持续
 做平台兼容测试。
 
-**Kimi CLI 仍未注册为 Implementer**：Agent 文件的工具白名单只有静态测试，尚未
-以实际 CLI 会话验证；写入沙箱也不等于命令白名单。下一步需把两者与 Adapter 启动路径
-绑定，验证 Kimi 无法调用 `Bash`，并让测试仅由 CodeCrew `CommandExecutor` 执行。
+`KimiCodeAdapter` 已把两者固定到启动路径，并接入可选的 Implementer 角色配置。
+它仅接受任务专属 Worktree，使用每回合新建的私有运行目录，通过
+`KIMI_MODEL_API_KEY` 注入临时模型配置；没有该环境变量或没有 macOS Seatbelt 即拒绝
+启动。离线测试覆盖 JSONL、拒绝异常工具、退出码、超时、取消和环境隔离；本机实际 CLI
+仅验证了在 Seatbelt 内运行 `--version`。**尚未用真实模型验证 `Bash` 拒绝，也未做
+端到端编码任务**。由于 `--agent-file` 不能和 `--session` 同用，原生恢复明确禁用，
+后续回合靠结构化消息开启新会话；JSONL 不提供可靠的原生会话 ID / Token 用量，
+当前不推测这两个字段。
 默认服务器配置继续使用原 Claude Code Reviewer，必须显式配置
 `reviewer_adapter: "deepseek-claude-reviewer"` 才切换，且启动时需要
 `DEEPSEEK_API_KEY`。真实模型身份仍待联网冒烟验证。

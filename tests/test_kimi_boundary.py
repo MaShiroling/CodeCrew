@@ -1,4 +1,5 @@
 import platform
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -79,7 +80,8 @@ def test_boundary_rejects_runtime_inside_worktree_and_missing_sandbox(tmp_path: 
 
 def test_kimi_agent_profile_exposes_no_command_or_delegation_tool() -> None:
     profile = (
-        Path(__file__).resolve().parents[1] / "prompts" / "kimi_restricted_implementer.md"
+        Path(__file__).resolve().parents[1] / "app" / "agents" / "assets"
+        / "kimi_restricted_implementer.md"
     ).read_text(encoding="utf-8")
     frontmatter = profile.split("---", maxsplit=2)[1]
     tools_section = frontmatter.split("tools:", maxsplit=1)[1].split("subagents:", maxsplit=1)[0]
@@ -123,3 +125,21 @@ def test_seatbelt_rejects_forbidden_writes_before_execution(tmp_path: Path) -> N
         )
         assert (result.returncode == 0) is should_succeed, result.stderr
         assert target.exists() is should_succeed
+
+
+@pytest.mark.skipif(
+    platform.system() != "Darwin" or shutil.which("kimi") is None,
+    reason="requires macOS Seatbelt and an installed Kimi CLI",
+)
+def test_kimi_binary_can_start_inside_write_boundary_without_model_call(tmp_path: Path) -> None:
+    boundary = make_boundary(tmp_path)
+    result = subprocess.run(
+        boundary.wrap([shutil.which("kimi"), "--version"]),
+        cwd=boundary.worktree,
+        capture_output=True,
+        text=True,
+        timeout=15,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip()

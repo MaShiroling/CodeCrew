@@ -208,7 +208,7 @@ flowchart TB
 
 - 多 worker 分布式派发与跨进程租约
 - Trace 与领域记录不一致时的自动回填
-- Kimi K3 / DeepSeek Flash 真实适配器与对应角色接线
+- Kimi K3 / DeepSeek Flash 的在线模型身份与端到端任务验证（已提供离线适配路径）
 - 前端任务控制台与 API 身份认证
 - 真正对 Agent 不可见的隐藏测试隔离环境
 - 12～15 条正式编码评测集
@@ -272,9 +272,11 @@ curl http://127.0.0.1:8000/health
 .venv/bin/python -m app.cli serve --config examples/server-config.python.json --port 8000
 ```
 
-安装项目后也可使用 `codecrew serve ...`。该入口仅绑定 `127.0.0.1`，目前接线为
-Codex CLI Planner / Implementer、Claude Code Reviewer（可在配置中将 Planner
-改为 Claude Code）。启动前须安装并配置这两个 CLI，且根据目标仓库修改示例的验证命令、
+安装项目后也可使用 `codecrew serve ...`。该入口仅绑定 `127.0.0.1`，示例默认接线为
+Codex CLI Planner / Implementer、Claude Code Reviewer。Planner 可改用 Claude Code；
+Reviewer 可显式选择 DeepSeek 变体；Implementer 可显式选择尚待真实模型验证的 Kimi
+Code CLI（仅限 macOS，并需在 shell 环境提供 `KIMI_MODEL_API_KEY`）。启动前须安装并配置
+所选 CLI，且根据目标仓库修改示例的验证命令、
 允许目录及 `CODECREW_WORKTREE_ROOT`；Worktree 根目录必须在目标仓库外。
 示例中的 `tests/hidden` **只是配置占位路径，不是保密的隐藏测试**。真正对 Agent
 不可见的隐藏测试隔离环境尚未实现，不能把示例配置用于正式可靠性评测。
@@ -361,7 +363,8 @@ docs/                # 架构和 Adapter 文档
 - [x] 真实模型接入之一：核对 Kimi K3 / DeepSeek Flash 官方接口、CLI 与安全边界
 - [x] 真实模型接入之二 A：独立 DeepSeek Reviewer Adapter、配置绑定与环境隔离（离线测试）
 - [x] 真实模型接入之二 B1：Kimi CLI 受限工具配置与 macOS 写入沙箱（系统级离线测试）
-- [ ] 真实模型接入之二 B2：边界接入 Kimi Implementer Adapter、CLI 工具拒绝验证与会话测试
+- [x] 真实模型接入之二 B2a：Kimi Implementer Adapter、受限启动路径和离线会话测试
+- [ ] 真实模型接入之二 B2b：真实 CLI 工具拒绝验证与端到端编码任务
 - [ ] 阶段九：多语言编码任务评测集
 - [ ] 阶段十：单 Agent / 多 Agent 对照实验与指标报告
 - [ ] 阶段十一：演示样例、部署文档和简历材料

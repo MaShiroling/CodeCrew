@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     agent_timeout_seconds: int = Field(default=900, gt=0)
     claude_cli_path: str = Field(default="claude", min_length=1)
     codex_cli_path: str = Field(default="codex", min_length=1)
+    kimi_cli_path: str = Field(default="kimi", min_length=1)
     agent_output_queue_maxsize: int = Field(default=256, gt=0)
     process_terminate_grace_seconds: float = Field(default=2.0, gt=0)
     max_conversation_agent_turns: int = Field(default=30, ge=0, le=1000)

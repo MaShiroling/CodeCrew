@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import platform
 import shutil
 from collections.abc import Sequence
 from pathlib import Path
@@ -17,6 +18,7 @@ from app.agents import (
     ClaudeCodeAdapter,
     CodexCliAdapter,
     DeepSeekClaudeReviewerAdapter,
+    KimiCodeAdapter,
     PermissionMode,
 )
 from app.api.runtime import build_task_runtime
@@ -33,6 +35,7 @@ class ServerConfig(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     planner_adapter: Literal["claude-code", "codex-cli"]
+    implementer_adapter: Literal["codex-cli", "kimi-code-cli"] = "codex-cli"
     reviewer_adapter: Literal["claude-code", "deepseek-claude-reviewer"] = "claude-code"
     verification_plan: VerificationPlan
     permission_policy: PermissionPolicy
@@ -51,9 +54,14 @@ def build_server_app(config: ServerConfig, *, settings: Settings) -> FastAPI:
         "DEEPSEEK_API_KEY", ""
     ).strip():
         raise ValueError("DEEPSEEK_API_KEY is required for the DeepSeek reviewer")
+    if config.implementer_adapter == "kimi-code-cli":
+        if not os.environ.get("KIMI_MODEL_API_KEY", "").strip():
+            raise ValueError("KIMI_MODEL_API_KEY is required for isolated Kimi CLI")
+        if platform.system() != "Darwin" or not Path("/usr/bin/sandbox-exec").is_file():
+            raise ValueError("Kimi Code implementer requires macOS sandbox-exec")
     registry = AgentRegistry()
     claude_roles = {AgentRole.REVIEWER} if config.reviewer_adapter == "claude-code" else set()
-    codex_roles = {AgentRole.IMPLEMENTER}
+    codex_roles = {AgentRole.IMPLEMENTER} if config.implementer_adapter == "codex-cli" else set()
     if config.planner_adapter == "claude-code":
         claude_roles.add(AgentRole.PLANNER)
     else:
@@ -70,17 +78,32 @@ def build_server_app(config: ServerConfig, *, settings: Settings) -> FastAPI:
             roles={AgentRole.REVIEWER},
             permission_modes={PermissionMode.READ_ONLY},
         )
-    registry.register(
-        CodexCliAdapter(executable=settings.codex_cli_path),
-        roles=codex_roles,
-        permission_modes={PermissionMode.READ_ONLY, PermissionMode.WORKSPACE_WRITE},
-    )
+    if codex_roles:
+        registry.register(
+            CodexCliAdapter(executable=settings.codex_cli_path),
+            roles=codex_roles,
+            permission_modes=(
+                {PermissionMode.READ_ONLY, PermissionMode.WORKSPACE_WRITE}
+                if AgentRole.IMPLEMENTER in codex_roles else {PermissionMode.READ_ONLY}
+            ),
+        )
+    if config.implementer_adapter == "kimi-code-cli":
+        registry.register(
+            KimiCodeAdapter(
+                worktree_root=settings.worktree_root,
+                runtime_root=settings.worktree_root.parent / "kimi-runtime",
+                policy=config.permission_policy,
+                executable=settings.kimi_cli_path,
+            ),
+            roles={AgentRole.IMPLEMENTER},
+            permission_modes={PermissionMode.WORKSPACE_WRITE},
+        )
     runtime = build_task_runtime(
         settings=settings,
         registry=registry,
         agent_names={
             MemberRole.PLANNER: config.planner_adapter,
-            MemberRole.IMPLEMENTER: "codex-cli",
+            MemberRole.IMPLEMENTER: config.implementer_adapter,
             MemberRole.REVIEWER: config.reviewer_adapter,
         },
         verification_plan=config.verification_plan,
@@ -102,7 +125,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         config = load_server_config(args.config)
         settings = get_settings()
-        for executable in (settings.claude_cli_path, settings.codex_cli_path):
+        required_executables = {
+            settings.claude_cli_path
+            if config.planner_adapter == "claude-code" or config.reviewer_adapter in {"claude-code", "deepseek-claude-reviewer"}
+            else None,
+            settings.codex_cli_path
+            if config.planner_adapter == "codex-cli" or config.implementer_adapter == "codex-cli"
+            else None,
+            settings.kimi_cli_path if config.implementer_adapter == "kimi-code-cli" else None,
+        }
+        for executable in required_executables - {None}:
             if shutil.which(executable) is None:
                 raise ValueError(f"required Agent CLI is not available: {executable}")
         app = build_server_app(config, settings=settings)

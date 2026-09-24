@@ -4,6 +4,7 @@ from app.agents.base import AgentAdapter, AgentAdapterError, AgentSessionNotFoun
 from app.agents.claude import ClaudeCodeAdapter, DeepSeekClaudeReviewerAdapter
 from app.agents.codex import CodexCliAdapter
 from app.agents.fake import FakeAgentAdapter, FakeAgentScenario, FakeEventSpec
+from app.agents.kimi import KimiCodeAdapter
 from app.agents.models import (
     AgentCapability,
     AgentEvent,
@@ -63,6 +64,7 @@ __all__ = [
     "FakeAgentAdapter",
     "FakeAgentScenario",
     "FakeEventSpec",
+    "KimiCodeAdapter",
     "ManagedProcess",
     "PermissionMode",
     "ProcessChunk",
