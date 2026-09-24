@@ -74,7 +74,8 @@ Planner 与 Orchestrator），然后在本进程异步启动事件循环。查�
 当前默认 `app.main:app` 仍未注入运行时，任务路由返回 503；部署方需要显式提供上述
 配置，不能仅靠启动 Uvicorn 获得真实 Agent 执行。运行时当前仅支持**单进程/单 worker**：
 尚无跨进程租约与派发锁；Kimi Code CLI Implementer 和 DeepSeek Flash Reviewer
-都有显式选择的离线适配路径，尚未做真实模型端到端调用验证。
+都有显式选择的适配路径；Kimi Implementer 的独立真实冒烟已通过，但三角色任务 API
+仍未做真实模型端到端调用验证。
 
 事件流按 TraceStore 的全局递增 `sequence` 发送，事件帧包含 `id`、事件类型和 JSON
 `data`（含序号与完整的小型 trace 事件）。客户端断线后带 `Last-Event-ID` 重连，或首次
@@ -96,5 +97,6 @@ Planner 适配器、验证计划、允许写入路径与命令白名单；示例
 `"implementer_adapter": "kimi-code-cli"`；此选项仅限 macOS，需要设置
 `KIMI_MODEL_API_KEY` 环境变量（Kimi Code 会员密钥），并受限工具配置与 Seatbelt 写入
 边界保护。Adapter 使用 `kimi-for-coding` 会员模型别名，实际后端版本尚未验证。真实 Kimi
-工具拒绝和编码任务尚未验证，不应纳入正式评测。示例中的 `tests/hidden` 只是
+单任务文件写入和工具清单核查已通过；主动禁止命令尝试和经 Verifier 判定的编码任务
+尚未验证，不应纳入正式评测。示例中的 `tests/hidden` 只是
 占位，不能保证测试对 Agent 保密；真正的隐藏测试隔离仍属于后续工作。

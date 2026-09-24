@@ -1,7 +1,7 @@
 # 真实模型接入与权限边界（2026-09-24）
 
-本页记录接口事实、已实现的离线边界及未完成的接入工作；**尚未使用真实 Kimi Code
-会员模型 / DeepSeek Flash 执行或消费 API 额度**。角色仍是白金（Codex/GPT）规划、
+本页记录接口事实、已验证的边界及未完成的接入工作。**Kimi Code 会员模型的单任务
+真实冒烟已通过；DeepSeek Flash 尚未进行真实调用**。角色仍是白金（Codex/GPT）规划、
 月见（Kimi Code CLI 接会员模型）实现、鲸鲸（Claude Code 接入 DeepSeek Flash）评审。
 这里的 CLI 是 Agent 执行环境，
 模型是其背后的推理服务，两者不可混同。
@@ -17,8 +17,9 @@
   DeepSeek Claude 变体。
 - `AsyncProcessRunner` 支持向单个子进程传递完整环境变量映射；这是隔离不同供应商密钥的
   可复用入口。不要把密钥写进 JSON 配置、命令行参数、Artifact 或 Trace。
-- 本机只验证了 `kimi --version` / `kimi --help`，检测到 Kimi Code CLI 2.0.0；
-  Claude Code 与 Codex 可执行文件也在 `PATH`。未读取本地账户配置或检查密钥值。
+- 本机检测到 Kimi Code CLI 2.0.0；用户随后在自己的终端运行了真实会员模型冒烟测试，
+  结果为 `8 passed`。Claude Code 与 Codex 可执行文件也在 `PATH`；未读取本地账户配置
+  或检查密钥值。
 
 ## 供应商契约与接入选择
 
@@ -36,9 +37,10 @@ Kimi Code CLI 的 `--prompt` 非交互模式默认使用 auto 权限策略，
 Kimi Code CLI。不能仅凭独立 Worktree 和事后 Diff/命令审计就声称“禁止命令不会
 执行”。官方 [Hooks 文档](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/hooks.html)
 确认 `PreToolUse` 可阻止调用，但 Hook 出错或超时会 fail-open，不能单独承担安全边界。
-Kimi Adapter 已采用严格工具列表加 macOS 写入沙箱，但真实模型会话对 `Bash` 禁用的
-验证仍未完成；这一路径只允许显式选择，不能纳入正式评测。工具不可用或拒绝时应失败
-并转人工，不得退回开放执行。
+Kimi Adapter 已采用严格工具列表加 macOS 写入沙箱。真实冒烟核对了 CLI 会话的工具
+声明和实际调用，均未出现 `Bash`；但尚未做主动诱导执行禁止命令的拒绝测试，也未完成
+带 Verifier 的真实编码任务。这一路径只允许显式选择，不能纳入正式评测。工具不可用或
+拒绝时应失败并转人工，不得退回开放执行。
 
 DeepSeek 官方当前模型 ID 是 `deepseek-flash`（当前对应 V4.1-Flash），并支持
 Anthropic 兼容接口、流式和工具调用。官方 Claude Code 指南使用
@@ -55,13 +57,13 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
    其他 Agent 的聊天历史。
 3. 鲸鲸 Adapter 验证只读工具、DeepSeek 端点/模型、独立会话、结构化 JSON 审批、
    无有效证据时拒绝审批。Reviewer 批准仍不绕过 Verifier 与 CompletionGuard。
-4. 先用 Fake/录制响应覆盖错误、取消、越权与超时；真实调用仅在用户配置密钥、
-   明确启用集成测试后做最小只读冒烟，再做一条小型 Worktree 编码任务。
+4. Fake/录制响应已覆盖错误、取消、越权与超时；Kimi 已完成显式启用的单任务真实
+   Worktree 文件写入冒烟。下一步做有确定性测试和 Verifier 判定的小型编码任务。
 5. Trace/报告记录供应商、请求模型、实际返回模型、CLI 版本和 Token 使用量，
    不记录密钥或原始认证头；无法确认实际模型时标为“未验证”，不纳入对照评测。
 
 当前进度：已实现 `DeepSeekClaudeReviewerAdapter` 的本地只读装配和子进程环境隔离，
-用模拟进程测试；未做付费 API 请求。Kimi 侧新增了只暴露
+用模拟进程测试；DeepSeek 仍未做真实 API 请求。Kimi 侧新增了只暴露
 `Read/Grep/Glob/Write/Edit` 的独立 Agent 文件（没有 `Bash` 或子 Agent），以及
 `KimiWriteBoundary`：在 macOS 上用 Seatbelt 限制 CLI 及其子进程只能写授权目录和
 独立运行目录，明确拒绝 `.git`、`.codecrew`、`.env` 等路径。系统测试验证了授权写入、
@@ -74,10 +76,11 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
 `KIMI_MODEL_API_KEY` 注入 `kimi-for-coding` + `https://api.kimi.com/coding/v1`
 临时会员模型配置；没有该环境变量或没有 macOS Seatbelt 即拒绝
 启动。离线测试覆盖 JSONL、拒绝异常工具、退出码、超时、取消和环境隔离；本机实际 CLI
-仅验证了在 Seatbelt 内运行 `--version`。Seatbelt 还阻止 CLI 读取真实 Home 的文件内容，
+还验证了在 Seatbelt 内运行 `--version`。Seatbelt 还阻止 CLI 读取真实 Home 的文件内容，
 只对 Worktree、私有运行目录以及指定的 CLI/Agent 文件做例外；这不是完整的只读隔离，
-Home 之外的系统路径仍可能可读。**尚未用真实模型验证 `Bash` 拒绝，也未做
-端到端编码任务**。由于 `--agent-file` 不能和 `--session` 同用，原生恢复明确禁用，
+Home 之外的系统路径仍可能可读。**真实冒烟验证了工具清单不含 `Bash`，但尚未主动
+尝试禁止命令，也未做带 Verifier 的端到端编码任务**。由于 `--agent-file` 不能和
+`--session` 同用，原生恢复明确禁用，
 后续回合靠结构化消息开启新会话；JSONL 不提供可靠的原生会话 ID / Token 用量，
 当前不推测这两个字段。
 
@@ -88,7 +91,13 @@ Kimi Code 会员真实冒烟测试是显式选择的单次短任务。先在**�
 CODECREW_RUN_KIMI_LIVE=1 .venv/bin/pytest -q tests/integration/test_kimi_code_live.py
 ```
 
-该测试会创建临时仓库和独立 Worktree，最多允许 8 步、120 秒；检查目标文件、唯一变更、
+2026-09-24，用户在已配置会员密钥的本机终端执行上述命令，提供的结果为 `8 passed`
+（7 条离线检查、1 条真实模型测试）。真实测试在独立 Worktree 中观察到模型返回完成
+标记、通过文件工具创建目标文件；还核对了仅有该文件变更、实际工具调用和会话工具声明
+均在允许集内。这是 **Kimi Implementer 单任务冒烟**，不是三角色工作流或
+CompletionGuard 的验收，也不能据此确认底层模型固定为 K3。
+
+该测试会创建临时仓库和独立 Worktree，配置 8 步预算与 120 秒超时；检查目标文件、唯一变更、
 允许工具集及 CLI 会话内的工具声明，之后删除临时运行目录。它会消耗一次会员额度。
 若本地 Seatbelt 不可用、未配置密钥或工具声明无法核验，测试会失败而非宣布成功；
 不要把密钥放到命令行、聊天或仓库中。桌面 Codex 进程通常不会继承其他终端导出的密钥，

@@ -274,7 +274,7 @@ curl http://127.0.0.1:8000/health
 
 安装项目后也可使用 `codecrew serve ...`。该入口仅绑定 `127.0.0.1`，示例默认接线为
 Codex CLI Planner / Implementer、Claude Code Reviewer。Planner 可改用 Claude Code；
-Reviewer 可显式选择 DeepSeek 变体；Implementer 可显式选择尚待真实模型验证的 Kimi
+Reviewer 可显式选择 DeepSeek 变体；Implementer 可显式选择已通过单任务真实冒烟的 Kimi
 Code CLI（仅限 macOS，并需在 shell 环境提供新的 Kimi Code **会员**密钥作为
 `KIMI_MODEL_API_KEY`）。此路径使用会员 API 的 `kimi-for-coding` 模型别名，
 不能据此宣称实际后端固定为 K3。启动前须安装并配置
@@ -368,7 +368,8 @@ docs/                # 架构和 Adapter 文档
 - [x] 真实模型接入之二 A：独立 DeepSeek Reviewer Adapter、配置绑定与环境隔离（离线测试）
 - [x] 真实模型接入之二 B1：Kimi CLI 受限工具配置与 macOS 写入沙箱（系统级离线测试）
 - [x] 真实模型接入之二 B2a：Kimi Implementer Adapter、受限启动路径和离线会话测试
-- [ ] 真实模型接入之二 B2b：真实 CLI 工具拒绝验证与端到端编码任务
+- [x] 真实模型接入之二 B2b-1：Kimi CLI 会员模型单任务真实冒烟（文件写入、变更范围和工具清单）
+- [ ] 真实模型接入之二 B2b-2：禁止命令主动拒绝验证与经过 Verifier 的真实编码任务
 - [ ] 阶段九：多语言编码任务评测集
 - [ ] 阶段十：单 Agent / 多 Agent 对照实验与指标报告
 - [ ] 阶段十一：演示样例、部署文档和简历材料

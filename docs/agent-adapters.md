@@ -54,8 +54,11 @@ CLI inside macOS `KimiWriteBoundary`. Its packaged agent file exposes only
 `Read/Grep/Glob/Write/Edit`; CodeCrew's `CommandExecutor`, not Kimi's `Bash`, runs tests.
 Unexpected JSONL tool names or malformed output fail the turn. The write boundary has system-level
 tests for permitted paths, denied repository metadata, outside paths, and symlink escape; the actual
-Kimi binary has been started under it with `--version` only. **A real model turn has not yet verified
-the CLI tool restriction.** Kimi's documented `--agent-file`/`--session` incompatibility means
+Kimi binary has been started under it with `--version`. A user-run opt-in live smoke test
+also passed (`8 passed` on 2026-09-24): it verified one file edit in a task Worktree,
+the changed-file scope, observed tool calls and the session's tool declarations.
+This does not yet verify an active forbidden-command attempt or a full Verifier-gated coding task.
+Kimi's documented `--agent-file`/`--session` incompatibility means
 native resume is disabled; structured mailbox messages start a fresh session on subsequent turns.
 The membership model alias does not prove that the underlying model is K3; provider/model identity
 still requires a live check before comparative evaluation.
