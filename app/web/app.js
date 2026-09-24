@@ -1,4 +1,4 @@
-const state = { tasks: [], nextOffset: null, selectedId: null, filter: 'all', messageCursor: 0, messageHasMore: false, requestId: 0, eventSource: null, refreshTimer: null, refreshingFor: null, refreshQueuedFor: null, creating: false };
+const state = { tasks: [], nextOffset: null, selectedId: null, selectedTask: null, filter: 'all', messageCursor: 0, messageHasMore: false, requestId: 0, eventSource: null, refreshTimer: null, refreshingFor: null, refreshQueuedFor: null, creating: false, cancelling: false };
 const $ = (id) => document.getElementById(id);
 const api = async (path, options = {}) => {
   const response = await fetch(`/api/v1${path}`, {
@@ -60,6 +60,8 @@ function renderTasks() {
 }
 
 function showTask(task) {
+  if (state.selectedTask?.task_id === task.task_id && task.revision < state.selectedTask.revision) return;
+  state.selectedTask = task;
   $('detail-short-id').textContent = `#${short(task.task_id).toUpperCase()}`;
   $('detail-status').replaceChildren(statusNode(task.state));
   $('detail-title').textContent = task.issue.split('\n')[0];
@@ -70,6 +72,88 @@ function showTask(task) {
   const index = state.tasks.findIndex((item) => item.task_id === task.task_id);
   if (index !== -1) state.tasks[index] = task;
   renderTasks();
+  renderCancelAction();
+}
+
+function renderCancelAction() {
+  const button = $('cancel-task');
+  button.hidden = !state.selectedTask || terminal.has(state.selectedTask.state);
+  button.disabled = state.cancelling;
+  button.textContent = state.cancelling ? '取消中…' : '取消任务';
+}
+
+function clearMissingTask(taskId) {
+  const wasSelected = state.selectedId === taskId;
+  state.tasks = state.tasks.filter((task) => task.task_id !== taskId);
+  if (!wasSelected) { renderTasks(); return false; }
+  closeStream();
+  state.requestId += 1;
+  state.selectedId = null;
+  state.selectedTask = null;
+  renderTasks();
+  renderCancelAction();
+  $('task-detail').hidden = true;
+  $('empty-detail').hidden = false;
+  $('empty-detail').querySelector('h2').textContent = '任务已不存在';
+  $('empty-detail').querySelector('p').textContent = '请刷新任务列表后重新选择。';
+  return true;
+}
+
+async function cancelTask() {
+  const task = state.selectedTask;
+  if (state.cancelling || !task || task.task_id !== state.selectedId || terminal.has(task.state)) return;
+  if (!window.confirm('确定取消当前任务？正在运行的 Agent 会被停止。')) return;
+  const taskId = task.task_id;
+  state.cancelling = true;
+  renderCancelAction();
+  try {
+    const updated = await api(`/tasks/${encodeURIComponent(taskId)}/cancel`, {
+      method: 'POST',
+      body: JSON.stringify({ expected_revision: task.revision }),
+    });
+    if (state.selectedId === taskId) {
+      showTask(updated);
+      if (terminal.has(updated.state)) {
+        state.requestId += 1;
+        closeStream();
+        $('live-status').textContent = '任务已结束 · 显示最终记录';
+      }
+      notice(updated.state === 'cancelled' ? '任务已取消。' : '取消请求已处理，请检查最新任务状态。');
+    } else {
+      const index = state.tasks.findIndex((item) => item.task_id === taskId);
+      if (index !== -1) state.tasks[index] = updated;
+      renderTasks();
+    }
+  } catch (error) {
+    if (error.status === 409) {
+      try {
+        const latest = await api(`/tasks/${encodeURIComponent(taskId)}`);
+        if (state.selectedId === taskId) {
+          showTask(latest);
+          if (terminal.has(latest.state)) {
+            state.requestId += 1;
+            closeStream();
+            $('live-status').textContent = '任务已结束 · 显示最终记录';
+          }
+          notice('任务状态已变化，已刷新详情；如仍需取消，请确认后重新操作。');
+        } else {
+          const index = state.tasks.findIndex((item) => item.task_id === taskId);
+          if (index !== -1) state.tasks[index] = latest;
+          renderTasks();
+        }
+      } catch (refreshError) {
+        const missingSelected = refreshError.status === 404 && clearMissingTask(taskId);
+        if (state.selectedId === taskId || missingSelected) notice(`任务状态已变化，但刷新失败：${refreshError.message}`);
+      }
+    } else if (error.status === 404) {
+      if (clearMissingTask(taskId)) notice('任务不存在，请刷新任务列表。');
+    } else if (state.selectedId === taskId) {
+      notice(`取消请求结果未确认：${error.message}。请刷新任务状态后再决定是否重试。`);
+    }
+  } finally {
+    state.cancelling = false;
+    renderCancelAction();
+  }
 }
 
 function createError(message) {
@@ -289,6 +373,8 @@ async function loadArtifact(taskId, artifactId) {
 async function selectTask(taskId) {
   closeStream();
   state.selectedId = taskId;
+  state.selectedTask = null;
+  renderCancelAction();
   state.requestId += 1;
   const requestId = state.requestId;
   state.messageCursor = 0;
@@ -340,6 +426,7 @@ document.querySelectorAll('.filter').forEach((button) => button.addEventListener
 $('create-toggle').addEventListener('click', () => setCreateOpen($('create-form').hidden));
 $('create-close').addEventListener('click', () => setCreateOpen(false));
 $('create-form').addEventListener('submit', (event) => { event.preventDefault(); void createTask(); });
+$('cancel-task').addEventListener('click', () => { void cancelTask(); });
 document.querySelectorAll('.tab').forEach((button) => button.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach((item) => {
     item.classList.toggle('active', item === button);

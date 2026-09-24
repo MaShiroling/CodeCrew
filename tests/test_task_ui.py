@@ -16,6 +16,7 @@ def test_task_ui_serves_local_assets_without_task_runtime() -> None:
         assert 'id="create-form"' in page.text
         assert 'id="create-repository"' in page.text
         assert 'id="create-issue"' in page.text
+        assert 'id="cancel-task"' in page.text
         assert 'src="/ui/assets/app.js"' in page.text
         assert client.get("/ui").status_code == 200
 
@@ -44,5 +45,13 @@ def test_ui_create_task_with_mock_api() -> None:
     if shutil.which("node") is None:
         pytest.skip("Node.js is not installed; browser script harness unavailable")
     script = Path(__file__).with_name("ui_create.test.cjs")
+    subprocess.run(["node", "--check", str(script)], check=True)
+    subprocess.run(["node", str(script)], check=True)
+
+
+def test_ui_cancel_task_with_mock_api() -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is not installed; browser script harness unavailable")
+    script = Path(__file__).with_name("ui_cancel.test.cjs")
     subprocess.run(["node", "--check", str(script)], check=True)
     subprocess.run(["node", str(script)], check=True)
