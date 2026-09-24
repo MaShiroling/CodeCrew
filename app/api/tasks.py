@@ -3,6 +3,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 
+from app.api.details import ArtifactDetail, PlanPage, RoomMessagePage, TaskRoomView
 from app.api.events import EventStreamResponse, stream_task_events
 from app.api.models import (
     ApiErrorResponse,
@@ -21,6 +22,7 @@ ERROR_RESPONSES = {
     409: {"model": ApiErrorResponse, "description": "Task state or revision conflict"},
     503: {"model": ApiErrorResponse, "description": "Task service unavailable"},
     422: {"model": ApiErrorResponse, "description": "Request validation failed"},
+    500: {"model": ApiErrorResponse, "description": "Artifact integrity failure"},
 }
 
 
@@ -65,6 +67,41 @@ async def list_tasks(
 @router.get("/{task_id}", response_model=TaskView, responses=ERROR_RESPONSES)
 async def get_task(task_id: UUID, service: TaskServiceDependency) -> TaskView:
     return await service.get_task(task_id)
+
+
+@router.get("/{task_id}/room", response_model=TaskRoomView, responses=ERROR_RESPONSES)
+async def get_task_room(task_id: UUID, service: TaskServiceDependency) -> TaskRoomView:
+    return await service.get_room(task_id)
+
+
+@router.get(
+    "/{task_id}/messages", response_model=RoomMessagePage, responses=ERROR_RESPONSES
+)
+async def list_task_messages(
+    task_id: UUID,
+    service: TaskServiceDependency,
+    after_sequence: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
+) -> RoomMessagePage:
+    return await service.list_room_messages(
+        task_id, after_sequence=after_sequence, limit=limit
+    )
+
+
+@router.get("/{task_id}/plans", response_model=PlanPage, responses=ERROR_RESPONSES)
+async def list_task_plans(task_id: UUID, service: TaskServiceDependency) -> PlanPage:
+    return await service.list_plans(task_id)
+
+
+@router.get(
+    "/{task_id}/artifacts/{artifact_id}",
+    response_model=ArtifactDetail,
+    responses=ERROR_RESPONSES,
+)
+async def get_task_artifact(
+    task_id: UUID, artifact_id: UUID, service: TaskServiceDependency
+) -> ArtifactDetail:
+    return await service.get_artifact(task_id, artifact_id)
 
 
 @router.get(

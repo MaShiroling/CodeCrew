@@ -11,6 +11,10 @@ OpenAPI 描述和统一错误响应。`PersistentTaskService` 可通过
 | `POST` | `/api/v1/tasks` | `issue`, `repository_path` | `201 TaskView` |
 | `GET` | `/api/v1/tasks` | `state?`, `limit`（1～100）, `offset` | `200 TaskPage` |
 | `GET` | `/api/v1/tasks/{task_id}` | UUID 路径参数 | `200 TaskView` |
+| `GET` | `/api/v1/tasks/{task_id}/room` | UUID 路径参数 | `200 TaskRoomView` |
+| `GET` | `/api/v1/tasks/{task_id}/messages` | `after_sequence`（默认 0）, `limit`（1～100） | `200 RoomMessagePage` |
+| `GET` | `/api/v1/tasks/{task_id}/plans` | UUID 路径参数 | `200 PlanPage` |
+| `GET` | `/api/v1/tasks/{task_id}/artifacts/{artifact_id}` | 两个 UUID 路径参数 | `200 ArtifactDetail` |
 | `POST` | `/api/v1/tasks/{task_id}/cancel` | `expected_revision`, `reason?` | `200 TaskView` |
 | `GET` | `/api/v1/tasks/{task_id}/events` | `after_sequence?` 或 `Last-Event-ID` | `200 text/event-stream` |
 
@@ -23,6 +27,15 @@ OpenAPI 描述和统一错误响应。`PersistentTaskService` 可通过
 和 `validation_error`，并附带字段位置、消息和错误类型；不存在的任务返回 `404`
 `task_not_found`；状态或版本冲突返回 `409 task_state_conflict`；未配置任务服务返回
 `503 task_service_unavailable`。
+
+任务详情接口是阶段八前端的只读数据基础。Room 返回成员与角色；Messages 按房间内
+`sequence` 升序分页，包含发送者、收件人、消息类型与 Artifact 引用，不含本地文件路径。
+若 `next_after_sequence` 非空，可据此继续取下一页；增量刷新也可使用最后一条消息的
+`sequence`。Plans 返回已保存的版本记录，具体 Plan 内容通过关联 Artifact 读取。
+Artifact 接口同时校验 `task_id` 与 `trace_id` 归属；其他任务的 Artifact 返回 404。
+小于等于 128 KiB 的 UTF-8 文本/JSON 提供 `preview`，大文件或二进制只给元数据及
+`preview_unavailable_reason`，不开放任意路径或文件下载。尚无用户身份认证，仍仅适合
+可信本地环境。
 
 默认应用未配置任务服务时，路由会先返回 503。注入持久化服务后，创建任务会先创建
 独立 Git Worktree、保存 Task/TeamRoom/RuntimeContext 和首条 Issue 消息（同时投递给

@@ -1,8 +1,9 @@
+import json
 import subprocess
 import sys
 import time
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi.testclient import TestClient
 
@@ -16,6 +17,7 @@ from app.agents import (
 from app.api.runtime import build_task_runtime
 from app.config import Settings
 from app.main import create_app
+from app.storage import ArtifactType
 from app.team import (
     MemberRole,
     PersonaProfile,
@@ -173,6 +175,51 @@ def test_http_task_success_path_includes_trace_and_completion_evidence(tmp_path:
         )
         assert evidence.verification is not None and evidence.verification.passed
         assert evidence.completion is not None and evidence.completion.passed
+
+        room_response = client.get(f"/api/v1/tasks/{task_id}/room")
+        assert room_response.status_code == 200
+        assert {member["name"] for member in room_response.json()["room"]["members"]} >= {
+            "白金", "月见", "鲸鲸"
+        }
+        first_page = client.get(f"/api/v1/tasks/{task_id}/messages", params={"limit": 2})
+        assert first_page.status_code == 200
+        first_messages = first_page.json()["items"]
+        assert len(first_messages) == 2
+        cursor = first_page.json()["next_after_sequence"]
+        assert cursor == first_messages[-1]["sequence"]
+        second_page = client.get(
+            f"/api/v1/tasks/{task_id}/messages",
+            params={"limit": 2, "after_sequence": cursor},
+        )
+        assert second_page.status_code == 200
+        assert second_page.json()["items"][0]["sequence"] > cursor
+        assert "sender_name" in first_messages[0]
+        assert "worktree_path" not in first_page.text
+
+        plans = client.get(f"/api/v1/tasks/{task_id}/plans")
+        assert plans.status_code == 200
+        assert len(plans.json()["items"]) == 1
+        plan_artifact_id = plans.json()["items"][0]["artifact_id"]
+        plan_artifact = client.get(f"/api/v1/tasks/{task_id}/artifacts/{plan_artifact_id}")
+        assert plan_artifact.status_code == 200
+        assert "steps" in json.loads(plan_artifact.json()["preview"])
+        assert "blob_path" not in plan_artifact.text
+        diff_id = str(evidence.verification.change_set.diff_artifact.artifact_id)
+        diff_artifact = client.get(f"/api/v1/tasks/{task_id}/artifacts/{diff_id}")
+        assert diff_artifact.status_code == 200
+        assert "value = 2" in diff_artifact.json()["preview"]
+
+        foreign_artifact = runtime.service.router.artifacts.put_text(
+            "foreign", task_id=uuid4(), trace_id=uuid4(),
+            type=ArtifactType.TEST_LOG, created_by="test",
+        )
+        assert client.get(
+            f"/api/v1/tasks/{task_id}/artifacts/{foreign_artifact.artifact_id}"
+        ).status_code == 404
+        assert client.get(f"/api/v1/tasks/{uuid4()}/room").status_code == 404
+        assert client.get(
+            f"/api/v1/tasks/{task_id}/messages", params={"limit": 0}
+        ).status_code == 422
 
         events = client.get(f"/api/v1/tasks/{task_id}/events")
         assert events.status_code == 200

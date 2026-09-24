@@ -4,12 +4,23 @@ import asyncio
 from pathlib import Path
 from uuid import UUID, uuid4
 
+from app.api.details import ArtifactDetail, PlanPage, RoomMessagePage, RoomMessageView, TaskRoomView
 from app.api.models import CancelTaskRequest, CreateTaskRequest, TaskPage, TaskView
-from app.api.service import TaskInvalidRepository, TaskNotFound, TaskStateConflict
+from app.api.service import (
+    TaskArtifactIntegrityError,
+    TaskArtifactNotFound,
+    TaskDetailUnavailable,
+    TaskInvalidRepository,
+    TaskNotFound,
+    TaskStateConflict,
+)
 from app.orchestration.models import InvalidTaskTransition, Task, TaskState
 from app.recovery import RecoveryDisposition, RecoveryEntry, WorkflowRecoveryCoordinator
 from app.storage import (
+    ArtifactIntegrityError,
+    ArtifactNotFoundError,
     RuntimeContextRepository,
+    RuntimeContextRepositoryError,
     StaleTaskRevisionError,
     TaskNotFoundError,
     TaskRepository,
@@ -29,7 +40,7 @@ from app.team.models import (
 )
 from app.team.personas import TeamPersonaCatalog, default_team_personas
 from app.team.router import ConversationRouter
-from app.team.store import TeamRoomStore
+from app.team.store import RoomNotFoundError, TeamRoomStore
 from app.trace import TraceActorKind, TraceEvent, TraceEventType
 from app.trace.models import StoredTraceEvent
 from app.verification import VerificationPlan
@@ -41,6 +52,8 @@ class PersistentTaskService:
 
     One service instance owns its active runs; deployment must use a single worker.
     """
+
+    MAX_ARTIFACT_PREVIEW_BYTES = 128 * 1024
 
     def __init__(
         self,
@@ -201,6 +214,98 @@ class PersistentTaskService:
             after_sequence=after_sequence,
             limit=limit,
         )
+
+    def _task_room(self, task_id: UUID) -> tuple[Task, TeamRoom]:
+        try:
+            task = self.tasks.get(task_id).task
+        except TaskNotFoundError as exc:
+            raise TaskNotFound(str(exc)) from exc
+        try:
+            context = self.contexts.get(task_id).context
+            room = self.rooms.get_room(context.room_id)
+        except (RuntimeContextRepositoryError, RoomNotFoundError) as exc:
+            raise TaskDetailUnavailable("task room is not available") from exc
+        if (
+            context.trace_id != task.trace_id
+            or room.task_id != task.id
+            or room.trace_id != task.trace_id
+        ):
+            raise TaskDetailUnavailable("task room identity does not match the task")
+        return task, room
+
+    async def get_room(self, task_id: UUID) -> TaskRoomView:
+        _, room = self._task_room(task_id)
+        return TaskRoomView(room=room)
+
+    async def list_room_messages(
+        self, task_id: UUID, *, after_sequence: int, limit: int
+    ) -> RoomMessagePage:
+        _, room = self._task_room(task_id)
+        members = {member.member_id: member for member in room.members}
+        stored = self.rooms.list_messages(
+            room.room_id, after_sequence=after_sequence, limit=limit + 1
+        )
+        items: list[RoomMessageView] = []
+        for item in stored[:limit]:
+            message = item.message
+            sender = members.get(message.sender_id)
+            if sender is None:
+                raise TaskDetailUnavailable("message sender is not in the task room")
+            items.append(
+                RoomMessageView(
+                    sequence=item.sequence,
+                    message_id=message.message_id,
+                    sender_id=message.sender_id,
+                    sender_name=sender.name,
+                    sender_role=sender.role,
+                    recipient_ids=tuple(delivery.recipient_id for delivery in item.deliveries),
+                    type=message.type,
+                    content=message.content,
+                    artifacts=message.artifacts,
+                    reply_to=message.reply_to,
+                    correlation_id=message.correlation_id,
+                    created_at=message.created_at,
+                )
+            )
+        return RoomMessagePage(
+            items=tuple(items),
+            limit=limit,
+            after_sequence=after_sequence,
+            next_after_sequence=items[-1].sequence if len(stored) > limit else None,
+        )
+
+    async def list_plans(self, task_id: UUID) -> PlanPage:
+        _, room = self._task_room(task_id)
+        return PlanPage(items=self.rooms.list_plan_revisions(room.room_id))
+
+    async def get_artifact(self, task_id: UUID, artifact_id: UUID) -> ArtifactDetail:
+        try:
+            task = self.tasks.get(task_id).task
+        except TaskNotFoundError as exc:
+            raise TaskNotFound(str(exc)) from exc
+        try:
+            metadata = self.router.artifacts.get_metadata(artifact_id)
+        except ArtifactNotFoundError as exc:
+            raise TaskArtifactNotFound("artifact not found for this task") from exc
+        if metadata.task_id != task.id or metadata.trace_id != task.trace_id:
+            raise TaskArtifactNotFound("artifact not found for this task")
+        if metadata.size_bytes > self.MAX_ARTIFACT_PREVIEW_BYTES:
+            return ArtifactDetail(metadata=metadata, preview_unavailable_reason="too_large")
+        try:
+            content = self.router.artifacts.read_bytes(artifact_id)
+        except ArtifactIntegrityError as exc:
+            raise TaskArtifactIntegrityError("artifact content failed integrity check") from exc
+        if not (
+            metadata.media_type.startswith("text/")
+            or metadata.media_type == "application/json"
+            or metadata.media_type.endswith("+json")
+        ):
+            return ArtifactDetail(metadata=metadata, preview_unavailable_reason="binary")
+        try:
+            preview = content.decode("utf-8")
+        except UnicodeDecodeError:
+            return ArtifactDetail(metadata=metadata, preview_unavailable_reason="not_utf8")
+        return ArtifactDetail(metadata=metadata, preview=preview)
 
     async def cancel_task(
         self, task_id: UUID, request: CancelTaskRequest
