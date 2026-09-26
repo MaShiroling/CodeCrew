@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import sys
 from pathlib import Path
 from uuid import UUID
 
@@ -163,12 +164,44 @@ class AgentTurnRunner:
                 session = await adapter.start(request)
             else:
                 session = await adapter.resume(resume_native_session_id, request)
+            collected: list[AgentEvent] = []
+            stream_complete = False
+            stream_outcome = "interrupted"
             try:
-                events = tuple([event async for event in adapter.stream(session.session_id)])
+                async for event in adapter.stream(session.session_id):
+                    collected.append(event.model_copy(deep=True))
+                stream_complete = True
                 result = await adapter.wait(session.session_id)
-            except asyncio.CancelledError:
-                await adapter.cancel(session.session_id)
+                stream_outcome = result.reason.value
+            except asyncio.CancelledError as cancellation:
+                stream_outcome = "cancelled"
+                try:
+                    await adapter.cancel(session.session_id)
+                except Exception as cancel_error:  # noqa: BLE001 - cancellation remains authoritative.
+                    cancellation.add_note(f"Agent cancellation failed: {type(cancel_error).__name__}")
                 raise
+            except Exception as stream_error:
+                stream_outcome = "adapter_exception"
+                try:
+                    await adapter.cancel(session.session_id)
+                except Exception as cancel_error:  # noqa: BLE001 - preserve the stream exception.
+                    stream_error.add_note(f"Agent cancellation failed: {type(cancel_error).__name__}")
+                raise
+            finally:
+                original_error = sys.exception()
+                try:
+                    self._record_stream(
+                        task, member, session, incoming, collected,
+                        stream_complete=stream_complete, outcome=stream_outcome,
+                    )
+                except Exception as diagnostic_error:
+                    if original_error is None:
+                        raise
+                    original_error.add_note(
+                        "Agent stream diagnostic recording failed: "
+                        f"{type(diagnostic_error).__name__}"
+                    )
+            events = tuple(collected)
 
         if result.trace_id != task.trace_id:
             raise AgentTurnError("agent result belongs to another trace")
@@ -220,6 +253,64 @@ class AgentTurnRunner:
             consumed_message_ids=tuple(item.message.message_id for item in incoming),
             routed_messages=routed,
             finish_summary=finish,
+        )
+
+    def _record_stream(
+        self,
+        task: Task,
+        member: RoomMember,
+        session: AgentSession,
+        incoming: tuple[StoredChatMessage, ...],
+        events: list[AgentEvent],
+        *,
+        stream_complete: bool,
+        outcome: str,
+    ) -> None:
+        """Record received normalized events, including partial failed turns.
+
+        This end-of-attempt snapshot is diagnostic, not an ACK, success decision,
+        native JSONL recording, or a crash-proof incremental journal.
+        """
+        metadata = self.artifacts.put_json(
+            {
+                "schema_version": 1,
+                "task_id": str(task.id),
+                "trace_id": str(task.trace_id),
+                "session_id": str(session.session_id),
+                "native_session_id": session.native_session_id,
+                "role": member.role.value,
+                "stream_complete": stream_complete,
+                "outcome": outcome,
+                "events": [event.model_dump(mode="json") for event in events],
+            },
+            task_id=task.id,
+            trace_id=task.trace_id,
+            type=ArtifactType.GENERIC,
+            created_by="agent-stream-recorder",
+            filename=f"agent-stream-{session.session_id}.json",
+            metadata={"purpose": "agent-event-stream", "session_id": str(session.session_id)},
+        )
+        self.router.trace_store.append(
+            TraceEvent(
+                task_id=task.id,
+                trace_id=task.trace_id,
+                type=TraceEventType.AGENT_STREAM_RECORDED,
+                actor_kind=TraceActorKind.DETERMINISTIC,
+                actor_id="agent-stream-recorder",
+                correlation_id=incoming[-1].message.correlation_id,
+                causation_id=incoming[-1].message.message_id,
+                idempotency_key=f"agent-stream:{session.session_id}",
+                payload={
+                    "session_id": str(session.session_id),
+                    "artifact_id": str(metadata.artifact_id),
+                    "sha256": metadata.sha256,
+                    "role": member.role.value,
+                    "event_count": len(events),
+                    "stderr_event_count": sum(event.type.value == "stderr" for event in events),
+                    "stream_complete": stream_complete,
+                    "outcome": outcome,
+                },
+            )
         )
 
     def _input_artifacts(

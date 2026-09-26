@@ -253,6 +253,15 @@ CODECREW_RUN_THREE_AGENT_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_th
 离线模拟已覆盖成功证据恢复、双来源审批失败归档、缺失/篡改/跨任务/符号链接拒绝；
 这些结果不替代真实模型验收。
 
+最新一次用户运行（Trace `cfb23e0f-ee47-4dfa-8581-79f38da2088a`）在首个 Planner
+回合约 180 秒后超时，停在 `planning`；归档数据库和所有 Blob 的哈希匹配，但没有
+Plan/Review/Completion 证据。旧归档只有最终结果，没有失败回合的事件快照，因此
+不能据此断定是网络、CLI 启动还是模型处理耗时。本轮新增 `agent-event-stream`
+诊断 Artifact 和 `agent_stream_recorded` Trace，用于下一次运行定位 stderr、重连诊断
+及已收到的事件进度；旧运行的缺失事件不可追溯补造。详见[回合诊断](tracing.md)。
+保持上方真实命令与 180 秒超时不变，不自动重试、不改成忽略超时。成功或失败输出的
+`evidence_archive` 路径可供后续读取诊断，无需先粘贴所有日志。
+
 此处的 `hidden_tests` 类别仍为可见额外断言，没有保密隔离；成功仅针对该受控夹具，
 不代表正式隐藏测试评测、实际模型版本确认、UI 驱动验收或不可信仓库安全性。
 

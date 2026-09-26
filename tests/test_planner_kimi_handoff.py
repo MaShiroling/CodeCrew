@@ -263,8 +263,11 @@ async def test_kimi_invalid_clarification_has_no_ack_or_routing_side_effects(
         new_ids = {row["artifact_id"] for row in after} - {
             row["artifact_id"] for row in artifacts_before
         }
-        assert len(new_ids) == 1  # Only diagnostic raw output, never an action Artifact.
-        raw_id = new_ids.pop()
+        assert len(new_ids) == 2  # Diagnostic raw output + received stream, no action Artifact.
+        raw_id = next(
+            artifact_id for artifact_id in new_ids
+            if fixture.store.get_metadata(artifact_id).metadata["purpose"] == "raw-agent-output"
+        )
         assert fixture.store.get_metadata(raw_id).metadata["purpose"] == "raw-agent-output"
         assert fixture.store.read_json(raw_id)["output"]["message"] == kimi.outputs[0]
         assert (fixture.handle.worktree_path / "src/pricing.py").read_bytes() == source_before
