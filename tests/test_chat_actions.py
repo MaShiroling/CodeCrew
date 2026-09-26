@@ -92,12 +92,36 @@ def test_parser_rejects_non_json_and_unknown_fields() -> None:
         parse_agent_chat_turn({"result": "not-json"})
     with pytest.raises(ChatActionError, match="invalid agent chat turn"):
         parse_agent_chat_turn(
-            {
-                "actions": [
-                    {"action": "finish_turn", "content": "done", "unknown": uuid4()}
-                ]
-            }
+            {"actions": [{"action": "finish_turn", "content": "done", "unknown": uuid4()}]}
         )
+
+
+@pytest.mark.parametrize("field", ["turn", "message", "result"])
+def test_parser_accepts_only_whole_json_fence(field: str) -> None:
+    payload = {"actions": [{"action": "finish_turn", "content": "done"}]}
+    raw = json.dumps(payload)
+    assert parse_agent_chat_turn({field: f" \n```json\n{raw}\n```\n"}) == (
+        parse_agent_chat_turn(payload)
+    )
+    for invalid in (
+        f"Here is the answer:\n```json\n{raw}\n```",
+        f"```json\n{raw}\n```\nDone",
+        f"```json\n{raw}\n```\n```json\n{raw}\n```",
+        f"```\n{raw}\n```",
+        f"```python\n{raw}\n```",
+    ):
+        with pytest.raises(ChatActionError, match="not valid JSON"):
+            parse_agent_chat_turn({field: invalid})
+
+
+def test_fenced_json_still_requires_action_schema() -> None:
+    for payload in (
+        {"verdict": "approved", "summary": "legacy reviewer response", "issues": []},
+        {"actions": [{"action": "finish_turn", "unexpected": True}]},
+        {"actions": []},
+    ):
+        with pytest.raises(ChatActionError, match="invalid agent chat turn"):
+            parse_agent_chat_turn({"result": f"```json\n{json.dumps(payload)}\n```"})
 
 
 def test_plan_revision_fields_are_scoped_to_share_plan() -> None:
@@ -135,9 +159,7 @@ def test_rework_action_requires_structured_review_evidence() -> None:
         recipient=recipient(),
         content="fix the regression",
         artifact_content={
-            "issues": [
-                {"priority": "high", "summary": "fallback regresses", "resolved": False}
-            ]
+            "issues": [{"priority": "high", "summary": "fallback regresses", "resolved": False}]
         },
     )
     assert action.artifact_content is not None

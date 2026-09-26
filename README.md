@@ -311,6 +311,12 @@ Code CLI（仅限 macOS，并需在 shell 环境提供新的 Kimi Code **会员*
 示例中的 `tests/hidden` **只是配置占位路径，不是保密的隐藏测试**。真正对 Agent
 不可见的隐藏测试隔离环境尚未实现，不能把示例配置用于正式可靠性评测。
 
+白金/Codex、月见/Kimi、鲸鲸/DeepSeek 的显式团队示例见
+[`examples/server-config.codecrew-team.python.json`](examples/server-config.codecrew-team.python.json)。
+它已通过聊天运行时的离线协议预检，尚未通过三真实 Agent 端到端验收。
+下一步还需解决 Kimi 对受控 Artifact 引用的读取，再进行在线 Planner → Implementer 联调。
+5 个子步骤、预检命令及权限边界见[三 Agent 联调说明](docs/three-agent-integration.md)。
+
 ## 配置
 
 配置使用 `CODECREW_` 前缀环境变量。示例见 [.env.example](.env.example)。

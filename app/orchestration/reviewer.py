@@ -1,5 +1,4 @@
 import json
-import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -15,6 +14,7 @@ from app.agents import (
 from app.orchestration.models import Task
 from app.orchestration.orchestrator import ReviewDraft
 from app.storage import ArtifactReference, ArtifactStore
+from app.structured_output import parse_json_response
 from app.verification import ReviewIssue, ReviewVerdict, VerificationReport
 from app.workspace import WorktreeHandle
 
@@ -130,12 +130,8 @@ class AgentReviewerRunner:
         if candidate is None:
             candidate = output.get("result", output.get("message"))
         if isinstance(candidate, str):
-            # Normalize presentation only; never extract JSON from surrounding prose.
-            fenced = re.fullmatch(r"```json[ \t]*\r?\n(.*?)\r?\n```", candidate.strip(), re.DOTALL)
-            if fenced is not None:
-                candidate = fenced.group(1)
             try:
-                candidate = json.loads(candidate)
+                candidate = parse_json_response(candidate)
             except json.JSONDecodeError as exc:
                 raise ReviewerExecutionError("reviewer output is not valid JSON") from exc
         if not isinstance(candidate, dict):

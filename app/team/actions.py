@@ -12,6 +12,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.structured_output import parse_json_response
 from app.team.models import MessageRecipient
 
 MAX_ACTIONS_PER_TURN = 20
@@ -121,7 +122,7 @@ def parse_agent_chat_turn(output: dict[str, Any]) -> AgentChatTurn:
         candidate = output.get("result", output.get("message"))
     if isinstance(candidate, str):
         try:
-            candidate = json.loads(candidate)
+            candidate = parse_json_response(candidate)
         except json.JSONDecodeError as exc:
             raise ChatActionError("agent chat output is not valid JSON") from exc
     if not isinstance(candidate, dict):

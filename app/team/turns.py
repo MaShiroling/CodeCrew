@@ -434,6 +434,27 @@ class AgentTurnRunner:
             for revision in self.rooms.list_plan_revisions(incoming[-1].message.room_id)
         ]
         review_history = self._review_history(incoming[-1].message.room_id)
+        role_protocol = {
+            MemberRole.PLANNER: (
+                "Publish plans using share_plan with artifact_content and a role recipient "
+                "implementer. Reply to questions using answer_question with reply_to; "
+                "when revising a plan, use supersedes_artifact_id and addresses_message_ids."
+            ),
+            MemberRole.IMPLEMENTER: (
+                "Ask planner using ask_question when the plan is unclear. After editing, "
+                "send request_review to orchestrator, not directly to reviewer; the controller "
+                "runs deterministic verification before review. If your restricted tools cannot "
+                "run tests, say so honestly; do not invent test results."
+            ),
+            MemberRole.REVIEWER: (
+                "This is the chat action protocol, not the standalone review verdict protocol. "
+                "Send approve_review or request_rework to orchestrator with artifact_content "
+                "containing issues. Each issue has issue_id (UUID), priority "
+                "(low, medium, high, critical), summary, and resolved. Rework requires an "
+                "unresolved issue. Approval must carry forward prior issue IDs and cannot "
+                "include unresolved high or critical issues. Do not approve without evidence."
+            ),
+        }[own_role]
         return (
             "You are participating in a controlled CodeCrew task room. "
             "The original Issue, role permissions, verification plan, and CompletionGuard "
@@ -441,6 +462,9 @@ class AgentTurnRunner:
             "Do not claim task success on your own. "
             "Return only one JSON object matching the action schema. "
             "The last and only terminal action must be finish_turn.\n\n"
+            "Omit unused optional fields. finish_turn has no recipient or artifact fields; "
+            'example: {"action":"finish_turn","content":"Turn ended; not task success"}.\n'
+            f"Role action contract: {role_protocol}\n\n"
             f"Your team identity: {profile.display_name} ({own_role.value}).\n"
             f"Your role: {profile.role_description}\n"
             f"Behavior calibration: {profile.l0_self_description}\n"
