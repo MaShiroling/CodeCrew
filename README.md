@@ -255,6 +255,15 @@ cp .env.example .env
 .venv/bin/ruff check .
 ```
 
+需要确保当前已有的在线测试开关全部关闭时，可使用统一离线入口：
+
+```bash
+.venv/bin/python scripts/check_offline.py
+```
+
+它运行全部 pytest 与 Ruff，并从子进程环境移除已知模型密钥；不修改父终端环境。
+这不是网络沙箱，macOS Seatbelt 用例仍需在允许启动 Seatbelt 的环境验证。
+
 真实 CLI / Kimi 在线测试默认跳过；启用后可能需要网络并消耗 Token 或会员额度。
 Claude Code/Codex CLI 集成测试的显式运行方式：
 
@@ -394,6 +403,7 @@ docs/                # 架构和 Adapter 文档
 - [x] DeepSeek Reviewer 真实冒烟之一：本机 CLI 选项、只读工具装配和密钥隔离预检（无模型调用）
 - [x] DeepSeek Reviewer 真实冒烟之二：真实 Diff/Verifier 证据夹具、模拟 CLI 双会话与错误失败关闭（无模型调用）
 - [x] DeepSeek Reviewer 真实冒烟之三：用户本机在线用例通过（有效证据批准、无 Diff 拒绝、工具/文件状态检查）
+- [x] DeepSeek Reviewer 真实冒烟之四：统一离线验收入口、结果来源与限制收口、三 Agent 联调条件
 - [ ] 真实模型接入之二 B2b-2c：禁止命令主动拒绝验证
 - [ ] 阶段九：多语言编码任务评测集
 - [ ] 阶段十：单 Agent / 多 Agent 对照实验与指标报告

@@ -63,7 +63,9 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
 用模拟进程测试，并验证了本机 Claude Code CLI 的所需选项。详见
 [DeepSeek Reviewer 分步冒烟](deepseek-reviewer-smoke.md)；用户首次在线运行因
 Markdown JSON 包装解析失败，格式修复后在 2026-09-26 重跑通过，实际远端模型版本仍未验证，
-且工具限制不等同于操作系统只读沙箱。Kimi 侧新增了只暴露
+且工具限制不等同于操作系统只读沙箱。独立 Reviewer 四个子步骤已收尾；此次
+`AgentReviewerRunner` 冒烟不覆盖聊天室 `AgentTurnRunner` 动作协议，下一阶段必须
+沿真实任务运行时联调，不能以独立冒烟替代三 Agent 闭环。Kimi 侧新增了只暴露
 `Read/Grep/Glob/Write/Edit` 的独立 Agent 文件（没有 `Bash` 或子 Agent），以及
 `KimiWriteBoundary`：在 macOS 上用 Seatbelt 限制 CLI 及其子进程只能写授权目录和
 独立运行目录，明确拒绝 `.git`、`.codecrew`、`.env` 等路径。系统测试验证了授权写入、

@@ -1,6 +1,6 @@
 # DeepSeek Reviewer 真实冒烟：分步验收
 
-已完成 **子步骤 1～3**。用户在线运行首次因 Markdown JSON 包装失败；格式兼容
+已完成 **子步骤 1～4**。用户在线运行首次因 Markdown JSON 包装失败；格式兼容
 修复后，用户在 2026-09-26 重跑并提供单条测试通过的输出。实际远端模型版本仍未确认。
 
 ## 子步骤 1：本地预检（已完成）
@@ -45,11 +45,6 @@
 `ReviewerExecutionError`，不会变成批准。本阶段的批准/拒绝文本是预置测试数据，
 不是 DeepSeek 的判断。证据文件位于 Worktree 外的 ArtifactStore；路径在 prompt 中，
 实际证据读取已由子步骤 3 的用户本机在线断言验证。
-
-## 后续子步骤
-
-4. 运行离线回归与静态检查，记录结果和限制，更新项目状态。Reviewer 批准始终不
-   替代 Verifier 与 CompletionGuard 的确定性成功判定。
 
 ## 子步骤 3 在线测试入口（用户本机运行通过）
 
@@ -96,3 +91,45 @@ Claude Code 的流式结果若不暴露实际远端模型 ID，不能仅凭环�
 不是桌面任务进程重复运行所得。它证明本夹具的 Reviewer 在线冒烟通过，不证明
 所有不可信输入下的只读性，不确认远端具体模型版本，也不代表三 Agent 或
 CompletionGuard 在线闭环已通过。
+
+## 子步骤 4：验收记录与收尾（已完成）
+
+| 项目 | 已知结果与证据来源 |
+| --- | --- |
+| 验收范围 | 独立 `DeepSeekClaudeReviewerAdapter` → `AgentReviewerRunner`；不是聊天室完整运行时 |
+| 在线日期与来源 | 2026-09-26，用户同终端重跑的 pytest 输出 `. [100%]` |
+| 正例/负例 | 单条测试内两个回合：有效 Diff/通过的验证报告批准；无 Diff/失败报告拒绝 |
+| 工具与文件检查 | 允许工具事件、证据 Read 路径、不同原生会话 ID、Worktree/Artifact 哈希断言通过 |
+| 输出可靠性 | 裸 JSON 或整个响应中的单个 JSON 代码块；其余非法/歧义输出失败关闭 |
+| 可复现代码基线 | `d46b39d` 包含格式兼容修复；`ef9355c` 记录用户报告的在线通过结果 |
+| 未保留的原始证据 | 用户仅提供 pytest 摘要；原始响应、具体 trace/session ID 未留存，不补造 |
+| 实际远端模型版本 | 未验证；请求模型别名不作为返回版本证明 |
+| 成本与 Token | 未形成可核实的供应商计费/Token 记录，不能记为零或采用 CLI 的 Claude 估价 |
+
+统一离线验收入口（开发依赖必须安装，使用项目虚拟环境）：
+
+```bash
+.venv/bin/python scripts/check_offline.py
+```
+
+入口用当前解释器运行全部 pytest 和 Ruff，关闭目前所有四个在线测试开关，并从
+子进程环境移除已知供应商认证变量；不修改父终端环境。失败时返回原失败码并停止。
+这是当前测试套件的保护入口，不是断网沙箱，也不承诺未来未注册的在线用例自动受保护。
+本机 CLI `--help`/`--version` 等不调用模型的检查仍可执行。macOS Seatbelt 测试须在
+允许启动 Seatbelt 的环境运行，不能用跳过该边界的方式取得通过。
+
+此轮收尾没有额外真实模型调用。现阶段仅能宣称独立 Reviewer 的本夹具在线冒烟通过：
+
+- 文件哈希未变和工具白名单不等于操作系统级只读隔离或主动攻击测试。
+- 额外断言不是对 Agent 安全隔离的隐藏测试。
+- 该入口不覆盖 `AgentTurnRunner` 的聊天室动作 JSON、人格注入、ACK 或返工预算。
+- Reviewer 批准不赋予任务成功；Verifier 和 CompletionGuard 仍须在完整运行时中验收。
+
+### 下一阶段入口：三真实 Agent 联调
+
+先完成团队配置与聊天协议预检，显式绑定 Codex Planner、Kimi Code Implementer、
+DeepSeek Claude Reviewer；保持密钥仅从环境注入、macOS Kimi 边界和受管 Worktree。
+沿现有 Task API/`WorkflowEventLoop`/`AgentTurnRunner` 路径核对三角色结构化动作，
+不能复用本独立 Reviewer 用例就宣布聊天室闭环成功。之后分别验证完整成功路径、
+拒绝返工和预算耗尽；每条路径都检查持久化状态、trace、Patch、验证/评审证据与
+CompletionGuard 决定。正式多语言评测与 UI 人工消息不在本轮收尾范围内。
