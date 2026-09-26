@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from app.agents import AgentEventType
+from app.agents.timeouts import validate_planner_timeout
 from app.orchestration.models import TaskState
 from app.storage import ArtifactReference, ArtifactType
 from app.team import (
@@ -47,8 +48,14 @@ def _snapshot(root: Path) -> dict[str, str]:
 class _EvidenceTurnRunner(AgentTurnRunner):
     """Check fixed-fixture evidence before the executor can invoke the guard."""
 
-    def __init__(self, fixture: HandoffFixture, *, rework_pairs=0, inject_count=0) -> None:
-        super().__init__(fixture.runner.registry, fixture.router, timeout_seconds=180)
+    def __init__(
+        self, fixture: HandoffFixture, *, rework_pairs=0, inject_count=0,
+        planner_timeout_seconds: int | None = None,
+    ) -> None:
+        super().__init__(
+            fixture.runner.registry, fixture.router, timeout_seconds=180,
+            planner_timeout_seconds=planner_timeout_seconds,
+        )
         self.fixture = fixture
         self.original = _source_hashes(fixture.handle.repository_root)
         self.attempts = 0
@@ -190,7 +197,9 @@ class ThreeAgentResult:
     report: ArtifactReference
 
 
-async def run_three_agent(fixture: HandoffFixture, *, scenario="success") -> ThreeAgentResult:
+async def run_three_agent(
+    fixture: HandoffFixture, *, scenario="success", planner_timeout_seconds: int | None = None,
+) -> ThreeAgentResult:
     """Run all roles via production directives; never set task success manually."""
     if MemberRole.REVIEWER not in fixture.agent_names:
         raise WorkflowExecutionError("Reviewer adapter is required")
@@ -199,6 +208,21 @@ async def run_three_agent(fixture: HandoffFixture, *, scenario="success") -> Thr
         raise ValueError("unknown three-agent smoke scenario")
     rework_pairs, inject_count = scenarios[scenario]
     max_turns = 5 + 2 * rework_pairs
+    validate_planner_timeout(planner_timeout_seconds)
+    planner_timeout = planner_timeout_seconds if planner_timeout_seconds is not None else 180
+    duration_budget_ms = (2 * planner_timeout + (max_turns - 2) * 180) * 1000
+    policy = fixture.store.put_json(
+        {
+            "schema_version": 1, "trace_id": str(fixture.task.trace_id), "scenario": scenario,
+            "planner_timeout_seconds": planner_timeout,
+            "implementer_timeout_seconds": 180, "reviewer_timeout_seconds": 180,
+            "max_agent_turns": max_turns, "max_agent_duration_ms": duration_budget_ms,
+            "transport": "cli-default", "automatic_workflow_retries": 0,
+        },
+        task_id=fixture.task.id, trace_id=fixture.task.trace_id, type=ArtifactType.GENERIC,
+        created_by="three-agent-smoke", filename="smoke-runtime-policy.json",
+        metadata={"purpose": "smoke-runtime-policy"},
+    )
     baseline = await fixture.verifier.verify(
         fixture.handle,
         trace_id=fixture.task.trace_id,
@@ -208,7 +232,10 @@ async def run_three_agent(fixture: HandoffFixture, *, scenario="success") -> Thr
     assert {VerificationCheckKind.PUBLIC_TESTS, VerificationCheckKind.HIDDEN_TESTS} <= {
         check.kind for check in baseline.checks if check.status is VerificationStatus.FAILED
     }, "buggy baseline must fail public tests and held-out assertions"
-    fixture.runner = _EvidenceTurnRunner(fixture, rework_pairs=rework_pairs, inject_count=inject_count)
+    fixture.runner = _EvidenceTurnRunner(
+        fixture, rework_pairs=rework_pairs, inject_count=inject_count,
+        planner_timeout_seconds=planner_timeout_seconds,
+    )
     rework_budget = 2 if rework_pairs else 0
     controller = WorkflowController(fixture.runner.rooms, max_rework_rounds=rework_budget)
     controller.initialize()
@@ -223,7 +250,7 @@ async def run_three_agent(fixture: HandoffFixture, *, scenario="success") -> Thr
             ConversationBudgetPolicy(
                 max_agent_turns=max_turns,
                 max_reported_tokens=400_000 if rework_pairs else 200_000,
-                max_agent_duration_ms=max_turns * 180_000,
+                max_agent_duration_ms=duration_budget_ms,
             ),
         ),
     )
@@ -289,6 +316,7 @@ async def run_three_agent(fixture: HandoffFixture, *, scenario="success") -> Thr
     metadata = fixture.store.put_json(
         {
             "scope": f"three-agent-{scenario.replace('_', '-')}-path",
+            "runtime_policy_artifact_id": str(policy.artifact_id),
             "task_id": str(fixture.task.id),
             "trace_id": str(fixture.task.trace_id),
             "state": fixture.task.state.value,

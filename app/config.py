@@ -4,6 +4,8 @@ from pathlib import Path
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.agents.timeouts import MAX_PLANNER_TIMEOUT_SECONDS
+
 
 class Settings(BaseSettings):
     """Runtime configuration loaded from CODECREW_* environment variables."""
@@ -21,6 +23,9 @@ class Settings(BaseSettings):
     worktree_root: Path = Path(".codecrew/worktrees")
     max_rework_rounds: int = Field(default=2, ge=0, le=10)
     agent_timeout_seconds: int = Field(default=900, gt=0)
+    planner_timeout_seconds: int | None = Field(
+        default=None, ge=1, le=MAX_PLANNER_TIMEOUT_SECONDS
+    )
     claude_cli_path: str = Field(default="claude", min_length=1)
     codex_cli_path: str = Field(default="codex", min_length=1)
     kimi_cli_path: str = Field(default="kimi", min_length=1)

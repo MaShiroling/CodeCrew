@@ -21,6 +21,7 @@ from app.agents import (
     PermissionMode,
 )
 from app.agents.artifact_inputs import verify_artifact_files
+from app.agents.timeouts import validate_planner_timeout
 from app.orchestration.models import Task
 from app.storage import ArtifactReference, ArtifactStore, ArtifactType
 from app.team.actions import (
@@ -100,6 +101,7 @@ class AgentTurnRunner:
         router: ConversationRouter,
         *,
         timeout_seconds: int = 900,
+        planner_timeout_seconds: int | None = None,
         pending_limit: int = 20,
         personas: TeamPersonaCatalog | None = None,
     ) -> None:
@@ -112,8 +114,14 @@ class AgentTurnRunner:
         self.rooms: TeamRoomStore = router.rooms
         self.artifacts: ArtifactStore = router.artifacts
         self.timeout_seconds = timeout_seconds
+        self.planner_timeout_seconds = validate_planner_timeout(planner_timeout_seconds)
         self.pending_limit = pending_limit
         self.personas = personas or default_team_personas()
+
+    def timeout_for_role(self, role: MemberRole) -> int:
+        if role is MemberRole.PLANNER and self.planner_timeout_seconds is not None:
+            return self.planner_timeout_seconds
+        return self.timeout_seconds
 
     async def run(
         self,
@@ -145,7 +153,7 @@ class AgentTurnRunner:
             prompt=self._build_prompt(task, room.members, member_id, incoming),
             working_directory=working_directory,
             permission_mode=_PERMISSIONS[member.role],
-            timeout_seconds=self.timeout_seconds,
+            timeout_seconds=self.timeout_for_role(member.role),
             resume_from_session_id=resume_native_session_id,
             artifact_inputs=inputs,
             metadata={
@@ -280,6 +288,7 @@ class AgentTurnRunner:
                 "native_session_id": session.native_session_id,
                 "role": member.role.value,
                 "stream_complete": stream_complete,
+                "timeout_seconds": self.timeout_for_role(member.role),
                 "outcome": outcome,
                 "events": [event.model_dump(mode="json") for event in events],
             },
@@ -306,6 +315,7 @@ class AgentTurnRunner:
                     "sha256": metadata.sha256,
                     "role": member.role.value,
                     "event_count": len(events),
+                    "timeout_seconds": self.timeout_for_role(member.role),
                     "stderr_event_count": sum(event.type.value == "stderr" for event in events),
                     "stream_complete": stream_complete,
                     "outcome": outcome,

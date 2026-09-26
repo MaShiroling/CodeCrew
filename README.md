@@ -338,6 +338,7 @@ Code CLI（仅限 macOS，并需在 shell 环境提供新的 Kimi Code **会员*
 | `CODECREW_WORKTREE_ROOT` | 受管 Worktree 目录 |
 | `CODECREW_MAX_REWORK_ROUNDS` | 最大返工轮数 |
 | `CODECREW_AGENT_TIMEOUT_SECONDS` | Agent 默认超时 |
+| `CODECREW_PLANNER_TIMEOUT_SECONDS` | 可选 Planner 专用超时，1～900 秒；未设置时继承执行器默认值 |
 | `CODECREW_CLAUDE_CLI_PATH` | Claude Code 可执行文件 |
 | `CODECREW_CODEX_CLI_PATH` | Codex CLI 可执行文件 |
 

@@ -52,6 +52,8 @@ def test_configured_app_lifespan_initializes_task_api(tmp_path: Path) -> None:
             database_url=f"sqlite:///{tmp_path / 'tasks.sqlite3'}",
             artifact_root=tmp_path / "artifacts",
             worktree_root=tmp_path / "worktrees",
+            agent_timeout_seconds=180,
+            planner_timeout_seconds=360,
         ),
         registry=registry,
         agent_names=names,
@@ -61,6 +63,9 @@ def test_configured_app_lifespan_initializes_task_api(tmp_path: Path) -> None:
             rules=(CommandRule(name="pytest", argv_prefix=("python", "-m", "pytest")),)
         ),
     )
+    turns = runtime.service.event_loop.executor.turns
+    assert turns.timeout_for_role(MemberRole.PLANNER) == 360
+    assert turns.timeout_for_role(MemberRole.IMPLEMENTER) == 180
     with TestClient(create_app(runtime=runtime)) as client:
         response = client.get("/api/v1/tasks")
         assert response.status_code == 200

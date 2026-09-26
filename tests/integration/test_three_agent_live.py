@@ -11,6 +11,7 @@ from tempfile import TemporaryDirectory
 import pytest
 
 from app.agents import CodexCliAdapter, DeepSeekClaudeReviewerAdapter, KimiCodeAdapter
+from app.config import Settings
 from app.orchestration.models import TaskState
 from scripts.planner_kimi_smoke import handoff_fixture
 from scripts.smoke_evidence import archive_smoke_evidence
@@ -30,6 +31,13 @@ async def test_live_three_agent_success_path(tmp_path):
 
 async def run_live_three_agent_scenario(tmp_path, *, scenario="success"):
     expected_turns = {"success": 5, "rework_success": 7, "rework_exhaustion": 9}[scenario]
+    # Explicit shell environment only; never load credentials or test settings from .env.
+    planner_timeout = Settings(_env_file=None).planner_timeout_seconds
+    run_options = {}
+    if scenario != "success":
+        run_options["scenario"] = scenario
+    if planner_timeout is not None:
+        run_options["planner_timeout_seconds"] = planner_timeout
     if platform.system() != "Darwin":
         pytest.fail("three Agent live smoke requires macOS Seatbelt")
     for name in ("codex", "kimi", "claude"):
@@ -50,9 +58,7 @@ async def run_live_three_agent_scenario(tmp_path, *, scenario="success"):
             tmp_path, CodexCliAdapter(), implementer, reviewer=reviewer
         ) as fixture:
             try:
-                result = await run_three_agent(fixture) if scenario == "success" else (
-                    await run_three_agent(fixture, scenario=scenario)
-                )
+                result = await run_three_agent(fixture, **run_options)
                 if scenario == "rework_exhaustion":
                     assert fixture.task.state is TaskState.NEEDS_HUMAN
                     assert fixture.task.rework_rounds == 2

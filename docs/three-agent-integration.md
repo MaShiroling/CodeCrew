@@ -185,7 +185,7 @@ codex --version
 5. 鲸鲸通过 `Read` 留下每个证据文件的路径记录，输出审批动作；只有
    CompletionGuard 全部条件通过后，控制器处理 `completion_passed` 并完成任务。
 
-本夹具保留四回合澄清设计，外加一个 Reviewer 回合：最多 5 回合，每回合 180 秒，
+本夹具保留四回合澄清设计，外加一个 Reviewer 回合：最多 5 回合，默认每回合 180 秒，
 事件上限 20、报告 Token 预算 200,000。每轮规划使用新会话，Kimi 仍是新会话，
 鲸鲸从不继承其他角色会话；DeepSeek CLI 使用临时私有 HOME。正常生产会话恢复能力
 没有被改变。此成功路径夹具把返工预算设为 **0**，拒绝或守卫失败则转人工，不自动
@@ -295,7 +295,8 @@ Plan、验证及日志引用，再唤醒 Implementer。保留 correlation/causat
 | 一次返工成功 | 仅在初次实现后注入；返工后的代码保持 Agent 实际输出 | 2 Planner + 3 Implementer + 2 独立 Reviewer，最多 7 回合；1 轮返工，最终守卫通过 |
 | 两轮耗尽转人工 | 初次实现及两次返工后都重新注入；不要求 Agent 故意保留错误 | 2 Planner + 4 Implementer + 3 独立 Reviewer，最多 9 回合；2 轮后再次拒绝，转人工且无成功结论 |
 
-保持每回合 180 秒超时，已报告 Token 总量预算 400,000；缺失用量不按真实消耗为零解释。
+默认每回合 180 秒超时，Planner 可按下节显式覆盖；已报告 Token 总量预算 400,000，
+缺失用量不按真实消耗为零解释。
 每次评审使用新的原生会话，结构化历史保留此前问题 ID；批准不能把未解决问题从列表
 直接删掉。每次修复后重新运行 Verifier，只读取当前证据。证据和注入记录继续长期归档。
 这不改变生产默认最多两轮预算，也不证明 UI、服务重启或不可信仓库隔离。
@@ -359,6 +360,41 @@ CODECREW_RUN_THREE_AGENT_BUDGET_LIVE=1 .venv/bin/pytest -q -s tests/integration/
 CLI 正常退出，但回复是说明文字加裸 JSON，旧解析器要求明确代码围栏而拒绝。
 仅生成 Plan v1，未进入 Reviewer、故障注入或返工；归档数据库和全部 16 个 Artifact
 哈希已只读核验。尾部对象兼容通过离线回归不代表真实返工验收已完成，也不增加付费重试。
+
+### Planner 连接诊断与显式超时
+
+后续运行 `51888600-b126-46f2-ba00-71f999a94f8c` 已生成 Plan v1 并送达月见的澄清问题，
+白金生成 Plan v2 时连续五次重连，出现 WebSocket → HTTPS 回退后仍于约 180 秒超时。
+首个白金回合也耗时约 179.9 秒。归档数据库和 19 个 Artifact 哈希已核验；尚未进入
+代码实现、Reviewer 或返工。日志只能确认连接异常，不能区分代理、本地网络或服务端根因。
+
+可选环境变量 `CODECREW_PLANNER_TIMEOUT_SECONDS` 接受 1～900 秒整数：
+
+- 本地服务通过 `Settings` 读取环境变量或 `.env`；未设置时继承 `CODECREW_AGENT_TIMEOUT_SECONDS`。
+- 三 Agent 在线夹具只读取启动终端的环境变量，不读取 `.env`。未设置时保持 180 秒，
+  月见和鲸鲸仍为 180 秒；四回合双 Agent 用例不读取此覆盖，仍保持原默认值。
+- 夹具总 Agent 时长预算同步为 `2 × Planner超时 + (最大回合数 - 2) × 180` 秒。
+  回合数、Token 预算、两轮返工上限及完成守卫不变；这是 Agent 累计时长预算，
+  不是包含编译、测试和归档耗时的整个用例墙钟超时。
+- 启动模型前保存 `smoke-runtime-policy.json` Artifact，记录有效超时、预算、
+  `transport=cli-default` 和零工作流自动重试。失败时同样纳入归档；成功报告引用其 ID。
+  单回合事件 Artifact 和 Trace 也记录有效超时。
+
+例如仅为这次真实返工测试显式设置白金 360 秒（仍会消耗真实模型额度）：
+
+```bash
+CODECREW_PLANNER_TIMEOUT_SECONDS=360 CODECREW_RUN_THREE_AGENT_REWORK_LIVE=1 \
+  .venv/bin/pytest -q -s tests/integration/test_three_agent_rework_live.py::test_live_three_agent_rework_success
+```
+
+不自动重跑该命令，也不将超时退出解释为成功。增加等待时间不是连接问题修复证明。
+
+本机已用 `--version`、`--help` 和隔离临时配置目录下的 `features list` 做无模型调用核验：
+Codex `0.155.0-alpha.9.2` 支持逐次 `-c` 配置，旧 `responses_websockets` 和
+`responses_websockets_v2` 均为 `removed`，不能据此声称能强制 HTTPS。
+[官方配置参考](https://learn.chatgpt.com/docs/config-file/config-reference)列出了
+`model_providers.<id>.supports_websockets`，但当前 ChatGPT 登录路径的实际生效行为
+尚未验证；本阶段不接入猜测性的传输开关，不修改全局配置、登录或代理。
 
 ## 后续子步骤（尚未完成）
 

@@ -94,9 +94,10 @@ def test_archive_root_symlink_is_rejected(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("planner_timeout", [None, "360"])
 @pytest.mark.parametrize("workflow_failed", [False, True])
 async def test_live_entry_archive_errors_preserve_failure_and_do_not_accept_success(
-    tmp_path, monkeypatch, capsys, workflow_failed
+    tmp_path, monkeypatch, capsys, workflow_failed, planner_timeout
 ):
     from tests.integration import test_three_agent_live as live
 
@@ -107,7 +108,10 @@ async def test_live_entry_archive_errors_preserve_failure_and_do_not_accept_succ
     async def handoff(*args, **kwargs):
         yield fixture
 
-    async def run(*args):
+    async def run(*args, **kwargs):
+        assert kwargs == (
+            {"planner_timeout_seconds": 360} if planner_timeout is not None else {}
+        )
         if workflow_failed:
             raise RuntimeError("synthetic workflow failure")
         task.state = TaskState.COMPLETED  # Stub only; no success evidence is fabricated in production.
@@ -120,6 +124,10 @@ async def test_live_entry_archive_errors_preserve_failure_and_do_not_accept_succ
         raise ValueError("sensitive archive detail must not be printed")
 
     monkeypatch.setenv("KIMI_MODEL_API_KEY", "offline-placeholder")
+    if planner_timeout is None:
+        monkeypatch.delenv("CODECREW_PLANNER_TIMEOUT_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("CODECREW_PLANNER_TIMEOUT_SECONDS", planner_timeout)
     monkeypatch.setenv("DEEPSEEK_API_KEY", "offline-placeholder")
     monkeypatch.setattr(live.platform, "system", lambda: "Darwin")
     monkeypatch.setattr(live.shutil, "which", lambda name: f"offline/{name}")

@@ -31,22 +31,28 @@ def recorded_stream(router, artifacts, task):
 
 
 @pytest.mark.asyncio
-async def test_codex_timeout_preserves_received_stderr_errors_and_native_session(tmp_path):
+@pytest.mark.parametrize("planner_timeout", [None, 360])
+async def test_codex_timeout_preserves_received_stderr_errors_and_native_session(
+    tmp_path, planner_timeout
+):
     _, router, rooms, artifacts, _, task, room, members = make_context(tmp_path, FakeAgentScenario())
     stderr = "model discovery waiting\nrequest transport waiting\n"
+    deadline = planner_timeout if planner_timeout is not None else 180
     process = StubProcess(
         [
             json_chunk({"type": "thread.started", "thread_id": "offline-thread"}),
             ProcessChunk(ProcessStream.STDERR, stderr),
             json_chunk({"type": "error", "message": "Reconnecting... request timed out"}),
         ],
-        ProcessResult(exit_code=-15, duration_ms=180016, timed_out=True),
+        ProcessResult(exit_code=-15, duration_ms=deadline * 1000 + 16, timed_out=True),
     )
     process_runner = StubRunner(process)
     adapter = CodexCliAdapter(runner=process_runner)
     registry = AgentRegistry()
     registry.register(adapter, roles={AgentRole.PLANNER}, permission_modes={PermissionMode.READ_ONLY})
-    runner = AgentTurnRunner(registry, router, timeout_seconds=180)
+    runner = AgentTurnRunner(
+        registry, router, timeout_seconds=180, planner_timeout_seconds=planner_timeout
+    )
     planner = members[MemberRole.PLANNER]
     trigger = send_trigger(router, room, members[MemberRole.ORCHESTRATOR], planner)
     with pytest.raises(AgentTurnError, match="timed_out"):
@@ -57,6 +63,8 @@ async def test_codex_timeout_preserves_received_stderr_errors_and_native_session
     event, stream = recorded_stream(router, artifacts, task)
     assert stream["outcome"] == "timed_out" and stream["stream_complete"] is True
     assert stream["native_session_id"] == "offline-thread"
+    assert stream["timeout_seconds"] == deadline
+    assert event.payload["timeout_seconds"] == deadline
     assert [e["text"] for e in stream["events"] if e["type"] == "stderr"] == [stderr]
     assert any(e["native_event_type"] == "error" for e in stream["events"])
     assert [e["sequence"] for e in stream["events"]] == list(range(len(stream["events"])))
@@ -66,7 +74,7 @@ async def test_codex_timeout_preserves_received_stderr_errors_and_native_session
     assert "request transport" not in event.model_dump_json()  # Large text stays in the Artifact.
     assert rooms.pending_for(planner.member_id) == (trigger,)
     assert len(process_runner.calls) == 1
-    assert process_runner.calls[0]["timeout_seconds"] == 180
+    assert process_runner.calls[0]["timeout_seconds"] == deadline
     raw = router.trace_store.list(trace_id=task.trace_id, type=TraceEventType.AGENT_OUTPUT_RECORDED)
     assert artifacts.read_json(raw[0].event.payload["artifact_id"])["reason"] == "timed_out"
     archive = archive_smoke_evidence(artifacts, task, root=tmp_path / "archives")

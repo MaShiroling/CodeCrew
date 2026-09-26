@@ -1,3 +1,6 @@
+import pytest
+from pydantic import ValidationError
+
 from app.config import Settings
 
 
@@ -24,3 +27,19 @@ def test_agent_process_defaults_are_bounded() -> None:
 
     assert settings.agent_output_queue_maxsize == 256
     assert settings.process_terminate_grace_seconds == 2.0
+
+
+def test_planner_timeout_is_explicit_and_separate(monkeypatch):
+    monkeypatch.delenv("CODECREW_PLANNER_TIMEOUT_SECONDS", raising=False)
+    assert Settings(_env_file=None).planner_timeout_seconds is None
+    monkeypatch.setenv("CODECREW_PLANNER_TIMEOUT_SECONDS", "360")
+    settings = Settings(_env_file=None)
+    assert settings.planner_timeout_seconds == 360
+    assert settings.agent_timeout_seconds == 900
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "901", "NaN", "Infinity", "", "bad"])
+def test_invalid_planner_deadline_fails_configuration(monkeypatch, value):
+    monkeypatch.setenv("CODECREW_PLANNER_TIMEOUT_SECONDS", value)
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)

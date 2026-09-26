@@ -107,7 +107,8 @@ def build_task_runtime(
     traces = TraceStore(database)
     router = ConversationRouter(rooms, artifacts, traces)
     turns = AgentTurnRunner(
-        registry, router, timeout_seconds=settings.agent_timeout_seconds, personas=catalog
+        registry, router, timeout_seconds=settings.agent_timeout_seconds,
+        planner_timeout_seconds=settings.planner_timeout_seconds, personas=catalog
     )
     verifier = Verifier(
         artifacts,
