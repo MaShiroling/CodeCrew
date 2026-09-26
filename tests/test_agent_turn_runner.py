@@ -247,6 +247,10 @@ async def test_turn_reads_messages_routes_actions_and_acks_after_success(
     assert request.role is AgentRole.IMPLEMENTER
     assert request.permission_mode is PermissionMode.WORKSPACE_WRITE
     assert str(trigger.message.message_id) in request.prompt
+    assert 'top-level key "actions"' in request.prompt
+    assert "Put explanations, progress, questions," in request.prompt
+    assert "A prose statement that you asked or sent something does not route a message" in request.prompt
+    assert request.prompt.endswith("finish_turn is not task success.")
 
 
 @pytest.mark.asyncio

@@ -514,7 +514,15 @@ class AgentTurnRunner:
             f"New messages:\n{json.dumps(messages, ensure_ascii=False)}\n\n"
             f"Plan history:\n{json.dumps(plan_history, ensure_ascii=False)}\n\n"
             f"Review history:\n{json.dumps(review_history, ensure_ascii=False)}\n\n"
-            f"Action schema:\n{json.dumps(schema, ensure_ascii=False)}"
+            f"Action schema:\n{json.dumps(schema, ensure_ascii=False)}\n\n"
+            "Final response contract: Return exactly one raw JSON object with the "
+            'top-level key "actions". No Markdown fences, introduction, explanation, '
+            "or trailing text outside the object. Put explanations, progress, questions, "
+            "and persona expression inside action content fields. A prose statement that "
+            "you asked or sent something does not route a message; emit the actual action. "
+            "Follow your role action contract and end with exactly one finish_turn. "
+            "Before sending, check valid JSON and no text outside the object; "
+            "finish_turn is not task success."
         )
 
     def _review_history(self, room_id: UUID) -> list[dict[str, object]]:

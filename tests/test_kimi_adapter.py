@@ -148,6 +148,13 @@ async def test_kimi_lifecycle_uses_fresh_sandboxed_session_and_isolated_environm
     command = runner.calls[0]["argv"]
     assert command[:3] == ["sandbox-exec", "-p", "restricted"]
     assert "--agent-file" in command and "--output-format" in command
+    agent_file = Path(command[command.index("--agent-file") + 1])
+    instructions = agent_file.read_text(encoding="utf-8")
+    assert 'top-level key "actions"' in instructions
+    assert "persona expression inside an action's \"content\" field" in instructions
+    assert 'send "ask_question" to the planner, then "finish_turn"' in instructions
+    assert "For requests without a task-room action schema" in instructions
+    assert command[command.index("--prompt") + 1] == request.prompt
     assert "--yolo" not in command and "--auto" not in command
     assert "test-key" not in " ".join(command)
     env = runner.calls[0]["env"]
