@@ -4,6 +4,14 @@ from unittest.mock import patch
 from scripts.check_offline import LIVE_FLAGS, MODEL_CREDENTIALS, main, offline_environment
 
 
+def test_three_agent_live_flag_is_explicitly_disabled() -> None:
+    assert "CODECREW_RUN_THREE_AGENT_LIVE" in LIVE_FLAGS
+    assert (
+        offline_environment({"CODECREW_RUN_THREE_AGENT_LIVE": "1"})["CODECREW_RUN_THREE_AGENT_LIVE"]
+        == "0"
+    )
+
+
 def test_offline_environment_disables_live_tests_and_does_not_mutate_parent() -> None:
     original = {name: "1" for name in LIVE_FLAGS}
     original.update(dict.fromkeys(MODEL_CREDENTIALS, "fake-test-secret"))

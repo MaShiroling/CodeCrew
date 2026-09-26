@@ -26,6 +26,7 @@ from app.team.controller import (
     WorkflowDirectiveKind,
 )
 from app.team.models import (
+    MAX_CHAT_ARTIFACTS,
     ChatMessage,
     MemberKind,
     MemberRole,
@@ -79,16 +80,12 @@ class WorkflowRuntime:
                     agent_name=name,
                     native_session_id=self.native_session_ids.get(role),
                 )
-                for role, name in sorted(
-                    self.agent_names.items(), key=lambda item: item[0].value
-                )
+                for role, name in sorted(self.agent_names.items(), key=lambda item: item[0].value)
             ),
         )
 
     @classmethod
-    def from_context(
-        cls, task: Task, context: WorkflowRuntimeContext
-    ) -> "WorkflowRuntime":
+    def from_context(cls, task: Task, context: WorkflowRuntimeContext) -> "WorkflowRuntime":
         if context.task_id != task.id or context.trace_id != task.trace_id:
             raise WorkflowExecutionError(
                 "persisted runtime context belongs to another task or trace"
@@ -177,12 +174,9 @@ class WorkflowDirectiveExecutor:
             return await self._run_members((member,), runtime, source)
         if directive.kind is WorkflowDirectiveKind.WAKE_MEMBERS:
             members = tuple(
-                self.turns.rooms.get_member(member_id)
-                for member_id in directive.target_member_ids
+                self.turns.rooms.get_member(member_id) for member_id in directive.target_member_ids
             )
-            human = next(
-                (member for member in members if member.kind is MemberKind.HUMAN), None
-            )
+            human = next((member for member in members if member.kind is MemberKind.HUMAN), None)
             if human is not None:
                 return DirectiveExecutionResult(
                     paused=True,
@@ -218,9 +212,7 @@ class WorkflowDirectiveExecutor:
             # are intentionally coalesced instead of failing with "no pending messages".
             if not self.turns.rooms.pending_for(member.member_id, limit=1):
                 continue
-            violation = self.budget_guard.evaluate(
-                runtime.task.id, room_id=runtime.room_id
-            )
+            violation = self.budget_guard.evaluate(runtime.task.id, room_id=runtime.room_id)
             if violation is not None:
                 escalation = self._budget_pause(runtime, source, violation)
                 return DirectiveExecutionResult(
@@ -314,8 +306,7 @@ class WorkflowDirectiveExecutor:
             recipient=human,
             type=MessageType.HUMAN_INPUT_REQUEST,
             content=(
-                f"Conversation stopped: {violation.detail} "
-                f"({violation.actual}/{violation.limit})"
+                f"Conversation stopped: {violation.detail} ({violation.actual}/{violation.limit})"
             ),
             artifacts=(),
             source=source,
@@ -346,9 +337,7 @@ class WorkflowDirectiveExecutor:
                 actor_id="verifier",
                 correlation_id=source.message.correlation_id,
                 causation_id=source.message.message_id,
-                idempotency_key=(
-                    f"verification:{report.artifact.artifact_id}"
-                ),
+                idempotency_key=(f"verification:{report.artifact.artifact_id}"),
                 payload={
                     "passed": report.passed,
                     "artifact_id": str(report.artifact.artifact_id),
@@ -368,10 +357,47 @@ class WorkflowDirectiveExecutor:
                 if report.passed
                 else "Deterministic verification failed"
             ),
-            artifacts=(report.artifact,),
+            artifacts=self._review_evidence(runtime, report),
             source=source,
         )
         return DirectiveExecutionResult(produced_events=(event,))
+
+    def _review_evidence(
+        self,
+        runtime: WorkflowRuntime,
+        report: VerificationReport,
+    ) -> tuple[ArtifactReference, ...]:
+        """Expose evidence as scoped references, never as copied chat history."""
+        references = [
+            report.artifact,
+            report.change_set.manifest_artifact,
+            report.permission_report.artifact,
+        ]
+        plan = self.turns.rooms.latest_plan_revision(runtime.room_id)
+        if plan is not None:
+            references.append(
+                ArtifactReference.from_metadata(
+                    self.artifacts.get_metadata(plan.artifact_id),
+                    summary=f"Plan v{plan.version}",
+                )
+            )
+        if report.change_set.diff_artifact is not None:
+            references.append(report.change_set.diff_artifact)
+        for check in report.checks:
+            references.extend(check.evidence)
+        for result in report.command_results:
+            references.append(result.audit_artifact)
+            references.extend(
+                item
+                for item in (result.stdout_artifact, result.stderr_artifact)
+                if item is not None
+            )
+        unique = {reference.artifact_id: reference for reference in references}
+        if len(unique) > MAX_CHAT_ARTIFACTS:
+            raise WorkflowExecutionError(
+                "review evidence exceeds the room Artifact reference limit"
+            )
+        return tuple(unique.values())
 
     def _run_completion_guard(
         self,
@@ -406,9 +432,7 @@ class WorkflowDirectiveExecutor:
                 payload={
                     "passed": decision.passed,
                     "artifact_id": str(decision.artifact.artifact_id),
-                    "failed_conditions": [
-                        item.value for item in decision.failed_conditions
-                    ],
+                    "failed_conditions": [item.value for item in decision.failed_conditions],
                 },
             )
         )
@@ -491,9 +515,7 @@ class WorkflowDirectiveExecutor:
 
     def _member_for_role(self, room_id: UUID, role: MemberRole) -> RoomMember:
         matches = tuple(
-            member
-            for member in self.turns.rooms.get_room(room_id).members
-            if member.role is role
+            member for member in self.turns.rooms.get_room(room_id).members if member.role is role
         )
         if len(matches) != 1:
             raise WorkflowExecutionError(
@@ -527,9 +549,7 @@ class WorkflowDirectiveExecutor:
                     "native_session_id": turn.session.native_session_id,
                     "role": member.role.value,
                     "agent_name": turn.session.agent_name,
-                    "input_message_ids": [
-                        str(item) for item in turn.consumed_message_ids
-                    ],
+                    "input_message_ids": [str(item) for item in turn.consumed_message_ids],
                 },
             )
         )
@@ -624,14 +644,10 @@ class WorkflowEventLoop:
             pause_reason=pause_reason,
         )
 
-    def _ack_orchestrator_deliveries(
-        self, event: StoredChatMessage, room_id: UUID
-    ) -> None:
+    def _ack_orchestrator_deliveries(self, event: StoredChatMessage, room_id: UUID) -> None:
         room = self.executor.turns.rooms.get_room(room_id)
         orchestrator_ids = {
-            member.member_id
-            for member in room.members
-            if member.role is MemberRole.ORCHESTRATOR
+            member.member_id for member in room.members if member.role is MemberRole.ORCHESTRATOR
         }
         for delivery in event.deliveries:
             if delivery.recipient_id in orchestrator_ids:
@@ -664,9 +680,7 @@ class WorkflowEventLoop:
                     "state_after": decision.state_after.value,
                     "rework_rounds_before": decision.rework_rounds_before,
                     "rework_rounds_after": decision.rework_rounds_after,
-                    "directives": [
-                        item.model_dump(mode="json") for item in decision.directives
-                    ],
+                    "directives": [item.model_dump(mode="json") for item in decision.directives],
                 },
             )
         )

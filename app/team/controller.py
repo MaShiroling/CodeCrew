@@ -81,8 +81,16 @@ class WorkflowController:
 
     def handle(self, task: Task, event: StoredChatMessage) -> WorkflowDecision:
         persisted = self.rooms.get_message(event.message.message_id)
-        if persisted != event:
+        # Delivery ACKs may change while an immutable event waits in the queue:
+        # one wake-up can consume both an Answer and its accompanying Plan v2.
+        if (
+            persisted.sequence != event.sequence
+            or persisted.message != event.message
+            or tuple((item.message_id, item.recipient_id) for item in persisted.deliveries)
+            != tuple((item.message_id, item.recipient_id) for item in event.deliveries)
+        ):
             raise WorkflowControllerError("workflow event does not match persisted message")
+        event = persisted
         if event.message.task_id != task.id or event.message.trace_id != task.trace_id:
             raise WorkflowControllerError("workflow event belongs to another task or trace")
 
@@ -128,11 +136,7 @@ class WorkflowController:
                     "plan_shared requires task state planning or implementing, "
                     f"got {task.state.value}"
                 )
-            transitions = (
-                (TaskState.IMPLEMENTING,)
-                if task.state is TaskState.PLANNING
-                else ()
-            )
+            transitions = (TaskState.IMPLEMENTING,) if task.state is TaskState.PLANNING else ()
             directives = (
                 self._wake(
                     MemberRole.IMPLEMENTER,
@@ -156,9 +160,7 @@ class WorkflowController:
         elif message.type is MessageType.VERIFICATION_READY:
             self._require_state(task, TaskState.VERIFYING, message.type)
             transitions = (TaskState.REVIEWING,)
-            directives = (
-                self._wake(MemberRole.REVIEWER, "verification evidence is ready"),
-            )
+            directives = (self._wake(MemberRole.REVIEWER, "verification evidence is ready"),)
         elif message.type is MessageType.REVIEW_APPROVED:
             self._require_state(task, TaskState.REVIEWING, message.type)
             directives = (
@@ -186,9 +188,7 @@ class WorkflowController:
             directives = (
                 WorkflowDirective(
                     kind=WorkflowDirectiveKind.WAKE_MEMBERS,
-                    target_member_ids=tuple(
-                        delivery.recipient_id for delivery in event.deliveries
-                    ),
+                    target_member_ids=tuple(delivery.recipient_id for delivery in event.deliveries),
                     reason=f"new {message.type.value} requires a conversation turn",
                 ),
             )
@@ -197,9 +197,7 @@ class WorkflowController:
                 WorkflowDirective(
                     kind=WorkflowDirectiveKind.REQUEST_HUMAN,
                     target_role=MemberRole.HUMAN,
-                    target_member_ids=tuple(
-                        delivery.recipient_id for delivery in event.deliveries
-                    ),
+                    target_member_ids=tuple(delivery.recipient_id for delivery in event.deliveries),
                     reason="an Agent requested human input",
                 ),
             )
@@ -262,14 +260,11 @@ class WorkflowController:
     def _require_state(task: Task, expected: TaskState, message_type: MessageType) -> None:
         if task.state is not expected:
             raise WorkflowControllerError(
-                f"{message_type.value} requires task state {expected.value}, "
-                f"got {task.state.value}"
+                f"{message_type.value} requires task state {expected.value}, got {task.state.value}"
             )
 
     @staticmethod
-    def _validate_transition_path(
-        initial: TaskState, transitions: tuple[TaskState, ...]
-    ) -> None:
+    def _validate_transition_path(initial: TaskState, transitions: tuple[TaskState, ...]) -> None:
         state = initial
         for target in transitions:
             if target not in ALLOWED_TRANSITIONS[state]:

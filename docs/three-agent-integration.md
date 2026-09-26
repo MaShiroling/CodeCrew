@@ -39,7 +39,7 @@ Kimi stream-json 和 Claude stream-json 执行聊天室回合。校验角色绑�
 **不启动真实 CLI，不调用模型 API，不运行完整事件循环；模拟审批不是有效完成证据。**
 Kimi 的模拟边界只证明接线，不代替现有 Seatbelt 系统测试。
 
-## 2. Planner → Implementer（开发与离线验证完成，在线待验收）
+## 2. Planner → Implementer（开发、离线与用户本机在线验收通过）
 
 ### 受控 Artifact 读取
 
@@ -135,9 +135,67 @@ codex --version
 .venv/bin/pytest -q tests/test_planner_kimi_handoff.py tests/test_chat_actions.py tests/test_agent_turn_runner.py
 ```
 
+2026-09-26 用户在原配置终端重跑，提供单条用例通过输出；
+`trace_id=5f646b43-1d20-4278-825e-016c22398d60`，验证 Artifact ID 为
+`4e9801b7-58ad-46e1-a0fc-164a0c0a4571`。验收范围为四回合交接及 Verifier；
+输出 `task_success=false` 是预期，因为该用例不执行 Reviewer/完成守卫。
+来源是用户提供的终端结果，非本桌面任务代为调用；原始证据仍在 pytest 临时目录。
+
+## 3. 完整成功路径（开发与离线验证完成，三模型在线待验收）
+
+`scripts/three_agent_smoke.py` 复用临时仓库/Worktree，但从 Issue 起使用生产
+`WorkflowEventLoop`、`WorkflowController`、`WorkflowDirectiveExecutor` 派发所有回合，
+不是把前三个独立冒烟结果拼接，也不是手动设置 `completed`。
+
+1. 白金生成 Plan v1；月见读取并提出结构化澄清。
+2. 白金回复并生成 Plan v2；月见读取新版 Plan 并修复代码。
+3. Verifier 执行语法、公开测试、额外断言、目录权限和命令策略检查。
+4. 生产执行器把最新版 Plan、Diff、变更清单、验证报告、权限报告和命令/测试日志
+   作为去重后的 Artifact 引用发送给独立鲸鲸会话。超出 50 个引用则明确失败，不静默截断。
+5. 鲸鲸通过 `Read` 留下每个证据文件的路径记录，输出审批动作；只有
+   CompletionGuard 全部条件通过后，控制器处理 `completion_passed` 并完成任务。
+
+本夹具保留四回合澄清设计，外加一个 Reviewer 回合：最多 5 回合，每回合 180 秒，
+事件上限 20、报告 Token 预算 200,000。每轮规划使用新会话，Kimi 仍是新会话，
+鲸鲸从不继承其他角色会话；DeepSeek CLI 使用临时私有 HOME。正常生产会话恢复能力
+没有被改变。此成功路径夹具把返工预算设为 **0**，拒绝或守卫失败则转人工，不自动
+消耗第三轮 Kimi/第二轮 Reviewer；项目生产返工默认上限仍为两轮，下一子步骤验收。
+
+夹具在只读/澄清回合检查 Worktree 文件快照，Reviewer 回合校验已有证据未改变、
+只有 Read/Glob/Grep 工具事件且每个共享证据有可见 Read 路径。完成判定前检查这些事实；
+可见调用并不证明模型理解，也不是操作系统级只读沙箱。检查是夹具的防线，并不代表
+任意生产任务都具有同样的快照保护。工具执行后再发现改动不能撤销其副作用。
+
+此次测试暴露并修复队列事件与 ACK 快照问题：Answer 回合一次 ACK 同时到达的 Plan v2
+后，控制器使用最新投递状态，仍严格核对不可变消息、序号及接收人，拒绝伪造事件。
+
+离线回归覆盖完整成功、假批准但无 Diff/测试失败、评审拒绝，以及漏读、禁止工具、
+改代码、篡改 Artifact、混合回复、高优先级未解决问题。所有进程输出为模拟；
+真实三模型成功路径尚未运行。使用：
+
+```bash
+.venv/bin/pytest -q tests/test_three_agent_success.py tests/test_workflow_controller.py tests/test_offline_check.py
+.venv/bin/python scripts/check_offline.py
+```
+
+真实验收需要同一终端已配置 Codex 登录、三个 CLI 的 PATH、`KIMI_MODEL_API_KEY`
+和 `DEEPSEEK_API_KEY`。只在愿意消耗至多五个真实模型回合时执行：
+
+```bash
+CODECREW_RUN_THREE_AGENT_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_three_agent_live.py
+```
+
+通过后输出 trace_id、SQLite/Artifact 路径、任务报告与完成决策 Artifact ID 和
+`task_success=true`。报告引用最终 Patch、Plan 版本、审批、验证和完成决策，记录会话、
+时延及缺失 Token 的 null；每回合原始规范化事件保存为 Artifact。失败不能通过改断言
+或自动批准消除。全量离线入口显式关闭新的 `CODECREW_RUN_THREE_AGENT_LIVE` 标志。
+测试退出会移除临时 Worktree/Reviewer HOME，证据可能被 pytest 清理。
+
+此处的 `hidden_tests` 类别仍为可见额外断言，没有保密隔离；成功仅针对该受控夹具，
+不代表正式隐藏测试评测、实际模型版本确认、UI 驱动验收或不可信仓库安全性。
+
 ## 后续子步骤（尚未完成）
 
-3. 完整成功路径：接入 Verifier 和真实独立 Reviewer，再由 CompletionGuard 判断完成。
 4. 返工与预算：验证明确拒绝、问题 ID 延续、修复再审以及最多两轮后的人工接管。
 5. UI 演示与验收记录：从页面发起任务，展示聊天、证据、Patch 和报告，记录异常与限制。
 

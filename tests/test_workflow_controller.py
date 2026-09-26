@@ -35,14 +35,10 @@ def make_context(tmp_path: Path, *, max_rework_rounds: int = 2):
 
     members = {
         MemberRole.PLANNER: member("planner", MemberRole.PLANNER, MemberKind.AGENT),
-        MemberRole.IMPLEMENTER: member(
-            "implementer", MemberRole.IMPLEMENTER, MemberKind.AGENT
-        ),
+        MemberRole.IMPLEMENTER: member("implementer", MemberRole.IMPLEMENTER, MemberKind.AGENT),
         MemberRole.REVIEWER: member("reviewer", MemberRole.REVIEWER, MemberKind.AGENT),
         MemberRole.VERIFIER: member("verifier", MemberRole.VERIFIER, MemberKind.SYSTEM),
-        MemberRole.ORCHESTRATOR: member(
-            "orchestrator", MemberRole.ORCHESTRATOR, MemberKind.SYSTEM
-        ),
+        MemberRole.ORCHESTRATOR: member("orchestrator", MemberRole.ORCHESTRATOR, MemberKind.SYSTEM),
         MemberRole.HUMAN: member("human", MemberRole.HUMAN, MemberKind.HUMAN),
     }
     task = Task(issue="Implement feature", repository_path=str(tmp_path))
@@ -252,9 +248,56 @@ def test_question_wakes_recipient_without_changing_state(tmp_path: Path) -> None
 
     assert task.state is TaskState.PLANNING
     assert decision.directives[0].kind is WorkflowDirectiveKind.WAKE_MEMBERS
-    assert decision.directives[0].target_member_ids == (
-        members[MemberRole.PLANNER].member_id,
+    assert decision.directives[0].target_member_ids == (members[MemberRole.PLANNER].member_id,)
+
+
+def test_queued_event_remains_valid_after_delivery_ack(tmp_path: Path) -> None:
+    controller, router, _, task, room, members = make_context(tmp_path)
+    question = emit(
+        router,
+        room,
+        members[MemberRole.IMPLEMENTER],
+        members[MemberRole.PLANNER],
+        MessageType.QUESTION,
     )
+    controller.rooms.acknowledge(
+        question.message.message_id, recipient_id=members[MemberRole.PLANNER].member_id
+    )
+    assert controller.rooms.get_message(question.message.message_id) != question
+    decision = controller.handle(task, question)
+    assert decision.directives[0].target_member_ids == (members[MemberRole.PLANNER].member_id,)
+    assert controller.handle(task, question).replayed
+
+
+@pytest.mark.parametrize("changed", ["content", "sequence", "recipient"])
+def test_delivery_ack_does_not_allow_forged_event(tmp_path: Path, changed: str) -> None:
+    controller, router, _, task, room, members = make_context(tmp_path)
+    question = emit(
+        router,
+        room,
+        members[MemberRole.IMPLEMENTER],
+        members[MemberRole.PLANNER],
+        MessageType.QUESTION,
+    )
+    if changed == "content":
+        forged = question.model_copy(
+            update={"message": question.message.model_copy(update={"content": "forged"})}
+        )
+    elif changed == "sequence":
+        forged = question.model_copy(update={"sequence": question.sequence + 1})
+    else:
+        forged = question.model_copy(
+            update={
+                "deliveries": (
+                    question.deliveries[0].model_copy(
+                        update={"recipient_id": members[MemberRole.REVIEWER].member_id}
+                    ),
+                )
+            }
+        )
+    with pytest.raises(WorkflowControllerError, match="does not match persisted"):
+        controller.handle(task, forged)
+    assert task.state is TaskState.CREATED
 
 
 def test_revised_plan_wakes_implementer_without_restarting_state(tmp_path: Path) -> None:
@@ -283,9 +326,7 @@ def test_revised_plan_wakes_implementer_without_restarting_state(tmp_path: Path)
             task_id=task.id,
             trace_id=task.trace_id,
             sender_id=members[MemberRole.PLANNER].member_id,
-            recipients=(
-                MessageRecipient(kind=RecipientKind.ROLE, role=MemberRole.IMPLEMENTER),
-            ),
+            recipients=(MessageRecipient(kind=RecipientKind.ROLE, role=MemberRole.IMPLEMENTER),),
             type=MessageType.PLAN_SHARED,
             content="Clarified implementation plan",
             artifacts=(revised_artifact,),
@@ -348,9 +389,7 @@ def test_illegal_event_order_is_rejected_without_state_change(tmp_path: Path) ->
 
 
 def test_rework_budget_exhaustion_routes_to_human(tmp_path: Path) -> None:
-    controller, router, artifacts, task, room, members = make_context(
-        tmp_path, max_rework_rounds=0
-    )
+    controller, router, artifacts, task, room, members = make_context(tmp_path, max_rework_rounds=0)
     advance_to_reviewing(controller, router, artifacts, task, room, members)
     rejected = emit(
         router,

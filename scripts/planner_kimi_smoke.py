@@ -169,6 +169,8 @@ async def handoff_fixture(
     root: Path,
     planner: AgentAdapter,
     implementer_factory: Callable[[Path, Path, PermissionPolicy], AgentAdapter],
+    *,
+    reviewer: AgentAdapter | None = None,
 ):
     repository = root / "repository"
     (repository / "src").mkdir(parents=True)
@@ -220,6 +222,8 @@ async def handoff_fixture(
                     MemberKind.AGENT,
                 ),
                 (MemberRole.ORCHESTRATOR, "orchestrator", MemberKind.SYSTEM),
+                (MemberRole.VERIFIER, "verifier", MemberKind.SYSTEM),
+                (MemberRole.HUMAN, "human", MemberKind.HUMAN),
             )
         }
         room = TeamRoom(
@@ -241,6 +245,12 @@ async def handoff_fixture(
             roles={AgentRole.IMPLEMENTER},
             permission_modes={PermissionMode.WORKSPACE_WRITE},
         )
+        agent_names = {MemberRole.PLANNER: planner.name, MemberRole.IMPLEMENTER: implementer.name}
+        if reviewer is not None:
+            registry.register(
+                reviewer, roles={AgentRole.REVIEWER}, permission_modes={PermissionMode.READ_ONLY}
+            )
+            agent_names[MemberRole.REVIEWER] = reviewer.name
         commands = (
             VerificationCommand(
                 name="syntax",
@@ -304,7 +314,7 @@ async def handoff_fixture(
             handle,
             VerificationPlan(commands=commands),
             verifier,
-            {MemberRole.PLANNER: planner.name, MemberRole.IMPLEMENTER: implementer.name},
+            agent_names,
         )
     finally:
         await manager.remove(handle.task_id, force=True)

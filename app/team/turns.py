@@ -484,6 +484,9 @@ class AgentTurnRunner:
             ),
             MemberRole.REVIEWER: (
                 "This is the chat action protocol, not the standalone review verdict protocol. "
+                "Use Read to inspect every supplied evidence Artifact, including the latest "
+                "Plan, Git Diff, change manifest, verification report and test logs. "
+                "Compare these with the original Issue; do not trust an Agent summary. "
                 "Send approve_review or request_rework to orchestrator with artifact_content "
                 "containing issues. Each issue has issue_id (UUID), priority "
                 "(low, medium, high, critical), summary, and resolved. Rework requires an "
