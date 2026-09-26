@@ -23,6 +23,7 @@ class Settings(BaseSettings):
     worktree_root: Path = Path(".codecrew/worktrees")
     max_rework_rounds: int = Field(default=2, ge=0, le=10)
     agent_timeout_seconds: int = Field(default=900, gt=0)
+    reviewer_structured_output: bool = False
     planner_timeout_seconds: int | None = Field(
         default=None, ge=1, le=MAX_PLANNER_TIMEOUT_SECONDS
     )

@@ -94,6 +94,8 @@ class AgentRequest(BaseModel):
     resume_from_session_id: str | None = Field(default=None, min_length=1)
     metadata: dict[str, Any] = Field(default_factory=dict)
     artifact_inputs: tuple[AgentArtifactInput, ...] = Field(default=(), max_length=1000)
+    # Internal execution contract, not a user-authored prompt or success verdict.
+    output_schema: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_artifact_inputs(self) -> "AgentRequest":

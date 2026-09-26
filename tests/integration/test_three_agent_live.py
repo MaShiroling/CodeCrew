@@ -32,12 +32,15 @@ async def test_live_three_agent_success_path(tmp_path):
 async def run_live_three_agent_scenario(tmp_path, *, scenario="success"):
     expected_turns = {"success": 5, "rework_success": 7, "rework_exhaustion": 9}[scenario]
     # Explicit shell environment only; never load credentials or test settings from .env.
-    planner_timeout = Settings(_env_file=None).planner_timeout_seconds
+    settings = Settings(_env_file=None)
+    planner_timeout = settings.planner_timeout_seconds
     run_options = {}
     if scenario != "success":
         run_options["scenario"] = scenario
     if planner_timeout is not None:
         run_options["planner_timeout_seconds"] = planner_timeout
+    if settings.reviewer_structured_output:
+        run_options["reviewer_structured_output"] = True
     if platform.system() != "Darwin":
         pytest.fail("three Agent live smoke requires macOS Seatbelt")
     for name in ("codex", "kimi", "claude"):

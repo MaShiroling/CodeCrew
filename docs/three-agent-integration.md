@@ -414,9 +414,49 @@ Codex `0.155.0-alpha.9.2` 支持逐次 `-c` 配置，旧 `responses_websockets` 
 `model_providers.<id>.supports_websockets`，但当前 ChatGPT 登录路径的实际生效行为
 尚未验证；本阶段不接入猜测性的传输开关，不修改全局配置、登录或代理。
 
-## 后续子步骤（尚未完成）
+## 原生 Reviewer 结构化输出（显式选择，在线兼容性待验收）
 
-4. 返工与预算：验证明确拒绝、问题 ID 延续、修复再审以及最多两轮后的人工接管。
+为处理两轮耗尽测试中 Reviewer 错置括号导致的 JSON 错误，提供
+`CODECREW_REVIEWER_STRUCTURED_OUTPUT=true`（默认 false）：
+
+- 服务的 `Settings` 和三 Agent 在线夹具接线一致；在线夹具只读 shell 环境，不读 `.env`。
+- 仅 Reviewer 请求携带从 `AgentChatTurn.model_json_schema()` 生成的契约；Claude CLI
+  使用 `--json-schema`，角色、独立会话、只读工具及权限检查不变。
+- 原生模式只接受 CLI 最终 `structured_output` 对象，仍经本地 Pydantic、角色、
+  报告来源、问题 ID 与完成守卫校验。缺失、字符串或无效对象均失败，不采用备用
+  `result` 文本；输入不 ACK，原始文本和结构化对象均留存为诊断证据。
+  原生 JSONL 的重复键、非 JSON 常量及非对象事件同样拒绝，后续有效结果不能掩盖错误。
+- 子进程固定 `MAX_STRUCTURED_OUTPUT_RETRIES=1`，不修改父进程环境。
+  [官方环境变量文档](https://code.claude.com/docs/en/env-vars)说明该值计算总尝试次数，
+  默认 5 包含首次和最多四次纠错，因此 1 才是单次尝试。文件读取等正常工具交互
+  仍可能产生多次模型请求，不能把一个 Agent 回合等同于一次 API 请求。
+- [官方无头运行文档](https://code.claude.com/docs/en/headless)定义最终
+  `structured_output` 字段；[结构化输出文档](https://code.claude.com/docs/en/agent-sdk/structured-outputs)
+  支持 Pydantic Schema 和校验失败子类型。CLI 非零退出或 `error_*` 子类型均视为失败。
+  这不是对 DeepSeek 提供商严格约束解码的保证。
+- 格式化工具 `StructuredOutput` 仍留在规范化工具审计流；仅在原生模式且其输入
+  与最终结构化对象完全相等时，受控夹具将其视为格式化事件。它不能代替实际证据
+  `Read`，其他额外工具继续拒绝。这条路径已离线模拟测试，实际事件形态待在线核验。
+- 本机 Claude Code 2.1.246 的 `--help` 已确认支持该参数；旧 CLI 或不兼容提供商
+  失败时不会静默回退。原生格式约束不取代 OS 沙箱或隐藏测试保密。
+- 普通文本路径也改为保留 JSON 语法错误在原始响应中的行、列和字符偏移，包含
+  有说明/代码块的包装；不输出敏感正文片段、不自动修补、不额外重试。
+
+可显式验收原生模式下两轮耗尽（最多 9 个真实 Agent 回合，会消耗额度）：
+
+```bash
+CODECREW_PLANNER_TIMEOUT_SECONDS=360 CODECREW_REVIEWER_STRUCTURED_OUTPUT=1 \
+  CODECREW_RUN_THREE_AGENT_BUDGET_LIVE=1 \
+  .venv/bin/pytest -q -s tests/integration/test_three_agent_rework_live.py::test_live_three_agent_rework_budget_exhaustion
+```
+
+单轮返工成功 `5bb1332e-666f-4d34-8a0a-57998df8c43f` 已通过旧文本路径验收；
+本次两轮耗尽失败 `bf0b59b8-6e00-4ab6-a755-c53993f244bc` 未触发返工，不能当作
+耗尽成功。原生模式在线结果尚未取得，不自动执行上述命令或修改历史归档。
+
+## 后续子步骤
+
+4. 返工与预算：一次返工成功已验收；仍需验收原生输出兼容性及最多两轮后的人工接管。
 5. UI 演示与验收记录：从页面发起任务，展示聊天、证据、Patch 和报告，记录异常与限制。
 
 ## 开始在线联调前的边界
@@ -430,4 +470,5 @@ Codex `0.155.0-alpha.9.2` 支持逐次 `-c` 配置，旧 `responses_websockets` 
   本轮 Artifact 添加逐文件只读例外，未共享文件和整个 Artifact 根目录都不授权。
 - Reviewer 的工具只读配置不是 OS 级只读沙箱；真实远端版本仍未确认。
   `kimi-for-coding` 别名不能当作 K3 版本证据，缺失 Token 统计不能记为零。
-- 本步未在线验收这个团队配置；不要将启动成功或协议测试通过称为三模型任务成功。
+- 受控三 Agent 成功路径及一次返工已在线验收；原生 Schema、两轮耗尽和正式质量评测
+  尚未完成。不要将启动成功或协议测试通过称为三模型任务成功。

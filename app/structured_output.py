@@ -36,6 +36,14 @@ def _validate_prose(outside: str) -> None:
         raise json.JSONDecodeError("additional JSON candidate in wrapper", outside, 0)
 
 
+def _load_at(text: str, start: int, end: int | None = None) -> Any:
+    """Keep syntax error coordinates relative to the unmodified response."""
+    try:
+        return _load_json(text[start:end])
+    except json.JSONDecodeError as exc:
+        raise json.JSONDecodeError(exc.msg, text, start + exc.pos) from exc
+
+
 def parse_json_response(text: str, *, allow_surrounding_prose: bool = False) -> Any:
     """Accept raw JSON, an explicit JSON fence, or opted-in trailing objects.
 
@@ -46,11 +54,15 @@ def parse_json_response(text: str, *, allow_surrounding_prose: bool = False) -> 
     """
     try:
         return _load_json(text)
-    except json.JSONDecodeError:
-        pass
-    fenced = re.fullmatch(r"```json[ \t]*\r?\n(.*?)\r?\n```", text.strip(), re.DOTALL)
+    except json.JSONDecodeError as exc:
+        raw_error = exc
+    fenced = re.fullmatch(r"\s*```json[ \t]*\r?\n(.*?)\r?\n```\s*", text, re.DOTALL)
     if not allow_surrounding_prose:
-        return _load_json(fenced.group(1) if fenced is not None else text)
+        if fenced is not None:
+            return _load_at(text, fenced.start(1), fenced.end(1))
+        raise raw_error
+    if text.lstrip().startswith(("{", "[")):
+        raise raw_error
 
     lines = text.splitlines(keepends=True)
     markers = [
@@ -64,9 +76,9 @@ def parse_json_response(text: str, *, allow_surrounding_prose: bool = False) -> 
             raise json.JSONDecodeError("expected a complete trailing JSON object", text, 0)
         prefix = text[: candidate.start()]
         if not prefix.strip():
-            raise json.JSONDecodeError("invalid raw JSON object", text, 0)
+            raise raw_error
         _validate_prose(prefix)
-        payload = _load_json(text[candidate.start() :])
+        payload = _load_at(text, candidate.start())
         if not isinstance(payload, dict):
             raise json.JSONDecodeError("expected trailing JSON object", text, candidate.start())
         return payload
@@ -77,4 +89,4 @@ def parse_json_response(text: str, *, allow_surrounding_prose: bool = False) -> 
         raise json.JSONDecodeError("invalid JSON code block delimiters", text, 0)
     outside = "".join(lines[:start] + lines[end + 1 :])
     _validate_prose(outside)
-    return _load_json("".join(lines[start + 1 : end]))
+    return _load_at(text, len("".join(lines[:start + 1])), len("".join(lines[:end])))

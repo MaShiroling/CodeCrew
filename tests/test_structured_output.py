@@ -93,3 +93,27 @@ def test_trailing_object_may_be_multiline_and_preserves_string_content():
     payload = {"actions": [{"action": "finish_turn", "content": "text {not JSON} [1]"}]}
     text = "已阅读 Plan v1，等待澄清。\n" + json.dumps(payload, indent=2)
     assert parse_json_response(text, allow_surrounding_prose=True) == payload
+
+
+@pytest.mark.parametrize("wrapper", ["{}", "说明\n{}", "说明\n```json\n{}\n```", "  ```json\n{}\n```  "])
+def test_syntax_error_coordinates_refer_to_original_response(wrapper):
+    malformed = '{"actions": [{"content": "中文"}, "artifact_content": {}]}'
+    text = wrapper.format(malformed)
+    with pytest.raises(json.JSONDecodeError) as direct:
+        json.loads(malformed)
+    with pytest.raises(json.JSONDecodeError) as error:
+        parse_json_response(text, allow_surrounding_prose=True)
+    expected = text.index(malformed) + direct.value.pos
+    assert error.value.doc == text
+    assert error.value.msg == direct.value.msg
+    assert error.value.pos == expected
+    assert error.value.lineno == text[:expected].count("\n") + 1
+    assert error.value.colno == expected - text.rfind("\n", 0, expected)
+
+
+def test_strict_fence_also_preserves_original_coordinates():
+    text = ' \n```json\n{"value": }\n```\n'
+    with pytest.raises(json.JSONDecodeError) as error:
+        parse_json_response(text)
+    assert error.value.doc == text
+    assert error.value.pos == text.index("}")

@@ -51,10 +51,12 @@ class _EvidenceTurnRunner(AgentTurnRunner):
     def __init__(
         self, fixture: HandoffFixture, *, rework_pairs=0, inject_count=0,
         planner_timeout_seconds: int | None = None,
+        reviewer_structured_output: bool = False,
     ) -> None:
         super().__init__(
             fixture.runner.registry, fixture.router, timeout_seconds=180,
             planner_timeout_seconds=planner_timeout_seconds,
+            reviewer_structured_output=reviewer_structured_output,
         )
         self.fixture = fixture
         self.original = _source_hashes(fixture.handle.repository_root)
@@ -121,7 +123,16 @@ class _EvidenceTurnRunner(AgentTurnRunner):
                 raise WorkflowExecutionError("Reviewer reused a prior native session")
             self.reviewer_sessions.add(turn.session.native_session_id)
             calls = [event.data for event in turn.events if event.type is AgentEventType.TOOL_CALL]
-            if any(call.get("name") not in {"Read", "Glob", "Grep"} for call in calls):
+            # Keep formatter invocations in the audit stream. They are not file reads
+            # and cannot substitute for the mandatory evidence Read calls below.
+            def allowed_call(call):
+                return call.get("name") in {"Read", "Glob", "Grep"} or (
+                    self.reviewer_structured_output
+                    and call.get("name") == "StructuredOutput"
+                    and call.get("input") == turn.agent_result.output.get("structured_output")
+                )
+
+            if any(not allowed_call(call) for call in calls):
                 raise WorkflowExecutionError("Reviewer attempted an unapproved tool")
             paths = set()
             for call in calls:
@@ -199,6 +210,7 @@ class ThreeAgentResult:
 
 async def run_three_agent(
     fixture: HandoffFixture, *, scenario="success", planner_timeout_seconds: int | None = None,
+    reviewer_structured_output: bool = False,
 ) -> ThreeAgentResult:
     """Run all roles via production directives; never set task success manually."""
     if MemberRole.REVIEWER not in fixture.agent_names:
@@ -218,6 +230,8 @@ async def run_three_agent(
             "implementer_timeout_seconds": 180, "reviewer_timeout_seconds": 180,
             "max_agent_turns": max_turns, "max_agent_duration_ms": duration_budget_ms,
             "transport": "cli-default", "automatic_workflow_retries": 0,
+            "reviewer_structured_output": reviewer_structured_output,
+            "structured_output_max_attempts": 1 if reviewer_structured_output else None,
         },
         task_id=fixture.task.id, trace_id=fixture.task.trace_id, type=ArtifactType.GENERIC,
         created_by="three-agent-smoke", filename="smoke-runtime-policy.json",
@@ -235,6 +249,7 @@ async def run_three_agent(
     fixture.runner = _EvidenceTurnRunner(
         fixture, rework_pairs=rework_pairs, inject_count=inject_count,
         planner_timeout_seconds=planner_timeout_seconds,
+        reviewer_structured_output=reviewer_structured_output,
     )
     rework_budget = 2 if rework_pairs else 0
     controller = WorkflowController(fixture.runner.rooms, max_rework_rounds=rework_budget)

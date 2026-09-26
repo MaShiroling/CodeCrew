@@ -102,6 +102,7 @@ class AgentTurnRunner:
         *,
         timeout_seconds: int = 900,
         planner_timeout_seconds: int | None = None,
+        reviewer_structured_output: bool = False,
         pending_limit: int = 20,
         personas: TeamPersonaCatalog | None = None,
     ) -> None:
@@ -115,6 +116,7 @@ class AgentTurnRunner:
         self.artifacts: ArtifactStore = router.artifacts
         self.timeout_seconds = timeout_seconds
         self.planner_timeout_seconds = validate_planner_timeout(planner_timeout_seconds)
+        self.reviewer_structured_output = reviewer_structured_output
         self.pending_limit = pending_limit
         self.personas = personas or default_team_personas()
 
@@ -156,6 +158,10 @@ class AgentTurnRunner:
             timeout_seconds=self.timeout_for_role(member.role),
             resume_from_session_id=resume_native_session_id,
             artifact_inputs=inputs,
+            output_schema=(
+                AgentChatTurn.model_json_schema()
+                if self.reviewer_structured_output and member.role is MemberRole.REVIEWER else None
+            ),
             metadata={
                 "room_id": str(room_id),
                 "member_id": str(member_id),
@@ -249,7 +255,9 @@ class AgentTurnRunner:
             await asyncio.to_thread(verify_artifact_files, inputs)
         except AgentAdapterError as exc:
             raise AgentTurnError("agent input Artifact changed during the turn") from exc
-        turn = parse_agent_chat_turn(result.output)
+        turn = parse_agent_chat_turn(
+            result.output, require_structured_output=request.output_schema is not None,
+        )
         routed = self._route_actions(task, member_id, incoming, turn)
         for item in incoming:
             self.rooms.acknowledge(item.message.message_id, recipient_id=member_id)

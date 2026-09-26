@@ -90,6 +90,74 @@ def json_chunk(payload: dict[str, Any]) -> ProcessChunk:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("deepseek", [False, True])
+async def test_native_schema_and_single_attempt_are_child_only(monkeypatch, deepseek):
+    from app.team.actions import AgentChatTurn
+
+    monkeypatch.setenv("MAX_STRUCTURED_OUTPUT_RETRIES", "9")
+    native = {"actions": [{"action": "finish_turn"}]}
+    process = StubProcess(
+        [json_chunk({"type": "result", "subtype": "success", "structured_output": native, "result": "raw diagnostic"})],
+        ProcessResult(exit_code=0, duration_ms=1),
+    )
+    runner = StubRunner(process)
+    adapter = (
+        DeepSeekClaudeReviewerAdapter(runner=runner, env_source={"DEEPSEEK_API_KEY": "test-only", "MAX_STRUCTURED_OUTPUT_RETRIES": "9"})
+        if deepseek else ClaudeCodeAdapter(runner=runner)
+    )
+    schema = AgentChatTurn.model_json_schema()
+    session = await adapter.start(make_request(role=AgentRole.REVIEWER, output_schema=schema))
+    result = await adapter.wait(session.session_id)
+    call = runner.calls[0]
+    assert json.loads(call["argv"][call["argv"].index("--json-schema") + 1]) == schema
+    assert schema["additionalProperties"] is False
+    assert call["env"]["MAX_STRUCTURED_OUTPUT_RETRIES"] == "1"
+    assert "--tools=Read,Glob,Grep" in call["argv"]
+    assert result.output == {"structured_output": native, "result": "raw diagnostic"}
+    import os
+
+    assert os.environ["MAX_STRUCTURED_OUTPUT_RETRIES"] == "9"
+    assert len(runner.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_native_schema_exhaustion_fails_even_with_zero_exit_and_no_error_flag():
+    runner = StubRunner(StubProcess(
+        [json_chunk({"type": "result", "subtype": "error_max_structured_output_retries"})],
+        ProcessResult(exit_code=0, duration_ms=1),
+    ))
+    adapter = ClaudeCodeAdapter(runner=runner)
+    session = await adapter.start(make_request(output_schema={"type": "object"}))
+    result = await adapter.wait(session.session_id)
+    assert result.reason is AgentExitReason.FAILED
+    assert result.error == "error_max_structured_output_retries"
+    assert len(runner.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("raw", [
+    '{"type":"result","structured_output":{"actions":[],"actions":[]}}',
+    '{"type":"result","structured_output":{"cost":NaN}}',
+    '[]',
+])
+async def test_native_jsonl_ambiguity_cannot_be_hidden_by_later_valid_result(raw):
+    runner = StubRunner(StubProcess(
+        [ProcessChunk(ProcessStream.STDOUT, raw + "\n"), json_chunk({
+            "type": "result", "structured_output": {"actions": [{"action": "finish_turn"}]},
+        })],
+        ProcessResult(exit_code=0, duration_ms=1),
+    ))
+    adapter = ClaudeCodeAdapter(runner=runner)
+    session = await adapter.start(make_request(output_schema={"type": "object"}))
+    events = [event async for event in adapter.stream(session.session_id)]
+    result = await adapter.wait(session.session_id)
+    assert result.reason is AgentExitReason.FAILED
+    assert "structured-output" in result.error
+    assert any(event.text == raw + "\n" for event in events)
+    assert len(runner.calls) == 1
+
+
+@pytest.mark.asyncio
 async def test_maps_claude_stream_and_result() -> None:
     native_session_id = str(uuid4())
     process = StubProcess(

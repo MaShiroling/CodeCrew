@@ -20,6 +20,33 @@ def recipient() -> MessageRecipient:
     return MessageRecipient(kind=RecipientKind.ROLE, role=MemberRole.PLANNER)
 
 
+def test_native_contract_uses_only_structured_object():
+    turn = {"actions": [{"action": "finish_turn"}]}
+    parsed = parse_agent_chat_turn(
+        {"structured_output": turn, "result": "malformed { JSON"}, require_structured_output=True,
+    )
+    assert parsed.actions[-1].action is ChatActionType.FINISH_TURN
+
+
+@pytest.mark.parametrize("native", [None, "{}", [], {"actions": []}, {"actions": [{"action": "finish_turn"}], "unknown": 1}])
+def test_native_contract_never_falls_back_to_valid_text(native):
+    with pytest.raises(ChatActionError):
+        parse_agent_chat_turn(
+            {"structured_output": native, "result": '{"actions":[{"action":"finish_turn"}]}'},
+            require_structured_output=True,
+        )
+
+
+def test_chat_syntax_error_reports_actual_location_without_echoing_output():
+    text = '{"actions": [{"content": "private"}, "artifact_content": {}]}'
+    with pytest.raises(ChatActionError) as error:
+        parse_agent_chat_turn({"result": text})
+    cause = error.value.__cause__
+    assert isinstance(cause, json.JSONDecodeError)
+    assert f"offset {cause.pos}" in str(error.value) and cause.pos > 0
+    assert "private" not in str(error.value)
+
+
 def test_parses_structured_and_json_text_turns() -> None:
     payload = {
         "actions": [

@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -12,6 +12,7 @@ from app.recovery import EvidenceRecoveryService
 from app.storage import ArtifactStore, ArtifactType, SQLiteDatabase
 from app.storage.models import ARTIFACT_SUMMARY_TRUNCATION_MARKER
 from app.team import AgentTurnError, MemberRole, MessageType, WorkflowExecutionError
+from app.team.actions import ChatActionError
 from app.trace import TraceEventType, TraceStore
 from scripts.planner_kimi_smoke import FIXED_SOURCE, handoff_fixture
 from scripts.smoke_evidence import archive_smoke_evidence
@@ -60,12 +61,13 @@ class ReworkKimiRunner(KimiProcessRunner):
 
 
 class ReworkReviewerRunner(ReviewerProcessRunner):
-    def __init__(self, *, drop_prior=False, false_approve=False, long_summary=None):
+    def __init__(self, *, drop_prior=False, false_approve=False, long_summary=None, native=False):
         super().__init__()
         self.issue_id = str(uuid4())
         self.drop_prior = drop_prior
         self.false_approve = false_approve
         self.long_summary = long_summary
+        self.native = native
 
     async def start(self, argv, **options):
         evidence = messages(argv[-1])[-1]["artifacts"]
@@ -96,11 +98,63 @@ class ReworkReviewerRunner(ReviewerProcessRunner):
             ]
         )
         result["result"] = json.dumps(turn)
+        if self.native:
+            from app.team.actions import AgentChatTurn
+
+            assert json.loads(argv[argv.index("--json-schema") + 1]) == AgentChatTurn.model_json_schema()
+            assert options["env"]["MAX_STRUCTURED_OUTPUT_RETRIES"] == "1"
+            result["structured_output"] = turn
+            # The text result is NOT a fallback source or a semantic repair target.
+            result["result"] = '{"malformed": '
+            process.events.insert(-1, {
+                "type": "assistant", "message": {"content": [{
+                    "type": "tool_use", "name": "StructuredOutput", "input": turn,
+                }]},
+            })
         return process
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("response_style", ["raw", "bare_tail"])
+@pytest.mark.parametrize("invalid", [None, "json-text", "unknown-field"])
+async def test_invalid_native_review_is_not_acked_or_retried(tmp_path, invalid):
+    class InvalidNativeReviewer(ReworkReviewerRunner):
+        async def start(self, argv, **options):
+            process = await super().start(argv, **options)
+            result = process.events[-1]
+            valid = result["structured_output"]
+            result["result"] = json.dumps(valid)  # Valid fallback must NOT be used.
+            self.raw_result = result["result"]
+            result["structured_output"] = (
+                {**valid, "unknown": True} if invalid == "unknown-field" else invalid
+            )
+            return process
+
+    reviewer = InvalidNativeReviewer(native=True)
+    async with handoff_fixture(
+        tmp_path, CodexCliAdapter(runner=PlannerProcessRunner()), factory(ReworkKimiRunner()),
+        reviewer=reviewer_adapter(reviewer),
+    ) as fixture:
+        with pytest.raises(ChatActionError):
+            await run_three_agent(fixture, reviewer_structured_output=True)
+        assert fixture.task.state is TaskState.REVIEWING
+        assert len(reviewer.calls) == 1
+        assert fixture.runner.rooms.pending_for(fixture.members[MemberRole.REVIEWER].member_id)
+        assert not fixture.router.trace_store.list(
+            trace_id=fixture.task.trace_id, type=TraceEventType.COMPLETION_DECIDED,
+        )
+        outputs = fixture.router.trace_store.list(
+            trace_id=fixture.task.trace_id, type=TraceEventType.AGENT_OUTPUT_RECORDED,
+        )
+        saved = fixture.store.read_json(UUID(outputs[-1].event.payload["artifact_id"]))
+        assert saved["output"]["result"] == reviewer.raw_result
+        assert saved["output"]["structured_output"] == (
+            {**json.loads(reviewer.raw_result), "unknown": True}
+            if invalid == "unknown-field" else invalid
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response_style", ["raw", "bare_tail", "native"])
 @pytest.mark.parametrize(
     "scenario,turns,rounds,reviews",
     [
@@ -112,15 +166,17 @@ async def test_rework_and_two_round_escalation_use_production_controller(
     tmp_path, scenario, turns, rounds, reviews, response_style
 ):
     planner = PlannerProcessRunner()
-    kimi = ReworkKimiRunner(response_style=response_style)
-    reviewer = ReworkReviewerRunner()
+    kimi = ReworkKimiRunner(response_style="raw" if response_style == "native" else response_style)
+    reviewer = ReworkReviewerRunner(native=response_style == "native")
     async with handoff_fixture(
         tmp_path,
         CodexCliAdapter(runner=planner),
         factory(kimi),
         reviewer=reviewer_adapter(reviewer),
     ) as fixture:
-        result = await run_three_agent(fixture, scenario=scenario)
+        result = await run_three_agent(
+            fixture, scenario=scenario, reviewer_structured_output=response_style == "native",
+        )
         assert fixture.task.rework_rounds == rounds
         assert len(result.workflow.agent_turns) == turns
         assert len(planner.calls) == 2 and len(kimi.calls) == 2 + rounds
@@ -183,8 +239,41 @@ async def test_rework_and_two_round_escalation_use_production_controller(
 
 
 @pytest.mark.asyncio
-async def test_false_approval_of_injected_fault_stops_before_another_paid_turn(tmp_path):
-    kimi, reviewer = ReworkKimiRunner(), ReworkReviewerRunner(false_approve=True)
+@pytest.mark.parametrize("mode,error", [
+    ("extra_tool", "unapproved tool"), ("wrong_formatter", "unapproved tool"),
+    ("missing_reads", "visibly read"),
+])
+async def test_native_formatter_does_not_relax_evidence_or_tool_checks(tmp_path, mode, error):
+    class UnsafeNativeReviewer(ReworkReviewerRunner):
+        async def start(self, argv, **options):
+            process = await super().start(argv, **options)
+            formatter = process.events[-2]
+            if mode == "extra_tool":
+                formatter["message"]["content"][0]["name"] = "Bash"
+            elif mode == "wrong_formatter":
+                formatter["message"]["content"][0]["input"] = {"different": True}
+            else:
+                process.events = [process.events[0], formatter, process.events[-1]]
+            return process
+
+    reviewer = UnsafeNativeReviewer(native=True)
+    async with handoff_fixture(
+        tmp_path, CodexCliAdapter(runner=PlannerProcessRunner()), factory(ReworkKimiRunner()),
+        reviewer=reviewer_adapter(reviewer),
+    ) as fixture:
+        with pytest.raises(WorkflowExecutionError, match=error):
+            await run_three_agent(fixture, reviewer_structured_output=True)
+        assert fixture.task.state is TaskState.REVIEWING
+        assert len(reviewer.calls) == 1
+        assert not fixture.router.trace_store.list(
+            trace_id=fixture.task.trace_id, type=TraceEventType.COMPLETION_DECIDED,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+async def test_false_approval_of_injected_fault_stops_before_another_paid_turn(tmp_path, native):
+    kimi, reviewer = ReworkKimiRunner(), ReworkReviewerRunner(false_approve=True, native=native)
     async with handoff_fixture(
         tmp_path,
         CodexCliAdapter(runner=PlannerProcessRunner()),
@@ -192,7 +281,7 @@ async def test_false_approval_of_injected_fault_stops_before_another_paid_turn(t
         reviewer=reviewer_adapter(reviewer),
     ) as fixture:
         with pytest.raises(WorkflowExecutionError, match="did not reject"):
-            await run_three_agent(fixture, scenario="rework_success")
+            await run_three_agent(fixture, scenario="rework_success", reviewer_structured_output=native)
         assert fixture.task.state is TaskState.REVIEWING
         assert len(kimi.calls) == 2 and len(reviewer.calls) == 1
         assert not fixture.router.trace_store.list(

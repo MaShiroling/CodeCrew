@@ -13,7 +13,7 @@ Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不
 > Coordinator 和跨进程崩溃恢复测试已完成。阶段七已打通任务 API、SSE、
 > 显式配置的本地 CLI 服务入口与 Fake Agent 端到端验证；三位成员的人格资料与
 > 团队原则已接入 Agent 回合；本地任务工作台已可创建和取消任务。UI 人工干预、
-> 三真实 Agent 的受控成功夹具已通过；真实返工/预算、UI 真实团队验收和正式评测集
+> 三真实 Agent 的受控成功及一次返工成功夹具已通过；真实两轮预算耗尽、UI 真实团队验收和正式评测集
 > 尚未完成。最新验证状态见
 > [项目状态与后续路线](docs/project-status.md)。
 
@@ -316,11 +316,11 @@ Code CLI（仅限 macOS，并需在 shell 环境提供新的 Kimi Code **会员*
 
 白金/Codex、月见/Kimi、鲸鲸/DeepSeek 的显式团队示例见
 [`examples/server-config.codecrew-team.python.json`](examples/server-config.codecrew-team.python.json)。
-它已通过聊天运行时的离线协议预检，尚未通过三真实 Agent 端到端验收。
+它已通过聊天运行时的离线协议预检及受控三真实 Agent 成功路径验收。
 已实现 Kimi 对本轮 Artifact 的逐文件只读授权，并通过 Plan → 澄清 → Plan v2 → 修改的
 离线联调；用户本机已通过 4 回合真实 Planner → Implementer 交接与 Verifier 验收。
 5 回合 Planner → Implementer → Verifier → 独立 Reviewer → CompletionGuard
-用例已实现并通过离线模拟回归，三模型在线成功路径仍待显式启用验收。
+用例已通过离线回归和用户本机在线验收，一次返工成功也已通过；两轮耗尽仍待验收。
 5 个子步骤、预检命令及权限边界见[三 Agent 联调说明](docs/three-agent-integration.md)。
 聊天室已加入受控输出归一化：允许外围说明中的唯一 JSON 代码块，或说明后从新行
 开始、后面仅含空白的唯一完整尾部 JSON 对象；歧义回复仍拒绝，
@@ -340,6 +340,7 @@ Code CLI（仅限 macOS，并需在 shell 环境提供新的 Kimi Code **会员*
 | `CODECREW_MAX_REWORK_ROUNDS` | 最大返工轮数 |
 | `CODECREW_AGENT_TIMEOUT_SECONDS` | Agent 默认超时 |
 | `CODECREW_PLANNER_TIMEOUT_SECONDS` | 可选 Planner 专用超时，1～900 秒；未设置时继承执行器默认值 |
+| `CODECREW_REVIEWER_STRUCTURED_OUTPUT` | 默认 false；显式启用 Claude CLI 原生 Reviewer Schema，单次尝试、无文本回退，DeepSeek 在线兼容性待验收 |
 | `CODECREW_CLAUDE_CLI_PATH` | Claude Code 可执行文件 |
 | `CODECREW_CODEX_CLI_PATH` | Codex CLI 可执行文件 |
 

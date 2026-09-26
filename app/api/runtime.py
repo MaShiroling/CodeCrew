@@ -108,7 +108,8 @@ def build_task_runtime(
     router = ConversationRouter(rooms, artifacts, traces)
     turns = AgentTurnRunner(
         registry, router, timeout_seconds=settings.agent_timeout_seconds,
-        planner_timeout_seconds=settings.planner_timeout_seconds, personas=catalog
+        planner_timeout_seconds=settings.planner_timeout_seconds, personas=catalog,
+        reviewer_structured_output=settings.reviewer_structured_output,
     )
     verifier = Verifier(
         artifacts,

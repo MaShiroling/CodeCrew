@@ -54,6 +54,7 @@ def test_configured_app_lifespan_initializes_task_api(tmp_path: Path) -> None:
             worktree_root=tmp_path / "worktrees",
             agent_timeout_seconds=180,
             planner_timeout_seconds=360,
+            reviewer_structured_output=True,
         ),
         registry=registry,
         agent_names=names,
@@ -66,6 +67,7 @@ def test_configured_app_lifespan_initializes_task_api(tmp_path: Path) -> None:
     turns = runtime.service.event_loop.executor.turns
     assert turns.timeout_for_role(MemberRole.PLANNER) == 360
     assert turns.timeout_for_role(MemberRole.IMPLEMENTER) == 180
+    assert turns.reviewer_structured_output is True
     with TestClient(create_app(runtime=runtime)) as client:
         response = client.get("/api/v1/tasks")
         assert response.status_code == 200

@@ -114,9 +114,13 @@ class AgentChatTurn(BaseModel):
         return self
 
 
-def parse_agent_chat_turn(output: dict[str, Any]) -> AgentChatTurn:
-    candidate: Any = output.get("turn")
-    if candidate is None and "actions" in output:
+def parse_agent_chat_turn(
+    output: dict[str, Any], *, require_structured_output: bool = False,
+) -> AgentChatTurn:
+    candidate: Any = output.get("structured_output") if require_structured_output else output.get("turn")
+    if require_structured_output and not isinstance(candidate, dict):
+        raise ChatActionError("agent output requires a native structured_output object")
+    if not require_structured_output and candidate is None and "actions" in output:
         candidate = output
     if candidate is None:
         candidate = output.get("result", output.get("message"))
@@ -124,7 +128,10 @@ def parse_agent_chat_turn(output: dict[str, Any]) -> AgentChatTurn:
         try:
             candidate = parse_json_response(candidate, allow_surrounding_prose=True)
         except json.JSONDecodeError as exc:
-            raise ChatActionError("agent chat output is not valid JSON") from exc
+            raise ChatActionError(
+                f"agent chat output is not valid JSON: {exc.msg} "
+                f"(line {exc.lineno}, column {exc.colno}, offset {exc.pos})"
+            ) from exc
     if not isinstance(candidate, dict):
         raise ChatActionError("agent output does not contain a chat turn object")
     try:

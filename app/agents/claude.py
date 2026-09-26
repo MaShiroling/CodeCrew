@@ -29,6 +29,7 @@ from app.agents.process import (
     ProcessStartError,
     ProcessStream,
 )
+from app.structured_output import parse_json_response
 
 
 class _ProcessRunner(Protocol):
@@ -54,6 +55,8 @@ class _ClaudeSessionState:
     stream_claimed: bool = False
     sequence: int = 0
     result_payload: dict[str, Any] | None = None
+    schema_requested: bool = False
+    protocol_error: str | None = None
 
 
 class ClaudeCodeAdapter(AgentAdapter):
@@ -109,13 +112,18 @@ class ClaudeCodeAdapter(AgentAdapter):
             role=request.role,
             status=AgentSessionStatus.RUNNING,
         )
-        state = _ClaudeSessionState(session=session, process=process)
+        state = _ClaudeSessionState(
+            session=session, process=process, schema_requested=request.output_schema is not None,
+        )
         self._sessions[session.session_id] = state
         state.completion = asyncio.create_task(self._consume(state))
         return session
 
     def build_process_env(self, request: AgentRequest) -> Mapping[str, str] | None:
         """Return a complete child environment, or inherit the parent by default."""
+        if request.output_schema is not None:
+            # Despite its name, this CLI setting counts total attempts, not retries.
+            return {**os.environ, "MAX_STRUCTURED_OUTPUT_RETRIES": "1"}
         return None
 
     def stream(self, session_id: UUID) -> AsyncIterator[AgentEvent]:
@@ -157,6 +165,8 @@ class ClaudeCodeAdapter(AgentAdapter):
             "plan",
             "--tools=Read,Glob,Grep",
         ]
+        if request.output_schema is not None:
+            command.extend(["--json-schema", json.dumps(request.output_schema, separators=(",", ":"))])
         if request.resume_from_session_id is not None:
             command.extend(["--resume", request.resume_from_session_id])
         command.append(request.prompt)
@@ -203,12 +213,16 @@ class ClaudeCodeAdapter(AgentAdapter):
         if not line:
             return
         try:
-            payload = json.loads(line)
+            payload = parse_json_response(line) if state.schema_requested else json.loads(line)
         except json.JSONDecodeError:
             self._emit(state, AgentEventType.STDOUT, text=chunk.text)
+            if state.schema_requested:
+                state.protocol_error = "Claude CLI returned invalid structured-output JSONL"
             return
         if not isinstance(payload, dict):
             self._emit(state, AgentEventType.STDOUT, text=chunk.text)
+            if state.schema_requested:
+                state.protocol_error = "Claude CLI returned a non-object structured-output event"
             return
 
         native_type = payload.get("type")
@@ -263,7 +277,7 @@ class ClaudeCodeAdapter(AgentAdapter):
         process_result: ProcessResult,
     ) -> AgentResult:
         payload = state.result_payload or {}
-        is_error = bool(payload.get("is_error"))
+        is_error = bool(payload.get("is_error")) or str(payload.get("subtype", "")).startswith("error_")
         if process_result.cancelled:
             reason = AgentExitReason.CANCELLED
             status = AgentSessionStatus.CANCELLED
@@ -272,7 +286,7 @@ class ClaudeCodeAdapter(AgentAdapter):
             reason = AgentExitReason.TIMED_OUT
             status = AgentSessionStatus.TIMED_OUT
             event_type = AgentEventType.FAILED
-        elif process_result.exit_code != 0 or is_error:
+        elif process_result.exit_code != 0 or is_error or state.protocol_error:
             reason = AgentExitReason.FAILED
             status = AgentSessionStatus.FAILED
             event_type = AgentEventType.FAILED
@@ -282,7 +296,10 @@ class ClaudeCodeAdapter(AgentAdapter):
             event_type = AgentEventType.COMPLETED
 
         state.session.status = status
-        error = self._result_error(payload) if reason is AgentExitReason.FAILED else None
+        error = (
+            state.protocol_error or self._result_error(payload)
+            if reason is AgentExitReason.FAILED else None
+        )
         self._emit(state, event_type, text=error)
         return AgentResult(
             session_id=state.session.session_id,
@@ -328,6 +345,8 @@ class ClaudeCodeAdapter(AgentAdapter):
         output: dict[str, Any] = {}
         if "result" in payload:
             output["result"] = payload["result"]
+        if "structured_output" in payload:
+            output["structured_output"] = payload["structured_output"]
         if "total_cost_usd" in payload:
             output["total_cost_usd"] = payload["total_cost_usd"]
         return output
@@ -335,7 +354,10 @@ class ClaudeCodeAdapter(AgentAdapter):
     @staticmethod
     def _result_error(payload: dict[str, Any]) -> str | None:
         result = payload.get("result")
-        return result if isinstance(result, str) and result else None
+        if isinstance(result, str) and result:
+            return result
+        subtype = payload.get("subtype")
+        return subtype if isinstance(subtype, str) and subtype.startswith("error_") else None
 
     @staticmethod
     def _token_usage(payload: dict[str, Any]) -> TokenUsage | None:
@@ -408,4 +430,6 @@ class DeepSeekClaudeReviewerAdapter(ClaudeCodeAdapter):
                 "CLAUDE_CODE_EFFORT_LEVEL": "max",
             }
         )
+        if request.output_schema is not None:
+            environment["MAX_STRUCTURED_OUTPUT_RETRIES"] = "1"
         return environment
