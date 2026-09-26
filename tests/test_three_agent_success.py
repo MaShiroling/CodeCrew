@@ -291,11 +291,11 @@ async def test_oversized_review_evidence_fails_before_launch(tmp_path, monkeypat
         ("forbidden_tool", WorkflowExecutionError, "unapproved tool"),
         ("write", WorkflowExecutionError, "changed the workspace"),
         ("tamper", AgentTurnError, "Artifact changed"),
-        ("high_issue", AgentTurnError, "high-priority"),
-        ("long_high_issue", AgentTurnError, "high-priority"),
-        ("bare_high_issue", AgentTurnError, "high-priority"),
+        ("high_issue", ChatActionError, "Reviewer output contract"),
+        ("long_high_issue", ChatActionError, "Reviewer output contract"),
+        ("bare_high_issue", ChatActionError, "Reviewer output contract"),
         ("ambiguous", ChatActionError, "not valid JSON"),
-        ("dual_sources", ChatActionError, "requires exactly one"),
+        ("dual_sources", ChatActionError, "Reviewer output contract"),
     ],
 )
 async def test_review_integrity_failures_cannot_complete(tmp_path, mode, error, message):

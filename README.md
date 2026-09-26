@@ -327,6 +327,9 @@ Code CLI（仅限 macOS，并需在 shell 环境提供新的 Kimi Code **会员*
 聊天室已加入受控输出归一化：允许外围说明中的唯一 JSON 代码块，或说明后从新行
 开始、后面仅含空白的唯一完整尾部 JSON 对象；歧义回复仍拒绝，
 原文留存到诊断 Artifact/Trace；动作权限和完成条件不变，也不增加自动模型重试。
+Reviewer 已统一提示词、CLI 原生参数与本地 Draft-07 校验契约：报告来源二选一、
+审批/返工只能交给 Orchestrator，问题字段必须显式填写；在路由和 ACK 前拒绝错误。
+该增强契约已通过离线测试，尚未完成真实提供商验收，详见联调说明。
 
 ## 配置
 
@@ -342,7 +345,7 @@ Code CLI（仅限 macOS，并需在 shell 环境提供新的 Kimi Code **会员*
 | `CODECREW_MAX_REWORK_ROUNDS` | 最大返工轮数 |
 | `CODECREW_AGENT_TIMEOUT_SECONDS` | Agent 默认超时 |
 | `CODECREW_PLANNER_TIMEOUT_SECONDS` | 可选 Planner 专用超时，1～900 秒；未设置时继承执行器默认值 |
-| `CODECREW_REVIEWER_STRUCTURED_OUTPUT` | 默认 false；显式启用 Claude CLI 原生 Reviewer Schema，单次尝试、无文本回退，DeepSeek 在线兼容性待验收 |
+| `CODECREW_REVIEWER_STRUCTURED_OUTPUT` | 默认 false；启用 Claude CLI 原生 Reviewer Schema，单次尝试、无文本回退；增强契约的在线兼容性待验收 |
 | `CODECREW_CLAUDE_CLI_PATH` | Claude Code 可执行文件 |
 | `CODECREW_CODEX_CLI_PATH` | Codex CLI 可执行文件 |
 

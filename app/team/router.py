@@ -336,6 +336,8 @@ class ConversationRouter:
             ):
                 raise ValueError("every review issue requires a stable issue_id")
             issues = tuple(ReviewIssue.model_validate(item) for item in raw_issues)
+            if len({issue.issue_id for issue in issues}) != len(issues):
+                raise ValueError("review issues must have unique issue IDs")
             if message.type is MessageType.REWORK_REQUEST and (
                 not issues or all(issue.resolved for issue in issues)
             ):

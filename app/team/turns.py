@@ -41,6 +41,7 @@ from app.team.models import (
     StoredChatMessage,
 )
 from app.team.personas import TeamPersonaCatalog, default_team_personas
+from app.team.reviewer_contract import reviewer_turn_schema
 from app.team.router import ConversationRouter
 from app.team.store import TeamRoomStore
 from app.trace import TraceActorKind, TraceEvent, TraceEventType
@@ -154,6 +155,7 @@ class AgentTurnRunner:
             raise AgentTurnError("agent has no pending room messages")
 
         inputs = await asyncio.to_thread(self._input_artifacts, task, incoming)
+        reviewer_schema = reviewer_turn_schema(room.members) if member.role is MemberRole.REVIEWER else None
         request = AgentRequest(
             task_id=task.id,
             trace_id=task.trace_id,
@@ -168,7 +170,7 @@ class AgentTurnRunner:
             resume_from_session_id=resume_native_session_id,
             artifact_inputs=inputs,
             output_schema=(
-                AgentChatTurn.model_json_schema()
+                reviewer_schema
                 if self.reviewer_structured_output and member.role is MemberRole.REVIEWER else None
             ),
             metadata={
@@ -267,6 +269,7 @@ class AgentTurnRunner:
             raise AgentTurnError("agent input Artifact changed during the turn") from exc
         turn = parse_agent_chat_turn(
             result.output, require_structured_output=request.output_schema is not None,
+            output_schema=reviewer_schema,
         )
         if clarification_only:
             recipient = turn.actions[0].recipient
@@ -492,10 +495,12 @@ class AgentTurnRunner:
                 try:
                     issues = tuple(
                         ReviewIssue.model_validate(item)
-                        for item in action.artifact_content.get("issues", [])
+                        for item in action.artifact_content["issues"]
                     )
                 except (TypeError, ValueError) as exc:
                     raise AgentTurnError("review issues have invalid structure") from exc
+                if len({issue.issue_id for issue in issues}) != len(issues):
+                    raise AgentTurnError("review issues must have unique issue IDs")
                 verdict = (
                     ReviewVerdict.APPROVED
                     if action.action is ChatActionType.APPROVE_REVIEW
@@ -664,8 +669,13 @@ class AgentTurnRunner:
                 "ReviewReport, NOT a list of Plan, Diff, verification or log evidence you read. "
                 "Never supply both artifact_ids and artifact_content, or neither. "
                 "Describe supporting evidence in content; input references remain in New messages. "
-                "Each issue has issue_id (UUID), priority "
-                "(low, medium, high, critical), summary, and resolved. Rework requires an "
+                "For an existing report, supply exactly one ReviewReport ID. "
+                "The review content is a nonblank summary of at most 4000 characters. "
+                "Inline reports contain only the required issues array. Every issue must "
+                "explicitly supply a unique issue_id (UUID), priority "
+                "(low, medium, high, critical), a nonblank summary (at most 1000 characters), "
+                "and resolved (a JSON boolean, never a string). No default values are added. "
+                "Rework requires an "
                 "unresolved issue. Approval must carry forward prior issue IDs and cannot "
                 "include unresolved high or critical issues. Do not approve without evidence."
             ),
@@ -700,18 +710,7 @@ class AgentTurnRunner:
             )
         review_examples_prompt = ""
         if own_role is MemberRole.REVIEWER:
-            # Show the recommended new-report shape, not two alternative sources together.
-            schema = {
-                "actions": [
-                    {
-                        "action": "approve_review | request_rework",
-                        "recipient": {"kind": "role", "role": "orchestrator"},
-                        "content": "evidence-based review summary",
-                        "artifact_content": {"issues": []},
-                    },
-                    {"action": "finish_turn", "content": "Review ended; not task success"},
-                ]
-            }
+            # Show legal new-report examples, not both alternative sources together.
             review_examples = []
             for action, issues in (
                 ("approve_review", []),
@@ -745,6 +744,9 @@ class AgentTurnRunner:
                 "generate UUIDs for new issues and retain prior IDs for existing issues):\n"
                 f"{json.dumps(review_examples, ensure_ascii=False)}\n\n"
             )
+            # The exact same wire schema is sent to the native formatter and
+            # validated locally, including the explicit report-source rule.
+            schema = reviewer_turn_schema(members)
         return (
             "You are participating in a controlled CodeCrew task room. "
             "The original Issue, role permissions, verification plan, and CompletionGuard "

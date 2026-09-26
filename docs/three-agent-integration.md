@@ -449,7 +449,7 @@ Kimi 非零退出时识别已观察到的 `loop.max_steps_exceeded`，不再只�
 `CODECREW_REVIEWER_STRUCTURED_OUTPUT=true`（默认 false）：
 
 - 服务的 `Settings` 和三 Agent 在线夹具接线一致；在线夹具只读 shell 环境，不读 `.env`。
-- 仅 Reviewer 请求携带从 `AgentChatTurn.model_json_schema()` 生成的契约；Claude CLI
+- 仅 Reviewer 原生请求携带 `reviewer_turn_schema(room.members)` 生成的契约；Claude CLI
   使用 `--json-schema`，角色、独立会话、只读工具及权限检查不变。
 - 原生模式只接受 CLI 最终 `structured_output` 对象，仍经本地 Pydantic、角色、
   报告来源、问题 ID 与完成守卫校验。缺失、字符串或无效对象均失败，不采用备用
@@ -481,7 +481,40 @@ CODECREW_PLANNER_TIMEOUT_SECONDS=360 CODECREW_REVIEWER_STRUCTURED_OUTPUT=1 \
 
 单轮返工成功 `5bb1332e-666f-4d34-8a0a-57998df8c43f` 已通过旧文本路径验收；
 本次两轮耗尽失败 `bf0b59b8-6e00-4ab6-a755-c53993f244bc` 未触发返工，不能当作
-耗尽成功。原生模式在线结果尚未取得，不自动执行上述命令或修改历史归档。
+耗尽成功。以下记录更新了原生通道的在线观察，不修改历史归档。
+
+最新在线尝试 `6613fe69-be35-4282-b10e-9f5afcb5b276` 已走通首个只读澄清回合，
+并观察到 Reviewer 的 `StructuredOutput` 工具及最终 `structured_output` 对象。
+但 `request_rework` 同时遗漏了 `artifact_content` 和 `artifact_ids`，被本地校验拒绝；
+仍为 `reviewing`、返工 0 轮。40 个 Artifact 与数据库哈希已只读核验。
+这证明原生通道可用，不证明语义契约通过或预算耗尽成功。
+
+### Reviewer 统一契约（离线实现，2026-09-27）
+
+先前 Pydantic 的 `model_validator` 不会自动进入生成的 JSON Schema，因此 CLI
+允许遗漏报告来源，而本地拒绝同一输出。现在以独立的 Draft-07 文档统一以下入口：
+
+- Reviewer 提示词的 `Action schema`、CLI 的 `--json-schema` 与本地解析器使用相同 Schema。
+- 文本和原生路径都在 Pydantic 转换、Artifact 创建、路由和 ACK 之前执行静态校验。
+- `approve_review` / `request_rework` 只能交给本聊天室 Orchestrator（角色或可信成员 ID）。
+- 新报告必须有 `artifact_content.issues`；或者只引用一个已有 ReviewReport ID；不能同时
+  提供两个有效来源，也不能都缺失。输入 Plan/Diff/测试日志不能当作输出报告。
+- 每个问题显式要求 UUID `issue_id`、枚举 `priority`、非空白 `summary`（最多 1000 字符）
+  和布尔 `resolved`。不生成缺失 ID、不把字符串转换成布尔值；重复问题 ID 确定性拒绝。
+- 返工至少包含一个未解决问题；批准不允许未解决 high/critical 问题。
+  评审说明最多 4000 字符；回合最多 20 个动作，以唯一 `finish_turn` 结尾。
+- 保留 Reviewer 向 Implementer 询问、分享 Artifact、向 Human 求助等多动作聊天能力，
+  但不允许其提交 Plan、实现代码或广播到未授权角色。
+
+Schema 不检查 Artifact 的实际内容/归属/哈希，也不证明证据被读取或代码正确。
+已有报告和历史问题 ID 的延续、工具审计、测试结果及 CompletionGuard 仍由确定性代码
+检查；本步不放宽任何完成条件。`jsonschema` 是运行时依赖，测试检查 Schema 合法性、
+正反例、原生/文本一致性及生产模拟工作流。
+
+本步不调用真实模型、不修补 JSON、不回退文本、不增加重试。增强 Schema 所用的
+`oneOf` / `if` / `contains` 等约束尚未在实际提供商上验收；不要据离线结果宣称在线成功。
+后续先回放已知失败并补离线反例，再建立仅 Reviewer 的低成本在线入口；当前不建议
+直接重跑上述最多 9 回合的整条链路。
 
 ## 后续子步骤
 

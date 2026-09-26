@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Any
 from uuid import UUID
 
+from jsonschema import Draft7Validator, FormatChecker
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -116,6 +117,7 @@ class AgentChatTurn(BaseModel):
 
 def parse_agent_chat_turn(
     output: dict[str, Any], *, require_structured_output: bool = False,
+    output_schema: dict[str, Any] | None = None,
 ) -> AgentChatTurn:
     candidate: Any = output.get("structured_output") if require_structured_output else output.get("turn")
     if require_structured_output and not isinstance(candidate, dict):
@@ -134,6 +136,20 @@ def parse_agent_chat_turn(
             ) from exc
     if not isinstance(candidate, dict):
         raise ChatActionError("agent output does not contain a chat turn object")
+    if output_schema is not None:
+        error = next(Draft7Validator(output_schema, format_checker=FormatChecker()).iter_errors(candidate), None)
+        if error is not None:
+            path = ".".join(str(part) for part in error.absolute_path) or "root"
+            # Do not echo the instance, report text or provider logs in errors.
+            raise ChatActionError(f"invalid Reviewer output contract at {path}: {error.validator}")
+        for index, action in enumerate(candidate["actions"]):
+            report = action.get("artifact_content")
+            if action["action"] in {"approve_review", "request_rework"} and report is not None:
+                issue_ids = [UUID(issue["issue_id"]) for issue in report["issues"]]
+                if len(set(issue_ids)) != len(issue_ids):
+                    raise ChatActionError(
+                        f"invalid Reviewer output contract at actions.{index}: duplicate issue IDs"
+                    )
     try:
         return AgentChatTurn.model_validate(candidate)
     except ValidationError as exc:

@@ -357,6 +357,15 @@ def test_rework_requires_rejected_report_with_unresolved_issues(tmp_path: Path) 
     )
     assert router.route(valid, authenticated_sender_id=reviewer.member_id).message == valid
 
+    duplicate = direct_message(
+        room, reviewer, implementer, type=MessageType.REWORK_REQUEST,
+        artifacts=(review_reference({**base, "issues": [
+            base["issues"][0], {**base["issues"][0], "resolved": True},
+        ]}),),
+    )
+    with pytest.raises(ConversationArtifactError, match="unique issue IDs"):
+        router.route(duplicate, authenticated_sender_id=reviewer.member_id)
+
     invalid = direct_message(
         room,
         reviewer,

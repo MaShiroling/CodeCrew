@@ -99,9 +99,13 @@ class ReworkReviewerRunner(ReviewerProcessRunner):
         )
         result["result"] = json.dumps(turn)
         if self.native:
-            from app.team.actions import AgentChatTurn
+            from jsonschema import Draft7Validator, FormatChecker
 
-            assert json.loads(argv[argv.index("--json-schema") + 1]) == AgentChatTurn.model_json_schema()
+            schema = json.loads(argv[argv.index("--json-schema") + 1])
+            prompt_schema = json.loads(argv[-1].split("Action schema:\n")[1].split("\n\n")[0])
+            assert schema == prompt_schema
+            Draft7Validator.check_schema(schema)
+            Draft7Validator(schema, format_checker=FormatChecker()).validate(turn)
             assert options["env"]["MAX_STRUCTURED_OUTPUT_RETRIES"] == "1"
             result["structured_output"] = turn
             # The text result is NOT a fallback source or a semantic repair target.
@@ -115,7 +119,7 @@ class ReworkReviewerRunner(ReviewerProcessRunner):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("invalid", [None, "json-text", "unknown-field"])
+@pytest.mark.parametrize("invalid", [None, "json-text", "unknown-field", "missing-source", "missing-issue-field"])
 async def test_invalid_native_review_is_not_acked_or_retried(tmp_path, invalid):
     class InvalidNativeReviewer(ReworkReviewerRunner):
         async def start(self, argv, **options):
@@ -124,9 +128,19 @@ async def test_invalid_native_review_is_not_acked_or_retried(tmp_path, invalid):
             valid = result["structured_output"]
             result["result"] = json.dumps(valid)  # Valid fallback must NOT be used.
             self.raw_result = result["result"]
-            result["structured_output"] = (
-                {**valid, "unknown": True} if invalid == "unknown-field" else invalid
-            )
+            if invalid == "missing-source":
+                result["structured_output"] = json.loads(json.dumps(valid))
+                result["structured_output"]["actions"][0].pop("artifact_content")
+            elif invalid == "missing-issue-field":
+                result["structured_output"] = json.loads(json.dumps(valid))
+                result["structured_output"]["actions"][0]["artifact_content"] = {
+                    "issues": [{"priority": "high", "summary": "Observed defect", "resolved": False}],
+                }
+            else:
+                result["structured_output"] = (
+                    {**valid, "unknown": True} if invalid == "unknown-field" else invalid
+                )
+            self.raw_structured_output = json.loads(json.dumps(result["structured_output"]))
             return process
 
     reviewer = InvalidNativeReviewer(native=True)
@@ -147,10 +161,7 @@ async def test_invalid_native_review_is_not_acked_or_retried(tmp_path, invalid):
         )
         saved = fixture.store.read_json(UUID(outputs[-1].event.payload["artifact_id"]))
         assert saved["output"]["result"] == reviewer.raw_result
-        assert saved["output"]["structured_output"] == (
-            {**json.loads(reviewer.raw_result), "unknown": True}
-            if invalid == "unknown-field" else invalid
-        )
+        assert saved["output"]["structured_output"] == reviewer.raw_structured_output
 
 
 @pytest.mark.asyncio

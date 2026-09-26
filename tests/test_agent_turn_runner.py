@@ -658,11 +658,12 @@ async def test_reviewer_rework_evidence_drives_implementer_back_to_verification(
                 "actions": [
                     {
                         "action": "request_rework",
-                        "recipient": {"kind": "role", "role": "implementer"},
+                        "recipient": {"kind": "role", "role": "orchestrator"},
                         "content": "The fallback path needs correction",
                         "artifact_content": {
                             "issues": [
                                 {
+                                    "issue_id": str(uuid4()),
                                     "priority": "high",
                                     "summary": "Fallback returns the wrong default",
                                     "resolved": False,
@@ -717,6 +718,13 @@ async def test_reviewer_rework_evidence_drives_implementer_back_to_verification(
     assert task.state is TaskState.IMPLEMENTING
     assert task.rework_rounds == 1
     assert decision.directives[0].target_role is MemberRole.IMPLEMENTER
+    send_trigger(
+        router, room, members[MemberRole.ORCHESTRATOR], implementer,
+        content="Fix the recorded review issues",
+        artifacts=rework.message.artifacts,
+        correlation_id=rework.message.correlation_id,
+        causation_id=rework.message.message_id,
+    )
     assert (
         rooms.pending_for(implementer.member_id)[0].message.artifacts[0].artifact_id
         == rework.message.artifacts[0].artifact_id

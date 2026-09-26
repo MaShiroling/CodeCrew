@@ -27,7 +27,6 @@ from app.config import Settings
 from app.orchestration.models import Task, TaskState
 from app.storage import ArtifactType
 from app.team import (
-    AgentTurnError,
     ChatActionError,
     ChatMessage,
     MemberKind,
@@ -299,13 +298,13 @@ async def test_real_adapter_shapes_route_persona_bound_chat_actions(
         assert "OMIT artifact_ids" in prompt
         assert "NOT a list of Plan, Diff, verification or log evidence" in prompt
         schema = json.loads(prompt.split("Action schema:\n", 1)[1].split("\n\n", 1)[0])
-        assert "artifact_ids" not in schema["actions"][0]
-        assert schema["actions"][0]["action"] == "approve_review | request_rework"
-        assert schema["actions"][1]["action"] == "finish_turn"
+        from app.team.reviewer_contract import reviewer_turn_schema
+
+        assert schema == reviewer_turn_schema(room.members)
         examples = json.loads(
             prompt.split("Reviewer output examples", 1)[1].split(":\n", 1)[1].split("\n\n", 1)[0]
         )
-        assert [parse_agent_chat_turn(example).actions[0].action.value for example in examples] == [
+        assert [parse_agent_chat_turn(example, output_schema=schema).actions[0].action.value for example in examples] == [
             "approve_review", "request_rework"
         ]
         for example in examples:
@@ -376,7 +375,7 @@ async def test_real_adapter_shapes_route_persona_bound_chat_actions(
                     {"action": "finish_turn"},
                 ]
             },
-            AgentTurnError,
+            ChatActionError,
         ),
     ],
 )
