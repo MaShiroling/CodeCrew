@@ -106,6 +106,7 @@ def test_parser_accepts_one_explicit_json_fence_with_optional_prose(field: str) 
     for accepted in (
         f"Here is the answer:\n```json\n{raw}\n```",
         f"```json\n{raw}\n```\nDone",
+        f"已阅读 Plan v1。\n\n{raw}",
     ):
         assert parse_agent_chat_turn({field: accepted}) == parse_agent_chat_turn(payload)
     for invalid in (
@@ -127,6 +128,8 @@ def test_fenced_json_still_requires_action_schema() -> None:
             parse_agent_chat_turn(
                 {"result": f"I approved it.\n```json\n{json.dumps(payload)}\n```"}
             )
+        with pytest.raises(ChatActionError, match="invalid agent chat turn"):
+            parse_agent_chat_turn({"result": f"说明\n{json.dumps(payload)}"})
 
 
 def test_plan_revision_fields_are_scoped_to_share_plan() -> None:

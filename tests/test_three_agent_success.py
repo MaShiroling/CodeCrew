@@ -86,7 +86,7 @@ class ReviewerProcessRunner:
                 }
             )
         issues = []
-        if self.mode in {"reject", "high_issue"}:
+        if self.mode in {"reject", "high_issue", "bare_high_issue"}:
             issues = [
                 {
                     "issue_id": str(uuid4()),
@@ -109,6 +109,8 @@ class ReviewerProcessRunner:
         )
         if self.mode == "prose":
             answer = f"Reviewed and approved.\n```json\n{answer}\n```"
+        elif self.mode in {"bare_tail", "bare_high_issue"}:
+            answer = f"Reviewed the evidence.\n{answer}"
         elif self.mode == "high_issue":
             answer = f"Approved despite the issues.\n```json\n{answer}\n```"
         elif self.mode == "ambiguous":
@@ -125,11 +127,15 @@ def reviewer_adapter(runner):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("wrapped", [False, True])
-async def test_production_event_loop_completes_only_after_review_and_guard(tmp_path, wrapped):
+@pytest.mark.parametrize("wrapper", ["raw", "fenced", "bare_tail"])
+async def test_production_event_loop_completes_only_after_review_and_guard(tmp_path, wrapper):
     planner = PlannerProcessRunner()
-    kimi = KimiProcessRunner(response_style="prose_prefix" if wrapped else "raw")
-    reviewer = ReviewerProcessRunner("prose" if wrapped else "approve")
+    kimi = KimiProcessRunner(
+        response_style={"raw": "raw", "fenced": "prose_prefix", "bare_tail": "bare_tail"}[wrapper]
+    )
+    reviewer = ReviewerProcessRunner(
+        {"raw": "approve", "fenced": "prose", "bare_tail": "bare_tail"}[wrapper]
+    )
     async with handoff_fixture(
         tmp_path,
         CodexCliAdapter(runner=planner),
@@ -284,6 +290,7 @@ async def test_oversized_review_evidence_fails_before_launch(tmp_path, monkeypat
         ("write", WorkflowExecutionError, "changed the workspace"),
         ("tamper", AgentTurnError, "Artifact changed"),
         ("high_issue", AgentTurnError, "high-priority"),
+        ("bare_high_issue", AgentTurnError, "high-priority"),
         ("ambiguous", ChatActionError, "not valid JSON"),
         ("dual_sources", ChatActionError, "requires exactly one"),
     ],

@@ -13,6 +13,8 @@ from app.structured_output import parse_json_response
         "已读取 Plan。\n```json\n{}\n```",
         "```json\n{}\n```\n等待回复。",
         "说明\r\n```json\r\n{}\r\n```\r\n结束",
+        "已阅读 Plan v1。\n\n{}",
+        "说明\r\n  {}\r\n\t",
     ],
 )
 def test_chat_normalizes_only_one_explicit_payload(wrapper):
@@ -29,6 +31,7 @@ def test_chat_normalizes_only_one_explicit_payload(wrapper):
     [
         "解释\n```json\n{}\n```",
         "```json\n{}\n```\n解释",
+        "说明\n{}",
     ],
 )
 def test_legacy_default_does_not_opt_into_prose(text):
@@ -58,6 +61,21 @@ def test_legacy_default_does_not_opt_into_prose(text):
         '```json\n{"cost": NaN}\n```',
         "说明" * 8_001 + "\n```json\n{}\n```",
         "[" * 101 + "\n```json\n{}\n```",
+        '说明\n{"actions": []}\n已完成',
+        '说明\n{"actions": []}\n{"actions": []}',
+        '说明 {"example": true}\n{"actions": []}',
+        '说明 [1]\n{"actions": []}',
+        '说明\n[broken\n{"actions": []}',
+        '说明\n{broken\n{"actions": []}',
+        '说明\n[{"actions": []}]',
+        '说明\n{"actions": [], "actions": []}',
+        '说明\n{"cost": NaN}',
+        '说明\n{"cost": Infinity}',
+        '说明\n{"actions": []',
+        '说明 ```json\n{"actions": []}',
+        '说明 ~~~\n{"actions": []}',
+        "说明" * 8_001 + '\n{"actions": []}',
+        "[" * 101 + '\n{"actions": []}',
     ],
 )
 def test_chat_rejects_ambiguous_or_invalid_presentation(text):
@@ -69,3 +87,9 @@ def test_chat_rejects_ambiguous_or_invalid_presentation(text):
 def test_even_raw_json_must_be_unambiguous_standard_json(text):
     with pytest.raises(json.JSONDecodeError):
         parse_json_response(text, allow_surrounding_prose=True)
+
+
+def test_trailing_object_may_be_multiline_and_preserves_string_content():
+    payload = {"actions": [{"action": "finish_turn", "content": "text {not JSON} [1]"}]}
+    text = "已阅读 Plan v1，等待澄清。\n" + json.dumps(payload, indent=2)
+    assert parse_json_response(text, allow_surrounding_prose=True) == payload

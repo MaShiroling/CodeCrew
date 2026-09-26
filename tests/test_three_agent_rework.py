@@ -96,6 +96,7 @@ class ReworkReviewerRunner(ReviewerProcessRunner):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("response_style", ["raw", "bare_tail"])
 @pytest.mark.parametrize(
     "scenario,turns,rounds,reviews",
     [
@@ -104,9 +105,11 @@ class ReworkReviewerRunner(ReviewerProcessRunner):
     ],
 )
 async def test_rework_and_two_round_escalation_use_production_controller(
-    tmp_path, scenario, turns, rounds, reviews
+    tmp_path, scenario, turns, rounds, reviews, response_style
 ):
-    planner, kimi, reviewer = PlannerProcessRunner(), ReworkKimiRunner(), ReworkReviewerRunner()
+    planner = PlannerProcessRunner()
+    kimi = ReworkKimiRunner(response_style=response_style)
+    reviewer = ReworkReviewerRunner()
     async with handoff_fixture(
         tmp_path,
         CodexCliAdapter(runner=planner),

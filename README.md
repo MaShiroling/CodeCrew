@@ -321,7 +321,8 @@ Code CLI（仅限 macOS，并需在 shell 环境提供新的 Kimi Code **会员*
 5 回合 Planner → Implementer → Verifier → 独立 Reviewer → CompletionGuard
 用例已实现并通过离线模拟回归，三模型在线成功路径仍待显式启用验收。
 5 个子步骤、预检命令及权限边界见[三 Agent 联调说明](docs/three-agent-integration.md)。
-聊天室已加入受控输出归一化：允许外围说明中的唯一 JSON 代码块，歧义回复仍拒绝，
+聊天室已加入受控输出归一化：允许外围说明中的唯一 JSON 代码块，或说明后从新行
+开始、后面仅含空白的唯一完整尾部 JSON 对象；歧义回复仍拒绝，
 原文留存到诊断 Artifact/Trace；动作权限和完成条件不变，也不增加自动模型重试。
 
 ## 配置

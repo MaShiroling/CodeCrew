@@ -122,6 +122,9 @@ class KimiProcessRunner:
             "raw": raw,
             "fenced": fenced,
             "prose_prefix": f"我已阅读 Plan v1，并已向白金提问测试职责。\n\n{fenced}",
+            "bare_tail": f"已阅读 Plan v1，编辑前需澄清测试执行职责。\n\n{raw}",
+            "bare_extra_candidate": f'说明 {{"actions": []}}\n{raw}',
+            "bare_suffix": f"说明\n{raw}\n已完成",
             "prose_suffix": f"{fenced}\n已完成澄清，请等待回复。",
             "multiple_blocks": f"{fenced}\n{fenced}",
             "prose_only": "已阅读 Plan v1 并已向白金提问测试职责，等待 Plan v2。",
@@ -169,7 +172,9 @@ def factory(kimi_runner):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("response_style", ["raw", "fenced", "prose_prefix", "prose_suffix"])
+@pytest.mark.parametrize(
+    "response_style", ["raw", "fenced", "prose_prefix", "prose_suffix", "bare_tail"]
+)
 async def test_plan_clarification_v2_edit_and_verification(tmp_path, response_style):
     planner, kimi = PlannerProcessRunner(), KimiProcessRunner(response_style=response_style)
     Boundary.grants = []
@@ -205,6 +210,8 @@ async def test_plan_clarification_v2_edit_and_verification(tmp_path, response_st
     [
         ("multiple_blocks", "not valid JSON"),
         ("extra_candidate", "not valid JSON"),
+        ("bare_extra_candidate", "not valid JSON"),
+        ("bare_suffix", "not valid JSON"),
         ("prose_only", "not valid JSON"),
         ("unknown_field", "invalid agent chat turn"),
     ],
