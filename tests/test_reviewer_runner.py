@@ -92,14 +92,14 @@ async def test_runs_independent_read_only_reviewer_and_parses_output(tmp_path: P
 
 
 @pytest.mark.asyncio
-async def test_accepts_json_text_from_cli_adapter(tmp_path: Path) -> None:
+@pytest.mark.parametrize("wrapper", ["{}", "```json\n{}\n```", " \n```json\r\n{}\r\n```\n"])
+async def test_accepts_json_text_from_cli_adapter(tmp_path: Path, wrapper: str) -> None:
+    text = (
+        '{"verdict":"rejected","summary":"Bug remains","issues":'
+        '[{"priority":"high","summary":"Wrong result","resolved":false}]}'
+    )
     scenario = FakeAgentScenario(
-        output={
-            "result": (
-                '{"verdict":"rejected","summary":"Bug remains","issues":'
-                '[{"priority":"high","summary":"Wrong result","resolved":false}]}'
-            )
-        }
+        output={"result": wrapper.format(text)}
     )
     runner, _, task, worktree, plan, verification = make_runner(tmp_path, scenario)
 
@@ -107,6 +107,23 @@ async def test_accepts_json_text_from_cli_adapter(tmp_path: Path) -> None:
 
     assert review.verdict is ReviewVerdict.REJECTED
     assert review.issues[0].summary == "Wrong result"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        'Explanation\n```json\n{"verdict":"approved","summary":"ok"}\n```',
+        '```json\n{"verdict":"approved","summary":"ok"}\n```\nExplanation',
+        '```json\n{"verdict":"approved","summary":"ok"}\n```\n```json\n{}\n```',
+        '```json\n{"verdict":"approved","summary":"ok","extra":true}\n```',
+        '```json\n[]\n```',
+        '```json\nnot-json\n```',
+        '```python\n{"verdict":"approved","summary":"ok"}\n```',
+    ],
+)
+def test_fence_compatibility_does_not_accept_ambiguous_or_invalid_output(text: str) -> None:
+    with pytest.raises(ReviewerExecutionError):
+        AgentReviewerRunner._parse_output({"result": text})
 
 
 @pytest.mark.asyncio

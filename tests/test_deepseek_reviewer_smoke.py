@@ -234,8 +234,8 @@ async def test_fixed_evidence_reaches_two_independent_reviewer_sessions(tmp_path
     task, handle, store, plan, verification = await make_review_case(tmp_path)
     approved = _response('{"verdict":"approved","summary":"Diff matches issue","issues":[]}')
     rejected = _response(
-        '{"verdict":"rejected","summary":"Needs more evidence","issues":'
-        '[{"priority":"high","summary":"Check missing case","resolved":false}]}'
+        '```json\n{"verdict":"rejected","summary":"Needs more evidence","issues":'
+        '[{"priority":"high","summary":"Check missing case","resolved":false}]}\n```'
     )
     process_runner = _QueuedProcessRunner(approved, rejected)
     reviewer, adapter = make_reviewer(store, process_runner)

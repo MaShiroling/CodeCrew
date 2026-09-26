@@ -1,4 +1,5 @@
 import json
+import re
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -116,7 +117,8 @@ class AgentReviewerRunner:
             f"{rendered}\n\n"
             "Read each listed artifact before deciding; do not rely on a summary alone.\n"
             "Return only one JSON object with keys: verdict ('approved' or 'rejected'), "
-            "summary, and issues. Each issue must contain priority "
+            "summary, and issues. Do not add Markdown fences or surrounding prose. "
+            "Each issue must contain priority "
             "('low', 'medium', 'high', or 'critical'), summary, and resolved. "
             "Approve only when the code Diff and verification evidence support the Issue; "
             "if evidence is missing, failed, or uncertain, reject and explain why."
@@ -128,6 +130,10 @@ class AgentReviewerRunner:
         if candidate is None:
             candidate = output.get("result", output.get("message"))
         if isinstance(candidate, str):
+            # Normalize presentation only; never extract JSON from surrounding prose.
+            fenced = re.fullmatch(r"```json[ \t]*\r?\n(.*?)\r?\n```", candidate.strip(), re.DOTALL)
+            if fenced is not None:
+                candidate = fenced.group(1)
             try:
                 candidate = json.loads(candidate)
             except json.JSONDecodeError as exc:

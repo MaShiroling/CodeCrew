@@ -1,7 +1,7 @@
 # DeepSeek Reviewer 真实冒烟：分步验收
 
-已完成 **子步骤 1～2**；子步骤 3 的可选在线测试入口已准备好，但尚未使用真实
-DeepSeek API Key 执行。离线检查不能算作 DeepSeek Flash 已接通。
+已完成 **子步骤 1～2**；用户已运行子步骤 3 的在线用例，但因评审输出包裹
+Markdown JSON 代码块而未通过。格式兼容修复已通过离线测试，在线验收仍待重跑。
 
 ## 子步骤 1：本地预检（已完成）
 
@@ -54,7 +54,7 @@ DeepSeek API Key 执行。离线检查不能算作 DeepSeek Flash 已接通。
 4. 运行离线回归与静态检查，记录结果和限制，更新项目状态。Reviewer 批准始终不
    替代 Verifier 与 CompletionGuard 的确定性成功判定。
 
-## 子步骤 3 在线测试入口（待实际运行）
+## 子步骤 3 在线测试入口（待重跑验收）
 
 `tests/integration/test_deepseek_reviewer_live.py` 默认跳过。它最多发起两次真实
 Reviewer 回合，每次 180 秒超时：有效 Diff/全部验证通过时要求批准；无有效 Diff、
@@ -85,6 +85,13 @@ CODECREW_RUN_DEEPSEEK_REVIEWER_LIVE=1 .venv/bin/pytest -q tests/integration/test
 本机 Claude 账户。当前 CodeCrew 桌面任务进程没有此密钥，因此没有代替用户运行。
 Claude Code 的流式结果若不暴露实际远端模型 ID，不能仅凭环境变量宣称底层模型
 身份已证实。Artifact 位于 Worktree 外，在线测试也会确认 CLI 是否真的能读取。
+
+2026-09-26，用户提供的在线失败输出包含“没有有效代码变更”的结构化拒绝结论，
+但 CLI 将其包裹在 ` ```json ` 代码块中，导致原解析器抛出
+`ReviewerExecutionError`。现仅兼容完整响应中的单个显式 JSON 代码块；前后解释、
+多个代码块、无效 JSON 和不符合 schema 的内容仍然拒绝，不从任意文本中抽取 JSON。
+模拟 CLI 回归用例已覆盖此包装。该修复不改变审批结论或 CompletionGuard 条件，
+不能把这次失败记录成在线验收通过。
 
 只有子步骤 3 的真实调用成功，才能声称 DeepSeek Reviewer 已通过在线冒烟；
 三真实 Agent 的完整任务仍是后续独立验收。

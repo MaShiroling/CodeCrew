@@ -1,7 +1,7 @@
-# 真实模型接入与权限边界（2026-09-24）
+# 真实模型接入与权限边界（2026-09-26）
 
 本页记录接口事实、已验证的边界及未完成的接入工作。**Kimi Code 会员模型的单任务
-真实冒烟已通过；DeepSeek Flash 尚未进行真实调用**。角色仍是白金（Codex/GPT）规划、
+真实冒烟已通过；DeepSeek Reviewer 已尝试在线调用，但尚未通过完整冒烟验收**。角色仍是白金（Codex/GPT）规划、
 月见（Kimi Code CLI 接会员模型）实现、鲸鲸（Claude Code 接入 DeepSeek Flash）评审。
 这里的 CLI 是 Agent 执行环境，
 模型是其背后的推理服务，两者不可混同。
@@ -61,7 +61,8 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
 
 当前进度：已实现 `DeepSeekClaudeReviewerAdapter` 的只读工具装配和子进程环境隔离，
 用模拟进程测试，并验证了本机 Claude Code CLI 的所需选项。详见
-[DeepSeek Reviewer 分步冒烟](deepseek-reviewer-smoke.md)；DeepSeek 仍未做真实 API 请求，
+[DeepSeek Reviewer 分步冒烟](deepseek-reviewer-smoke.md)；用户已尝试在线调用，结果因
+Markdown JSON 包装解析失败，格式修复后尚待重跑，实际远端模型身份仍未验证，
 且工具限制不等同于操作系统只读沙箱。Kimi 侧新增了只暴露
 `Read/Grep/Glob/Write/Edit` 的独立 Agent 文件（没有 `Bash` 或子 Agent），以及
 `KimiWriteBoundary`：在 macOS 上用 Seatbelt 限制 CLI 及其子进程只能写授权目录和
