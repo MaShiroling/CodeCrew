@@ -86,7 +86,7 @@ class ReviewerProcessRunner:
                 }
             )
         issues = []
-        if self.mode in {"reject", "high_issue", "bare_high_issue"}:
+        if self.mode in {"reject", "high_issue", "bare_high_issue", "long_high_issue"}:
             issues = [
                 {
                     "issue_id": str(uuid4()),
@@ -101,6 +101,8 @@ class ReviewerProcessRunner:
             "content": "Independent review based on supplied artifacts",
             "artifact_content": {"issues": issues},
         }
+        if self.mode == "long_high_issue":
+            action["content"] *= 50
         if self.mode == "dual_sources":
             # Reproduce the real Reviewer mistake: input citations + new report together.
             action["artifact_ids"] = [ref["artifact_id"] for ref in evidence]
@@ -290,6 +292,7 @@ async def test_oversized_review_evidence_fails_before_launch(tmp_path, monkeypat
         ("write", WorkflowExecutionError, "changed the workspace"),
         ("tamper", AgentTurnError, "Artifact changed"),
         ("high_issue", AgentTurnError, "high-priority"),
+        ("long_high_issue", AgentTurnError, "high-priority"),
         ("bare_high_issue", AgentTurnError, "high-priority"),
         ("ambiguous", ChatActionError, "not valid JSON"),
         ("dual_sources", ChatActionError, "requires exactly one"),

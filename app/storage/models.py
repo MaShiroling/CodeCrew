@@ -5,6 +5,9 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validato
 
 from app.orchestration.models import utc_now
 
+ARTIFACT_SUMMARY_MAX_LENGTH = 1000
+ARTIFACT_SUMMARY_TRUNCATION_MARKER = "… [摘要已省略，完整内容见 Artifact]"
+
 
 class ArtifactType(str, Enum):
     PLAN = "plan"
@@ -55,10 +58,23 @@ class ArtifactReference(BaseModel):
     artifact_id: UUID
     type: ArtifactType
     sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
-    summary: str = Field(min_length=1, max_length=1000)
+    summary: str = Field(min_length=1, max_length=ARTIFACT_SUMMARY_MAX_LENGTH)
 
     @classmethod
     def from_metadata(cls, artifact: ArtifactMetadata, *, summary: str) -> "ArtifactReference":
+        """Bound only a derived display excerpt; never rewrite stored evidence.
+
+        Direct construction/validation remains strict for incoming references.
+        Consumers must resolve the hash-bound Artifact, not treat this excerpt
+        as a complete report or an authorization decision.
+        """
+        if isinstance(summary, str):
+            summary = summary.strip()
+            if len(summary) > ARTIFACT_SUMMARY_MAX_LENGTH:
+                prefix_length = ARTIFACT_SUMMARY_MAX_LENGTH - len(
+                    ARTIFACT_SUMMARY_TRUNCATION_MARKER
+                )
+                summary = summary[:prefix_length].rstrip() + ARTIFACT_SUMMARY_TRUNCATION_MARKER
         return cls(
             artifact_id=artifact.artifact_id,
             type=artifact.type,

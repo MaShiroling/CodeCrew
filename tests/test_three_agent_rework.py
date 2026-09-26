@@ -10,6 +10,7 @@ from app.agents import CodexCliAdapter
 from app.orchestration.models import TaskState
 from app.recovery import EvidenceRecoveryService
 from app.storage import ArtifactStore, ArtifactType, SQLiteDatabase
+from app.storage.models import ARTIFACT_SUMMARY_TRUNCATION_MARKER
 from app.team import AgentTurnError, MemberRole, MessageType, WorkflowExecutionError
 from app.trace import TraceEventType, TraceStore
 from scripts.planner_kimi_smoke import FIXED_SOURCE, handoff_fixture
@@ -59,11 +60,12 @@ class ReworkKimiRunner(KimiProcessRunner):
 
 
 class ReworkReviewerRunner(ReviewerProcessRunner):
-    def __init__(self, *, drop_prior=False, false_approve=False):
+    def __init__(self, *, drop_prior=False, false_approve=False, long_summary=None):
         super().__init__()
         self.issue_id = str(uuid4())
         self.drop_prior = drop_prior
         self.false_approve = false_approve
+        self.long_summary = long_summary
 
     async def start(self, argv, **options):
         evidence = messages(argv[-1])[-1]["artifacts"]
@@ -79,6 +81,8 @@ class ReworkReviewerRunner(ReviewerProcessRunner):
         result = process.events[-1]
         result["session_id"] = native_id
         turn = json.loads(result["result"])
+        if self.long_summary is not None:
+            turn["actions"][0]["content"] = self.long_summary
         turn["actions"][0]["artifact_content"]["issues"] = (
             []
             if (self.false_approve or (self.drop_prior and report["passed"]))
@@ -197,8 +201,9 @@ async def test_false_approval_of_injected_fault_stops_before_another_paid_turn(t
 
 
 @pytest.mark.asyncio
-async def test_rework_approval_cannot_drop_unresolved_issue_ids(tmp_path):
-    reviewer = ReworkReviewerRunner(drop_prior=True)
+@pytest.mark.parametrize("summary", [None, "评审证据" * 300])
+async def test_rework_approval_cannot_drop_unresolved_issue_ids(tmp_path, summary):
+    reviewer = ReworkReviewerRunner(drop_prior=True, long_summary=summary)
     async with handoff_fixture(
         tmp_path,
         CodexCliAdapter(runner=PlannerProcessRunner()),
@@ -209,3 +214,45 @@ async def test_rework_approval_cannot_drop_unresolved_issue_ids(tmp_path):
             await run_three_agent(fixture, scenario="rework_success")
         assert fixture.task.state is TaskState.REVIEWING and fixture.task.rework_rounds == 1
         assert fixture.runner.rooms.pending_for(fixture.members[MemberRole.REVIEWER].member_id)
+
+
+@pytest.mark.asyncio
+async def test_long_rework_and_approval_preserve_full_evidence_and_pass_guard(tmp_path):
+    summary = "评审记录：逐项核对 Diff 与测试证据。" * 70
+    reviewer = ReworkReviewerRunner(long_summary=summary)
+    async with handoff_fixture(
+        tmp_path, CodexCliAdapter(runner=PlannerProcessRunner()), factory(ReworkKimiRunner()),
+        reviewer=reviewer_adapter(reviewer),
+    ) as fixture:
+        result = await run_three_agent(fixture, scenario="rework_success")
+        assert fixture.task.state is TaskState.COMPLETED and fixture.task.rework_rounds == 1
+        assert len(result.workflow.agent_turns) == 7 and result.runtime.latest_completion.passed
+        reviews = [
+            item.message for item in fixture.runner.rooms.list_messages(fixture.room.room_id)
+            if item.message.type in {MessageType.REWORK_REQUEST, MessageType.REVIEW_APPROVED}
+        ]
+        assert [m.type for m in reviews] == [MessageType.REWORK_REQUEST, MessageType.REVIEW_APPROVED]
+        for message in reviews:
+            assert message.content == summary
+            reference = message.artifacts[0]
+            assert len(reference.summary) <= 1000
+            assert reference.summary.endswith(ARTIFACT_SUMMARY_TRUNCATION_MARKER)
+            assert fixture.store.read_json(reference.artifact_id)["summary"] == summary
+        raw = fixture.router.trace_store.list(
+            trace_id=fixture.task.trace_id, type=TraceEventType.AGENT_OUTPUT_RECORDED
+        )
+        reviewer_raw = [event.event for event in raw if event.event.payload["role"] == "reviewer"]
+        assert len(reviewer_raw) == 2
+        for event in reviewer_raw:
+            output = fixture.store.read_json(event.payload["artifact_id"])["output"]["result"]
+            assert json.loads(output)["actions"][0]["content"] == summary
+        archive = archive_smoke_evidence(fixture.store, fixture.task, root=tmp_path / "archives")
+        database = SQLiteDatabase(archive / "trace.sqlite3")
+        archived = ArtifactStore(database, archive / "artifacts")
+        for message in reviews:
+            assert archived.read_json(message.artifacts[0].artifact_id)["summary"] == summary
+        recovered = EvidenceRecoveryService(archived, TraceStore(database)).recover(
+            task_id=fixture.task.id, trace_id=fixture.task.trace_id
+        )
+        assert recovered.completion.passed and recovered.review.summary == summary
+        assert recovered.review.issues[0].resolved

@@ -74,6 +74,7 @@ Implementer（月见：Kimi Code CLI，独立 Git Worktree）
 - `message_id`、`correlation_id`、`causation_id` 和幂等键
 - SQLite Mailbox、FIFO 领取、ACK 和失败记录
 - SHA-256 内容寻址 ArtifactStore
+- 本地生成的引用展示摘要限长并标记省略，完整证据和原始回复不截断
 - 流式写入、原子落盘、物理去重和重启恢复
 - Handoff 发送端与接收端 Artifact 完整性检查
 - 任务、Trace、类型、哈希和实际 Blob 的一致性校验

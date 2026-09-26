@@ -306,7 +306,8 @@ async def test_answer_action_preserves_question_thread(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_share_artifact_resolves_integrity_bound_reference(tmp_path: Path) -> None:
+@pytest.mark.parametrize("content", ["Implementation patch", "实现证据" * 300])
+async def test_share_artifact_resolves_integrity_bound_reference(tmp_path: Path, content) -> None:
     scenario = FakeAgentScenario()
     runner, router, rooms, artifacts, adapter, task, room, members = make_context(
         tmp_path, scenario
@@ -325,7 +326,7 @@ async def test_share_artifact_resolves_integrity_bound_reference(tmp_path: Path)
                 {
                     "action": "share_artifact",
                     "recipient": {"kind": "role", "role": "reviewer"},
-                    "content": "Implementation patch",
+                    "content": content,
                     "artifact_ids": [str(metadata.artifact_id)],
                 },
                 {"action": "finish_turn", "content": "Review requested"},
@@ -344,6 +345,8 @@ async def test_share_artifact_resolves_integrity_bound_reference(tmp_path: Path)
     )
 
     shared = result.routed_messages[0].message
+    assert shared.content == content
+    assert len(shared.artifacts[0].summary) <= 1000
     assert shared.artifacts[0].artifact_id == metadata.artifact_id
     assert rooms.pending_for(members[MemberRole.REVIEWER].member_id)[0].message == shared
 

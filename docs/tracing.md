@@ -52,6 +52,10 @@ Adapter 未发出的原生事件不会凭空补齐；会话启动前失败、进
 
 ## Reliability semantics
 
+本地生成的 Artifact 引用摘要超过 1000 字符时会保留前缀并加省略标记，仅用于展示。
+引用 ID/哈希不变，完整聊天正文、原始 AgentResult 和评审报告仍留存；恢复和完成
+校验必须读取完整证据，不能把展示摘要作为完整报告。外部引用模型仍严格校验原上限。
+
 Writes are append-only. `(trace_id, idempotency_key)` is unique, and re-appending identical content
 returns the original sequence. Reusing a key with different content is rejected. Query clients read
 in monotonically increasing sequence order and can resume with `after_sequence`; this is the same
