@@ -5,6 +5,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.agents import (
+    AgentArtifactInput,
     AgentEvent,
     AgentEventType,
     AgentExitReason,
@@ -93,3 +94,33 @@ def test_event_sequence_and_token_counts_cannot_be_negative() -> None:
     with pytest.raises(ValidationError):
         TokenUsage(input_tokens=-1)
 
+
+def test_artifact_grants_are_immutable_task_bound_unique_and_absolute(tmp_path: Path) -> None:
+    task_id, trace_id = uuid4(), uuid4()
+    values = {
+        "artifact_id": uuid4(),
+        "task_id": task_id,
+        "trace_id": trace_id,
+        "path": tmp_path / "plan.json",
+        "sha256": "a" * 64,
+        "size_bytes": 10,
+    }
+    grant = AgentArtifactInput(**values)
+    request = {
+        "task_id": task_id,
+        "trace_id": trace_id,
+        "role": AgentRole.IMPLEMENTER,
+        "prompt": "Read approved plan",
+        "working_directory": tmp_path,
+    }
+    assert AgentRequest(**request, artifact_inputs=(grant,)).artifact_inputs == (grant,)
+    with pytest.raises(ValidationError, match="frozen"):
+        grant.path = tmp_path / "other"
+    with pytest.raises(ValidationError, match="absolute"):
+        AgentArtifactInput(**{**values, "path": Path("relative.json")})
+    with pytest.raises(ValidationError, match="unique"):
+        AgentRequest(**request, artifact_inputs=(grant, grant))
+    with pytest.raises(ValidationError, match="task and trace"):
+        AgentRequest(
+            **request, artifact_inputs=(AgentArtifactInput(**{**values, "trace_id": uuid4()}),)
+        )

@@ -3,7 +3,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.orchestration.models import utc_now
 
@@ -56,6 +56,29 @@ class AgentExitReason(str, Enum):
     START_FAILED = "start_failed"
 
 
+class AgentArtifactInput(BaseModel):
+    """Trusted orchestration grant for one integrity-bound, read-only input file.
+
+    Not an Agent output field or a public permission-grant API.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    artifact_id: UUID
+    task_id: UUID
+    trace_id: UUID
+    path: Path
+    sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    size_bytes: int = Field(ge=0)
+
+    @field_validator("path")
+    @classmethod
+    def validate_absolute_path(cls, path: Path) -> Path:
+        if not path.is_absolute():
+            raise ValueError("artifact input path must be absolute")
+        return path
+
+
 class AgentRequest(BaseModel):
     """Provider-neutral input for starting or resuming an agent session."""
 
@@ -70,6 +93,19 @@ class AgentRequest(BaseModel):
     timeout_seconds: int = Field(default=900, gt=0)
     resume_from_session_id: str | None = Field(default=None, min_length=1)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    artifact_inputs: tuple[AgentArtifactInput, ...] = Field(default=(), max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_artifact_inputs(self) -> "AgentRequest":
+        if any(
+            item.task_id != self.task_id or item.trace_id != self.trace_id
+            for item in self.artifact_inputs
+        ):
+            raise ValueError("artifact inputs must belong to the request task and trace")
+        ids = [item.artifact_id for item in self.artifact_inputs]
+        if len(ids) != len(set(ids)):
+            raise ValueError("artifact inputs must have unique IDs")
+        return self
 
 
 class AgentSession(BaseModel):
@@ -130,4 +166,3 @@ class AgentResult(BaseModel):
     token_usage: TokenUsage | None = None
     duration_ms: int = Field(ge=0)
     error: str | None = None
-

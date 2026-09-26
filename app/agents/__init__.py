@@ -6,6 +6,7 @@ from app.agents.codex import CodexCliAdapter
 from app.agents.fake import FakeAgentAdapter, FakeAgentScenario, FakeEventSpec
 from app.agents.kimi import KimiCodeAdapter
 from app.agents.models import (
+    AgentArtifactInput,
     AgentCapability,
     AgentEvent,
     AgentEventType,
@@ -41,6 +42,7 @@ __all__ = [
     "AgentAdapter",
     "AgentAdapterError",
     "AgentAlreadyRegisteredError",
+    "AgentArtifactInput",
     "AgentAvailability",
     "AgentCapability",
     "AgentCompatibilityError",

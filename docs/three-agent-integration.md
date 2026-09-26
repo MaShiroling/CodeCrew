@@ -39,9 +39,62 @@ Kimi stream-json 和 Claude stream-json 执行聊天室回合。校验角色绑�
 **不启动真实 CLI，不调用模型 API，不运行完整事件循环；模拟审批不是有效完成证据。**
 Kimi 的模拟边界只证明接线，不代替现有 Seatbelt 系统测试。
 
+## 2. Planner → Implementer（开发与离线验证完成，在线待验收）
+
+### 受控 Artifact 读取
+
+`AgentRequest.artifact_inputs` 使用不可变的逐文件契约；根据 Pydantic 校验要求限制字段、
+绝对路径、唯一 ID 和任务/Trace 归属。只有可信 Orchestrator 能构造授权，Agent 动作和
+公共任务 API 都不能提交文件路径来获得权限。
+
+`AgentTurnRunner` 从本轮待处理消息的引用查询 ArtifactStore，校验类型、哈希和归属，
+从可信存储计算路径；启动前和回合结束后流式复核 SHA-256/大小，并拒绝符号链接。
+重复引用按 ID 去重，未收到的 Artifact 不授权。失败不 ACK，不路由后续成功动作。
+
+Kimi Seatbelt 对单个文件增加读取例外和明确写入拒绝，不增加目录读取权限；文件必须
+位于可写 Worktree/runtime 之外。系统级测试验证授权文件能读、相邻文件不能读、原文件
+不能改写或删除。保留的 Read 工具事件只记录文件路径，不记录任意工具参数。
+
+这是可信本地文件系统下的受控授权与篡改检测，**不是对恶意并发文件系统所有者的原子快照**，
+也不意味着 home 之外的所有读取已被隔离。旧 Review history 的路径不会自动获得授权。
+
+### 小任务联调
+
+`scripts/planner_kimi_smoke.py` 是测试夹具，不是生产调度器或正式 EvalRunner。
+它创建临时 Git 仓库及独立 Worktree，复用生产 `AgentTurnRunner`、Mailbox、ArtifactStore、
+Plan 版本链和 Verifier。最多四个 Agent 回合：
+
+1. 白金只读分析 `total(items)` 漏算最后一项的 Bug，发布 Plan v1。
+2. 月见读取 Plan，先询问测试执行者，不改代码。
+3. 白金按问题 ID 回答并发布 Plan v2，说明 Verifier 执行测试。
+4. 月见读取 Plan v2，修改 `src/pricing.py`，向 Orchestrator 请求验证/评审。
+
+夹具检查精确 Plan 路径的 Read 工具事件、问题关联、版本链、各轮 ACK、Planner/澄清阶段
+没有源文件变更、主仓库未改变、最终只有指定源文件 Diff，以及语法/公开测试/额外断言。
+Read 事件证明工具调用路径，不是独立的模型理解证明。额外断言依旧不具备保密隔离。
+离线用例模拟真实 CLI 协议，分别验证成功交接、Plan 篡改和假完成被拒绝。
+回合证据、会话标识、Token 缺失值和测试报告存入临时 ArtifactStore，关键操作有 trace_id。
+
+不执行 Reviewer、CompletionGuard 或完整任务状态机；报告的 `task_success=false` 是刻意的，
+交接与 Verifier 检查通过并不等于任务完成。测试后删除的是临时 Worktree，证据仍在 pytest
+临时目录，未来可能被 pytest 清理；不要把它作为长期评测归档。
+
+### 在线验证命令
+
+本次桌面任务进程可找到两个 CLI，但未继承 `KIMI_MODEL_API_KEY`，因此**没有运行在线联调**。
+在你已配置 Kimi Code 会员密钥、Codex CLI 登录的同一终端中运行：
+
+```bash
+CODECREW_RUN_PLANNER_KIMI_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_planner_kimi_live.py
+```
+
+预计使用 2 个 Codex 回合和 2 个 Kimi 回合，各回合超时 180 秒；不自动重试、不调用 DeepSeek。
+用例通过后打印 trace_id、证据目录及数据库路径，不打印密钥。若失败，请提供失败断言，
+不要粘贴凭证；协议或 Read 路径证据不符合要求时必须修复，不能改成跳过检查。
+全量离线入口已追加关闭 `CODECREW_RUN_PLANNER_KIMI_LIVE`，避免误触发付费调用。
+
 ## 后续子步骤（尚未完成）
 
-2. 真实 Planner → Implementer：用固定小型 Bug 仓库，验证计划生成、引用读取、修改和澄清。
 3. 完整成功路径：接入 Verifier 和真实独立 Reviewer，再由 CompletionGuard 判断完成。
 4. 返工与预算：验证明确拒绝、问题 ID 延续、修复再审以及最多两轮后的人工接管。
 5. UI 演示与验收记录：从页面发起任务，展示聊天、证据、Patch 和报告，记录异常与限制。
@@ -53,9 +106,8 @@ Kimi 的模拟边界只证明接线，不代替现有 Seatbelt 系统测试。
 - Kimi 写入隔离仍要求 macOS Seatbelt；Worktree 根目录必须位于目标仓库之外。
 - 新示例只允许修改 `src`，不允许修改验收测试；命令和路径必须按目标夹具调整。
   示例 `tests/hidden` 是占位路径，**没有隐藏测试保密隔离**，不能用于正式可靠性评测。
-- Kimi 边界会阻止读取真实 home 下、Worktree/私有 runtime 以外的 Artifact 文件。
-  当前聊天提示中的 Artifact 路径不意味着 Kimi 一定能读到；第 2 子步骤需提供受控的
-  逐文件只读授权或私有上下文投影，并验证完整性，不能为此放开整个 Artifact 根目录。
+- Kimi 默认阻止读取真实 home 下、Worktree/私有 runtime 以外的文件；现在只为已校验的
+  本轮 Artifact 添加逐文件只读例外，未共享文件和整个 Artifact 根目录都不授权。
 - Reviewer 的工具只读配置不是 OS 级只读沙箱；真实远端版本仍未确认。
   `kimi-for-coding` 别名不能当作 K3 版本证据，缺失 Token 统计不能记为零。
 - 本步未在线验收这个团队配置；不要将启动成功或协议测试通过称为三模型任务成功。

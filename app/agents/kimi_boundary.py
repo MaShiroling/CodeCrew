@@ -32,6 +32,7 @@ class KimiWriteBoundary:
         runtime_directory: Path,
         policy: PermissionPolicy,
         readable_files: Sequence[Path] = (),
+        read_only_files: Sequence[Path] = (),
         sandbox_executable: str = "/usr/bin/sandbox-exec",
     ) -> None:
         self.worktree = self._existing_directory(worktree, "worktree")
@@ -40,15 +41,17 @@ class KimiWriteBoundary:
         self.protected_home = Path.home().resolve(strict=True)
         self.readable_files = tuple(
             dict.fromkeys(
-                item
-                for path in readable_files
-                for item in self._existing_file_paths(path)
+                item for path in readable_files for item in self._existing_file_paths(path)
             )
         )
         self.sandbox_executable = sandbox_executable
-        if (
-            self.runtime_directory.is_relative_to(self.worktree)
-            or self.worktree.is_relative_to(self.runtime_directory)
+        self.read_only_files = tuple(
+            dict.fromkeys(
+                path for file in read_only_files for path in self._existing_file_paths(file)
+            )
+        )
+        if self.runtime_directory.is_relative_to(self.worktree) or self.worktree.is_relative_to(
+            self.runtime_directory
         ):
             raise KimiBoundaryError("runtime directory must be separate from the worktree")
 
@@ -92,23 +95,28 @@ class KimiWriteBoundary:
     def profile(self) -> str:
         """Build a Seatbelt profile; protect the real home and constrain writes."""
         read_exceptions = [
-            *(f"(require-not (subpath {json.dumps(str(path))}))"
-              for path in (self.worktree, self.runtime_directory)),
-            *(f"(require-not (literal {json.dumps(str(path))}))"
-              for path in self.readable_files),
+            *(
+                f"(require-not (subpath {json.dumps(str(path))}))"
+                for path in (self.worktree, self.runtime_directory)
+            ),
+            *(
+                f"(require-not (literal {json.dumps(str(path))}))"
+                for path in (*self.readable_files, *self.read_only_files)
+            ),
         ]
         lines = [
             "(version 1)",
             "(allow default)",
             "(deny file-read-data (require-all "
-            f"(subpath {json.dumps(str(self.protected_home))}) "
-            + " ".join(read_exceptions) + "))",
+            f"(subpath {json.dumps(str(self.protected_home))}) " + " ".join(read_exceptions) + "))",
             "(deny file-write*)",
         ]
         for path in (*self.allowed_directories, self.runtime_directory):
             lines.append(f"(allow file-write* (subpath {json.dumps(str(path))}))")
         for path in self.denied_paths:
             lines.append(f"(deny file-write* (subpath {json.dumps(str(path))}))")
+        for path in self.read_only_files:
+            lines.append(f"(deny file-write* (literal {json.dumps(str(path))}))")
         return "\n".join(lines) + "\n"
 
     def wrap(self, argv: Sequence[str]) -> list[str]:

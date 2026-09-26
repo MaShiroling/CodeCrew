@@ -1,3 +1,4 @@
+import hashlib
 import json
 from collections.abc import AsyncIterator, Mapping, Sequence
 from pathlib import Path
@@ -9,6 +10,7 @@ import pytest
 import app.storage  # noqa: F401 - initialize the existing workspace import graph.
 from app.agents import (
     AgentAdapterError,
+    AgentArtifactInput,
     AgentCapability,
     AgentEventType,
     AgentExitReason,
@@ -63,7 +65,9 @@ class StubBoundary:
         return ["sandbox-exec", "-p", "restricted", *argv]
 
 
-def make_adapter(tmp_path: Path, process: StubProcess, *, key: str = "test-key") -> tuple[KimiCodeAdapter, StubRunner, AgentRequest]:
+def make_adapter(
+    tmp_path: Path, process: StubProcess, *, key: str = "test-key"
+) -> tuple[KimiCodeAdapter, StubRunner, AgentRequest]:
     task_id = uuid4()
     worktree_root = tmp_path / "worktrees"
     worktree = worktree_root / str(task_id)
@@ -112,7 +116,9 @@ def test_kimi_step_budget_is_explicit_and_validated(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_kimi_lifecycle_uses_fresh_sandboxed_session_and_isolated_environment(tmp_path: Path) -> None:
+async def test_kimi_lifecycle_uses_fresh_sandboxed_session_and_isolated_environment(
+    tmp_path: Path,
+) -> None:
     process = StubProcess(
         [
             json_chunk({"role": "assistant", "tool_calls": [{"function": {"name": "Edit"}}]}),
@@ -133,8 +139,11 @@ async def test_kimi_lifecycle_uses_fresh_sandboxed_session_and_isolated_environm
     assert session.native_session_id is None
     assert AgentCapability.SESSION_RESUME not in adapter.capabilities
     assert [event.type for event in events] == [
-        AgentEventType.STARTED, AgentEventType.TOOL_CALL, AgentEventType.MESSAGE,
-        AgentEventType.MESSAGE, AgentEventType.COMPLETED,
+        AgentEventType.STARTED,
+        AgentEventType.TOOL_CALL,
+        AgentEventType.MESSAGE,
+        AgentEventType.MESSAGE,
+        AgentEventType.COMPLETED,
     ]
     command = runner.calls[0]["argv"]
     assert command[:3] == ["sandbox-exec", "-p", "restricted"]
@@ -156,18 +165,30 @@ async def test_kimi_lifecycle_uses_fresh_sandboxed_session_and_isolated_environm
 
 
 @pytest.mark.asyncio
-async def test_kimi_ignores_known_meta_events_without_treating_them_as_answers(tmp_path: Path) -> None:
+async def test_kimi_ignores_known_meta_events_without_treating_them_as_answers(
+    tmp_path: Path,
+) -> None:
     process = StubProcess(
         [
             json_chunk({"role": "meta", "type": "system.version", "version": "2.0.0"}),
-            json_chunk({
-                "role": "meta", "type": "turn.step.retrying", "failed_attempt": 1,
-                "next_attempt": 2, "max_attempts": 3, "delay_ms": 1000,
-            }),
-            json_chunk({
-                "role": "meta", "type": "session.resume_hint",
-                "session_id": "private-native-id", "content": "To resume this session",
-            }),
+            json_chunk(
+                {
+                    "role": "meta",
+                    "type": "turn.step.retrying",
+                    "failed_attempt": 1,
+                    "next_attempt": 2,
+                    "max_attempts": 3,
+                    "delay_ms": 1000,
+                }
+            ),
+            json_chunk(
+                {
+                    "role": "meta",
+                    "type": "session.resume_hint",
+                    "session_id": "private-native-id",
+                    "content": "To resume this session",
+                }
+            ),
             json_chunk({"role": "assistant", "content": "Implemented"}),
         ],
         ProcessResult(exit_code=0, duration_ms=12),
@@ -183,7 +204,9 @@ async def test_kimi_ignores_known_meta_events_without_treating_them_as_answers(t
     assert session.native_session_id is None
     assert "private-native-id" not in repr(events)
     assert [event.data["meta_type"] for event in events if event.type is AgentEventType.STDOUT] == [
-        "system.version", "turn.step.retrying", "session.resume_hint"
+        "system.version",
+        "turn.step.retrying",
+        "session.resume_hint",
     ]
 
 
@@ -278,3 +301,102 @@ async def test_kimi_maps_cancellation_and_timeout(
     session = await adapter.start(request)
     result = await adapter.wait(session.session_id)
     assert result.reason is reason
+
+
+def input_grant(request: AgentRequest, path: Path, content: bytes) -> AgentArtifactInput:
+    return AgentArtifactInput(
+        artifact_id=uuid4(),
+        task_id=request.task_id,
+        trace_id=request.trace_id,
+        path=path,
+        sha256=hashlib.sha256(content).hexdigest(),
+        size_bytes=len(content),
+    )
+
+
+@pytest.mark.asyncio
+async def test_kimi_rejects_input_grant_overlapping_writable_worktree(tmp_path: Path) -> None:
+    adapter, runner, request = make_adapter(
+        tmp_path, StubProcess([], ProcessResult(exit_code=0, duration_ms=1))
+    )
+    path = request.working_directory / "src" / "plan.json"
+    path.write_bytes(b"plan")
+    request = request.model_copy(update={"artifact_inputs": (input_grant(request, path, b"plan"),)})
+    with pytest.raises(AgentAdapterError, match="outside writable"):
+        await adapter.start(request)
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+async def test_kimi_grants_one_artifact_and_records_read_path_not_other_arguments(
+    tmp_path: Path,
+) -> None:
+    plan = tmp_path / "plan.json"
+    plan.write_bytes(b"plan")
+    process = StubProcess(
+        [
+            json_chunk(
+                {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "function": {
+                                "name": "Read",
+                                "arguments": json.dumps(
+                                    {"path": str(plan), "secret": "never-record"}
+                                ),
+                            }
+                        }
+                    ],
+                }
+            ),
+            json_chunk({"role": "assistant", "content": "done"}),
+        ],
+        ProcessResult(exit_code=0, duration_ms=1),
+    )
+    adapter, _, request = make_adapter(tmp_path, process)
+    boundaries = []
+
+    def boundary(**options):
+        boundaries.append(options)
+        return StubBoundary(**options)
+
+    adapter._boundary_factory = boundary
+    request = request.model_copy(update={"artifact_inputs": (input_grant(request, plan, b"plan"),)})
+    session = await adapter.start(request)
+    events = [event async for event in adapter.stream(session.session_id)]
+    result = await adapter.wait(session.session_id)
+    assert result.reason is AgentExitReason.COMPLETED
+    assert boundaries[0]["read_only_files"] == (plan,)
+    calls = [event for event in events if event.type is AgentEventType.TOOL_CALL]
+    assert calls[0].data == {"name": "Read", "path": str(plan)}
+    assert "never-record" not in repr(events)
+
+
+@pytest.mark.asyncio
+async def test_kimi_rejects_tampered_input_before_launch_and_after_turn(tmp_path: Path) -> None:
+    plan = tmp_path / "plan.json"
+    plan.write_bytes(b"plan")
+    process = StubProcess(
+        [json_chunk({"role": "assistant", "content": "done"})],
+        ProcessResult(exit_code=0, duration_ms=1),
+    )
+    adapter, runner, request = make_adapter(tmp_path, process)
+    request = request.model_copy(update={"artifact_inputs": (input_grant(request, plan, b"plan"),)})
+    plan.write_bytes(b"evil")
+    with pytest.raises(AgentAdapterError, match="integrity"):
+        await adapter.start(request)
+    assert runner.calls == []
+    plan.write_bytes(b"plan")
+    original_stream = process.stream
+
+    async def tampering_stream():
+        plan.write_bytes(b"evil")
+        async for chunk in original_stream():
+            yield chunk
+
+    process.stream = tampering_stream
+    session = await adapter.start(request)
+    result = await adapter.wait(session.session_id)
+    assert result.reason is AgentExitReason.FAILED
+    assert result.error == "Artifact input changed during Kimi turn"

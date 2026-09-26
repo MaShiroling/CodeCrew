@@ -15,7 +15,7 @@ from app.agents import (
     PermissionMode,
 )
 from app.orchestration.models import Task, TaskState
-from app.storage import ArtifactStore, ArtifactType, SQLiteDatabase
+from app.storage import ArtifactReference, ArtifactStore, ArtifactType, SQLiteDatabase
 from app.team import (
     AgentTurnError,
     AgentTurnRunner,
@@ -94,26 +94,76 @@ def send_trigger(router, room, sender, recipient, **updates):
         "task_id": room.task_id,
         "trace_id": room.trace_id,
         "sender_id": sender.member_id,
-        "recipients": (
-            MessageRecipient(kind=RecipientKind.MEMBER, member_id=recipient.member_id),
-        ),
+        "recipients": (MessageRecipient(kind=RecipientKind.MEMBER, member_id=recipient.member_id),),
         "type": MessageType.SYSTEM_EVENT,
         "content": "Start implementation",
         "idempotency_key": f"trigger-{uuid4()}",
     }
     values.update(updates)
-    return router.route(
-        ChatMessage(**values), authenticated_sender_id=sender.member_id
+    return router.route(ChatMessage(**values), authenticated_sender_id=sender.member_id)
+
+
+@pytest.mark.asyncio
+async def test_input_grants_are_scoped_and_tampering_during_turn_prevents_ack(
+    tmp_path: Path,
+) -> None:
+    runner, router, rooms, artifacts, adapter, task, room, members = make_context(
+        tmp_path,
+        FakeAgentScenario(output={"actions": [{"action": "finish_turn"}]}),
     )
+    plan = artifacts.put_json(
+        {"steps": ["edit"]},
+        task_id=task.id,
+        trace_id=task.trace_id,
+        type=ArtifactType.PLAN,
+        created_by="planner",
+    )
+    unused = artifacts.put_text(
+        "not delivered",
+        task_id=task.id,
+        trace_id=task.trace_id,
+        type=ArtifactType.GENERIC,
+        created_by="test",
+    )
+    member = members[MemberRole.IMPLEMENTER]
+    trigger = send_trigger(
+        router,
+        room,
+        members[MemberRole.ORCHESTRATOR],
+        member,
+        artifacts=(ArtifactReference.from_metadata(plan, summary="Plan"),),
+    )
+    original_wait = adapter.wait
+
+    async def tamper_after_wait(session_id):
+        result = await original_wait(session_id)
+        artifacts.blob_path_for(plan.artifact_id).write_bytes(b"tampered")
+        return result
+
+    adapter.wait = tamper_after_wait
+    with pytest.raises(AgentTurnError, match="changed during"):
+        await runner.run(
+            task,
+            room_id=room.room_id,
+            member_id=member.member_id,
+            agent_name=adapter.name,
+            working_directory=tmp_path,
+        )
+    assert rooms.pending_for(member.member_id) == (trigger,)
+    assert [item.artifact_id for item in adapter.requests[0].artifact_inputs] == [plan.artifact_id]
+    assert unused.artifact_id not in {
+        item.artifact_id for item in adapter.requests[0].artifact_inputs
+    }
 
 
 def test_persona_mention_in_content_does_not_bypass_structured_recipient(tmp_path: Path) -> None:
-    _runner, router, rooms, _, _, _task, room, members = make_context(
-        tmp_path, FakeAgentScenario()
-    )
+    _runner, router, rooms, _, _, _task, room, members = make_context(tmp_path, FakeAgentScenario())
     event = send_trigger(
-        router, room, members[MemberRole.ORCHESTRATOR],
-        members[MemberRole.IMPLEMENTER], content="@鲸鲸 please review now",
+        router,
+        room,
+        members[MemberRole.ORCHESTRATOR],
+        members[MemberRole.IMPLEMENTER],
+        content="@鲸鲸 please review now",
     )
     assert len(event.deliveries) == 1
     assert event.deliveries[0].recipient_id == members[MemberRole.IMPLEMENTER].member_id
@@ -173,14 +223,10 @@ async def test_turn_reads_messages_routes_actions_and_acks_after_success(
             ]
         },
     )
-    runner, router, rooms, _, adapter, task, room, members = make_context(
-        tmp_path, scenario
-    )
+    runner, router, rooms, _, adapter, task, room, members = make_context(tmp_path, scenario)
     implementer = members[MemberRole.IMPLEMENTER]
     planner = members[MemberRole.PLANNER]
-    trigger = send_trigger(
-        router, room, members[MemberRole.ORCHESTRATOR], implementer
-    )
+    trigger = send_trigger(router, room, members[MemberRole.ORCHESTRATOR], implementer)
 
     result = await runner.run(
         task,
@@ -297,9 +343,7 @@ async def test_invalid_or_failed_turn_does_not_ack_input(tmp_path: Path) -> None
     invalid = FakeAgentScenario(output={"actions": [{"action": "send_message"}]})
     runner, router, rooms, _, _, task, room, members = make_context(tmp_path, invalid)
     implementer = members[MemberRole.IMPLEMENTER]
-    trigger = send_trigger(
-        router, room, members[MemberRole.ORCHESTRATOR], implementer
-    )
+    trigger = send_trigger(router, room, members[MemberRole.ORCHESTRATOR], implementer)
     with pytest.raises(ChatActionError, match="invalid agent chat turn"):
         await runner.run(
             task,
@@ -333,9 +377,7 @@ async def test_invalid_or_failed_turn_does_not_ack_input(tmp_path: Path) -> None
 
 @pytest.mark.asyncio
 async def test_turn_can_resume_native_agent_session(tmp_path: Path) -> None:
-    scenario = FakeAgentScenario(
-        output={"actions": [{"action": "finish_turn", "content": "Done"}]}
-    )
+    scenario = FakeAgentScenario(output={"actions": [{"action": "finish_turn", "content": "Done"}]})
     runner, router, _, _, adapter, task, room, members = make_context(tmp_path, scenario)
     implementer = members[MemberRole.IMPLEMENTER]
     send_trigger(router, room, members[MemberRole.ORCHESTRATOR], implementer)
@@ -358,9 +400,7 @@ async def test_planner_answers_clarification_and_publishes_versioned_plan(
     tmp_path: Path,
 ) -> None:
     scenario = FakeAgentScenario()
-    runner, router, rooms, artifacts, _, task, room, members = make_context(
-        tmp_path, scenario
-    )
+    runner, router, rooms, artifacts, _, task, room, members = make_context(tmp_path, scenario)
     planner = members[MemberRole.PLANNER]
     implementer = members[MemberRole.IMPLEMENTER]
     initial_metadata = artifacts.put_json(
@@ -378,16 +418,12 @@ async def test_planner_answers_clarification_and_publishes_versioned_plan(
             trace_id=task.trace_id,
             sender_id=planner.member_id,
             recipients=(
-                MessageRecipient(
-                    kind=RecipientKind.MEMBER, member_id=implementer.member_id
-                ),
+                MessageRecipient(kind=RecipientKind.MEMBER, member_id=implementer.member_id),
             ),
             type=MessageType.PLAN_SHARED,
             content="Initial plan",
             artifacts=(
-                artifacts.get_reference(
-                    initial_metadata.artifact_id, summary="Initial plan"
-                ),
+                artifacts.get_reference(initial_metadata.artifact_id, summary="Initial plan"),
             ),
             idempotency_key="initial-plan",
         ),
@@ -399,9 +435,7 @@ async def test_planner_answers_clarification_and_publishes_versioned_plan(
             task_id=task.id,
             trace_id=task.trace_id,
             sender_id=implementer.member_id,
-            recipients=(
-                MessageRecipient(kind=RecipientKind.MEMBER, member_id=planner.member_id),
-            ),
+            recipients=(MessageRecipient(kind=RecipientKind.MEMBER, member_id=planner.member_id),),
             type=MessageType.QUESTION,
             content="Which fallback should the implementation use?",
             idempotency_key="clarification-question",

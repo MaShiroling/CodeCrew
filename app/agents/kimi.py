@@ -13,9 +13,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 from uuid import UUID
 
+from app.agents.artifact_inputs import verify_artifact_files
 from app.agents.base import AgentAdapter, AgentAdapterError, AgentSessionNotFoundError
 from app.agents.kimi_boundary import KimiBoundaryError, KimiWriteBoundary
 from app.agents.models import (
+    AgentArtifactInput,
     AgentCapability,
     AgentEvent,
     AgentEventType,
@@ -71,6 +73,7 @@ subagents: []"""
 class _KimiSessionState:
     session: AgentSession
     process: ManagedProcess
+    artifact_inputs: tuple[AgentArtifactInput, ...] = ()
     queue: asyncio.Queue[AgentEvent | object] = field(default_factory=asyncio.Queue)
     completion: asyncio.Task[AgentResult] | None = None
     stream_claimed: bool = False
@@ -92,8 +95,15 @@ class KimiCodeAdapter(AgentAdapter):
     MODEL = "kimi-for-coding"
     BASE_URL = "https://api.kimi.com/coding/v1"
     _PASSTHROUGH_ENV = (
-        "PATH", "LANG", "LC_ALL", "USER", "TERM", "NODE_EXTRA_CA_CERTS",
-        "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY",
+        "PATH",
+        "LANG",
+        "LC_ALL",
+        "USER",
+        "TERM",
+        "NODE_EXTRA_CA_CERTS",
+        "HTTPS_PROXY",
+        "HTTP_PROXY",
+        "NO_PROXY",
     )
 
     def __init__(
@@ -120,7 +130,9 @@ class KimiCodeAdapter(AgentAdapter):
         self._env_source = os.environ if env_source is None else env_source
         self._boundary_factory = boundary_factory
         self._max_steps_per_turn = max_steps_per_turn
-        self._agent_file = Path(__file__).resolve().parent / "assets" / "kimi_restricted_implementer.md"
+        self._agent_file = (
+            Path(__file__).resolve().parent / "assets" / "kimi_restricted_implementer.md"
+        )
         self._sessions: dict[UUID, _KimiSessionState] = {}
 
     @property
@@ -130,7 +142,11 @@ class KimiCodeAdapter(AgentAdapter):
     @property
     def capabilities(self) -> frozenset[AgentCapability]:
         return frozenset(
-            {AgentCapability.REPOSITORY_ANALYSIS, AgentCapability.CODE_EDIT, AgentCapability.STREAMING}
+            {
+                AgentCapability.REPOSITORY_ANALYSIS,
+                AgentCapability.CODE_EDIT,
+                AgentCapability.STREAMING,
+            }
         )
 
     async def start(self, request: AgentRequest) -> AgentSession:
@@ -146,6 +162,12 @@ class KimiCodeAdapter(AgentAdapter):
                 "KIMI_MODEL_API_KEY (Kimi Code membership key) is required for isolated Kimi CLI"
             )
         worktree = self._validate_worktree(request)
+        input_paths = await asyncio.to_thread(verify_artifact_files, request.artifact_inputs)
+        if any(
+            path.is_relative_to(worktree) or path.is_relative_to(self._runtime_root.resolve())
+            for path in input_paths
+        ):
+            raise AgentAdapterError("Artifact inputs must be outside writable worktree and runtime")
         session = AgentSession(
             task_id=request.task_id,
             trace_id=request.trace_id,
@@ -164,6 +186,7 @@ class KimiCodeAdapter(AgentAdapter):
                     self._agent_file,
                     Path(shutil.which(self._executable) or self._executable),
                 ),
+                read_only_files=input_paths,
             )
             command = boundary.wrap(self.build_command(request))
         except KimiBoundaryError as exc:
@@ -178,15 +201,22 @@ class KimiCodeAdapter(AgentAdapter):
         except ProcessStartError as exc:
             raise AgentAdapterError(str(exc)) from exc
 
-        state = _KimiSessionState(session=session, process=process)
+        state = _KimiSessionState(
+            session=session, process=process, artifact_inputs=request.artifact_inputs
+        )
         self._sessions[session.session_id] = state
         state.completion = asyncio.create_task(self._consume(state))
         return session
 
     def build_command(self, request: AgentRequest) -> list[str]:
         return [
-            self._executable, "--prompt", request.prompt, "--output-format", "stream-json",
-            "--agent-file", str(self._agent_file),
+            self._executable,
+            "--prompt",
+            request.prompt,
+            "--output-format",
+            "stream-json",
+            "--agent-file",
+            str(self._agent_file),
         ]
 
     def build_process_env(self, runtime: Path, key: str) -> dict[str, str]:
@@ -218,7 +248,10 @@ class KimiCodeAdapter(AgentAdapter):
         if expected.is_symlink() or not expected.is_dir() or not (expected / ".git").exists():
             raise AgentAdapterError("request does not name a managed Git worktree")
         worktree = expected.resolve(strict=True)
-        if worktree.parent != self._worktree_root or request.working_directory.resolve() != worktree:
+        if (
+            worktree.parent != self._worktree_root
+            or request.working_directory.resolve() != worktree
+        ):
             raise AgentAdapterError("request escaped its task-owned worktree")
         return worktree
 
@@ -228,8 +261,12 @@ class KimiCodeAdapter(AgentAdapter):
         task_runtime = self._runtime_root / str(task_id)
         runtime = task_runtime / str(session_id)
         for path in (
-            self._runtime_root, task_runtime, runtime,
-            runtime / "home", runtime / "kimi-home", runtime / "tmp",
+            self._runtime_root,
+            task_runtime,
+            runtime,
+            runtime / "home",
+            runtime / "kimi-home",
+            runtime / "tmp",
         ):
             if path.is_symlink():
                 raise AgentAdapterError(f"Kimi runtime directory must not be a symlink: {path}")
@@ -288,6 +325,10 @@ class KimiCodeAdapter(AgentAdapter):
                     await state.process.cancel()
                     break
             process_result = await state.process.wait()
+            try:
+                await asyncio.to_thread(verify_artifact_files, state.artifact_inputs)
+            except AgentAdapterError:
+                state.error = "Artifact input changed during Kimi turn"
             result = self._build_result(state, process_result)
         except Exception as exc:  # noqa: BLE001 - close the event stream at the adapter boundary.
             state.session.status = AgentSessionStatus.FAILED
@@ -322,11 +363,31 @@ class KimiCodeAdapter(AgentAdapter):
                 if name not in _ALLOWED_TOOLS:
                     state.error = f"Kimi CLI attempted a disallowed tool: {name or 'unknown'}"
                     return False
-                self._emit(state, AgentEventType.TOOL_CALL, data={"name": name}, native_event_type="assistant.tool_call")
+                data = {"name": name}
+                # Keep only the file path, not arbitrary tool arguments or contents.
+                function = call.get("function", call)
+                arguments = function.get("arguments") if isinstance(function, dict) else None
+                if isinstance(arguments, str):
+                    try:
+                        arguments = json.loads(arguments)
+                    except json.JSONDecodeError:
+                        arguments = None
+                if isinstance(arguments, dict):
+                    path = arguments.get("path", arguments.get("file_path"))
+                    if isinstance(path, str) and 0 < len(path) <= 4096 and "\0" not in path:
+                        data["path"] = path
+                self._emit(
+                    state,
+                    AgentEventType.TOOL_CALL,
+                    data=data,
+                    native_event_type="assistant.tool_call",
+                )
             content = payload.get("content")
             if isinstance(content, str) and content:
                 state.last_message = content
-                self._emit(state, AgentEventType.MESSAGE, text=content, native_event_type="assistant")
+                self._emit(
+                    state, AgentEventType.MESSAGE, text=content, native_event_type="assistant"
+                )
             return True
         if role == "tool":
             call_id = payload.get("tool_call_id")
@@ -373,15 +434,35 @@ class KimiCodeAdapter(AgentAdapter):
 
     def _build_result(self, state: _KimiSessionState, process: ProcessResult) -> AgentResult:
         if state.error is not None:
-            reason, status, event = AgentExitReason.FAILED, AgentSessionStatus.FAILED, AgentEventType.FAILED
+            reason, status, event = (
+                AgentExitReason.FAILED,
+                AgentSessionStatus.FAILED,
+                AgentEventType.FAILED,
+            )
         elif process.cancelled:
-            reason, status, event = AgentExitReason.CANCELLED, AgentSessionStatus.CANCELLED, AgentEventType.CANCELLED
+            reason, status, event = (
+                AgentExitReason.CANCELLED,
+                AgentSessionStatus.CANCELLED,
+                AgentEventType.CANCELLED,
+            )
         elif process.timed_out:
-            reason, status, event = AgentExitReason.TIMED_OUT, AgentSessionStatus.TIMED_OUT, AgentEventType.FAILED
+            reason, status, event = (
+                AgentExitReason.TIMED_OUT,
+                AgentSessionStatus.TIMED_OUT,
+                AgentEventType.FAILED,
+            )
         elif process.exit_code != 0 or state.last_message is None:
-            reason, status, event = AgentExitReason.FAILED, AgentSessionStatus.FAILED, AgentEventType.FAILED
+            reason, status, event = (
+                AgentExitReason.FAILED,
+                AgentSessionStatus.FAILED,
+                AgentEventType.FAILED,
+            )
         else:
-            reason, status, event = AgentExitReason.COMPLETED, AgentSessionStatus.COMPLETED, AgentEventType.COMPLETED
+            reason, status, event = (
+                AgentExitReason.COMPLETED,
+                AgentSessionStatus.COMPLETED,
+                AgentEventType.COMPLETED,
+            )
         state.session.status = status
         self._emit(state, event, text=state.error)
         return AgentResult(

@@ -314,7 +314,8 @@ Code CLI（仅限 macOS，并需在 shell 环境提供新的 Kimi Code **会员*
 白金/Codex、月见/Kimi、鲸鲸/DeepSeek 的显式团队示例见
 [`examples/server-config.codecrew-team.python.json`](examples/server-config.codecrew-team.python.json)。
 它已通过聊天运行时的离线协议预检，尚未通过三真实 Agent 端到端验收。
-下一步还需解决 Kimi 对受控 Artifact 引用的读取，再进行在线 Planner → Implementer 联调。
+已实现 Kimi 对本轮 Artifact 的逐文件只读授权，并通过 Plan → 澄清 → Plan v2 → 修改的
+离线联调；4 回合真实 Planner → Implementer 用例已准备，尚待同终端显式启用验收。
 5 个子步骤、预检命令及权限边界见[三 Agent 联调说明](docs/three-agent-integration.md)。
 
 ## 配置

@@ -10,6 +10,7 @@
 - `/ui/` 工作台：任务列表、聊天室、Plan、Artifact 预览、实时状态，以及创建/取消任务操作。页面尚未接入人工消息操作。
 - Codex CLI、Claude Code、Kimi Code CLI 与 Fake Agent 适配路径；DeepSeek Reviewer 已通过离线测试和用户本机独立在线冒烟。
 - 三 Agent 联调第 1 子步骤：显式白金/Codex、月见/Kimi、鲸鲸/DeepSeek 配置；角色动作提示与严格 JSON 包装兼容；生产接线的离线聊天协议测试。
+- 第 2 子步骤开发及离线验证：本轮 Artifact 逐文件只读授权、完整性复核，以及 Planner → 澄清 → Plan v2 → Implementer 的固定夹具；真实在线用例已准备但未运行。
 
 ## 验证基线
 
@@ -26,6 +27,7 @@
 - DeepSeek Reviewer 在线用例首次因 Markdown JSON 包装失败；有限格式兼容修复后，2026-09-26 用户在同一终端重跑并报告单条用例通过。有效证据获批、无 Diff 被拒绝、独立原生会话、允许工具和文件哈希断言均通过。桌面任务进程没有代为调用，也未确认实际远端模型版本。
 - 第 4 子步骤已收尾：统一离线入口 `scripts/check_offline.py`、验收来源/缺失原始证据/成本限制及下一阶段聊天运行时条件已记录。独立 Reviewer 冒烟不覆盖聊天室动作协议或三 Agent 完整闭环。
 - 三 Agent 联调第 1 子步骤的定向测试及全量 `scripts/check_offline.py` 已通过（全量在允许 Seatbelt 的环境重跑）；真实适配器解析模拟 CLI 输出，验证人格、角色权限、会话、Artifact、路由与 ACK。未调用模型，也未运行完整任务闭环。
+- 第 2 子步骤定向用例及最终全量离线入口均通过，Ruff 通过；新增 Seatbelt 文件级读取/写入拒绝测试通过。在线用例显式跳过，尚无真实双 Agent 联调结果。
 
 ## 尚未验证或尚未实现
 
@@ -50,5 +52,6 @@
 10. 完善中文 README、演示、部署边界与简历材料。
 
 每一步只合入一个可独立验证的增量，运行对应测试，并保留小步 Git 提交。
-三真实 Agent 联调第 1 子步骤已通过离线预检；下一步是 **第 2 子步骤：真实 Planner → Implementer**，
-先解决 Kimi 对 Artifact 的受控只读访问，再运行固定小型任务。详见[联调说明](three-agent-integration.md)。
+三真实 Agent 联调第 2 子步骤已完成开发和离线验证（含逐文件 Seatbelt 读写边界）。
+下一行动是 **在配置密钥的同一终端运行第 2 子步骤在线验收**；通过后进入第 3 子步骤完整成功路径。
+本任务进程没有 Kimi 密钥，未代为调用模型。详见[联调说明](three-agent-integration.md)。

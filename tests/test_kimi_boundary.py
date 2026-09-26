@@ -12,7 +12,9 @@ from app.agents.kimi_boundary import KimiBoundaryError, KimiWriteBoundary
 from app.workspace.permissions import PermissionPolicy
 
 
-def make_boundary(tmp_path: Path, *, allowed_paths: tuple[str, ...] = ("app",)) -> KimiWriteBoundary:
+def make_boundary(
+    tmp_path: Path, *, allowed_paths: tuple[str, ...] = ("app",)
+) -> KimiWriteBoundary:
     worktree = tmp_path / "worktree"
     worktree.mkdir()
     (worktree / "app").mkdir()
@@ -83,13 +85,20 @@ def test_boundary_rejects_runtime_inside_worktree_and_missing_sandbox(tmp_path: 
 
 def test_kimi_agent_profile_exposes_no_command_or_delegation_tool() -> None:
     profile = (
-        Path(__file__).resolve().parents[1] / "app" / "agents" / "assets"
+        Path(__file__).resolve().parents[1]
+        / "app"
+        / "agents"
+        / "assets"
         / "kimi_restricted_implementer.md"
     ).read_text(encoding="utf-8")
     frontmatter = profile.split("---", maxsplit=2)[1]
     tools_section = frontmatter.split("tools:", maxsplit=1)[1].split("subagents:", maxsplit=1)[0]
     assert {line.strip() for line in tools_section.splitlines() if line.strip()} == {
-        "- Read", "- Grep", "- Glob", "- Write", "- Edit"
+        "- Read",
+        "- Grep",
+        "- Glob",
+        "- Write",
+        "- Edit",
     }
     assert "subagents: []" in frontmatter
 
@@ -140,11 +149,14 @@ def test_seatbelt_blocks_real_home_reads_but_allows_worktree(tmp_path: Path) -> 
         pytest.skip("no home .ssh directory to probe")
     for target, should_succeed in ((inside, True), (protected, False)):
         result = subprocess.run(
-            boundary.wrap([
-                "/usr/bin/python3", "-c",
-                "from pathlib import Path; import sys; Path(sys.argv[1]).read_text()",
-                str(target),
-            ]),
+            boundary.wrap(
+                [
+                    "/usr/bin/python3",
+                    "-c",
+                    "from pathlib import Path; import sys; Path(sys.argv[1]).read_text()",
+                    str(target),
+                ]
+            ),
             cwd=boundary.worktree,
             capture_output=True,
             text=True,
@@ -183,3 +195,44 @@ def test_kimi_binary_can_start_inside_write_boundary_without_model_call(tmp_path
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip()
+
+
+@pytest.mark.skipif(platform.system() != "Darwin", reason="Seatbelt is macOS-only")
+def test_seatbelt_grants_only_one_readonly_artifact_not_its_siblings(tmp_path: Path) -> None:
+    original = make_boundary(tmp_path)
+    artifacts = tmp_path / "artifact-home"
+    artifacts.mkdir()
+    plan, sibling = artifacts / "plan.json", artifacts / "other.json"
+    plan.write_text("approved plan", encoding="utf-8")
+    sibling.write_text("unrelated evidence", encoding="utf-8")
+    boundary = KimiWriteBoundary(
+        worktree=original.worktree,
+        runtime_directory=original.runtime_directory,
+        policy=original.policy,
+        read_only_files=(plan,),
+    )
+    # Protect a disposable synthetic home; never create probes in the user's home.
+    boundary.protected_home = artifacts
+    for target, operation, expected in (
+        (plan, "read_text()", True),
+        (sibling, "read_text()", False),
+        (plan, "write_text('tampered')", False),
+        (plan, "unlink()", False),
+    ):
+        result = subprocess.run(
+            boundary.wrap(
+                [
+                    "/usr/bin/python3",
+                    "-c",
+                    f"from pathlib import Path; import sys; Path(sys.argv[1]).{operation}",
+                    str(target),
+                ]
+            ),
+            cwd=boundary.worktree,
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        assert (result.returncode == 0) is expected, result.stderr
+    assert plan.read_text(encoding="utf-8") == "approved plan"
