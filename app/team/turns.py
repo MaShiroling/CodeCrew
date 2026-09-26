@@ -518,12 +518,64 @@ class AgentTurnRunner:
                 "Plan, Git Diff, change manifest, verification report and test logs. "
                 "Compare these with the original Issue; do not trust an Agent summary. "
                 "Send approve_review or request_rework to orchestrator with artifact_content "
-                "containing issues. Each issue has issue_id (UUID), priority "
+                "containing issues, and OMIT artifact_ids when creating this new report. "
+                "For these review actions, artifact_ids is an alternative source of an existing "
+                "ReviewReport, NOT a list of Plan, Diff, verification or log evidence you read. "
+                "Never supply both artifact_ids and artifact_content, or neither. "
+                "Describe supporting evidence in content; input references remain in New messages. "
+                "Each issue has issue_id (UUID), priority "
                 "(low, medium, high, critical), summary, and resolved. Rework requires an "
                 "unresolved issue. Approval must carry forward prior issue IDs and cannot "
                 "include unresolved high or critical issues. Do not approve without evidence."
             ),
         }[own_role]
+        review_examples_prompt = ""
+        if own_role is MemberRole.REVIEWER:
+            # Show the recommended new-report shape, not two alternative sources together.
+            schema = {
+                "actions": [
+                    {
+                        "action": "approve_review | request_rework",
+                        "recipient": {"kind": "role", "role": "orchestrator"},
+                        "content": "evidence-based review summary",
+                        "artifact_content": {"issues": []},
+                    },
+                    {"action": "finish_turn", "content": "Review ended; not task success"},
+                ]
+            }
+            review_examples = []
+            for action, issues in (
+                ("approve_review", []),
+                (
+                    "request_rework",
+                    [
+                        {
+                            "issue_id": "00000000-0000-4000-8000-000000000001",
+                            "priority": "high",
+                            "summary": "Replace with a defect supported by inspected evidence",
+                            "resolved": False,
+                        }
+                    ],
+                ),
+            ):
+                review_examples.append(
+                    {
+                        "actions": [
+                            {
+                                "action": action,
+                                "recipient": {"kind": "role", "role": "orchestrator"},
+                                "content": "Replace with your evidence-based review summary",
+                                "artifact_content": {"issues": issues},
+                            },
+                            {"action": "finish_turn", "content": "Review ended; not task success"},
+                        ]
+                    }
+                )
+            review_examples_prompt = (
+                "Reviewer output examples (choose one; do not copy example findings or IDs; "
+                "generate UUIDs for new issues and retain prior IDs for existing issues):\n"
+                f"{json.dumps(review_examples, ensure_ascii=False)}\n\n"
+            )
         return (
             "You are participating in a controlled CodeCrew task room. "
             "The original Issue, role permissions, verification plan, and CompletionGuard "
@@ -548,6 +600,7 @@ class AgentTurnRunner:
             f"Plan history:\n{json.dumps(plan_history, ensure_ascii=False)}\n\n"
             f"Review history:\n{json.dumps(review_history, ensure_ascii=False)}\n\n"
             f"Action schema:\n{json.dumps(schema, ensure_ascii=False)}\n\n"
+            f"{review_examples_prompt}"
             "Final response contract: Return exactly one raw JSON object with the "
             'top-level key "actions". No Markdown fences, introduction, explanation, '
             "or trailing text outside the object. Put explanations, progress, questions, "

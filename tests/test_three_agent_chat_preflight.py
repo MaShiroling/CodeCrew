@@ -38,6 +38,7 @@ from app.team import (
     RoomMember,
     RouteNotAllowedError,
     TeamRoom,
+    parse_agent_chat_turn,
 )
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples/server-config.codecrew-team.python.json"
@@ -295,6 +296,22 @@ async def test_real_adapter_shapes_route_persona_bound_chat_actions(
         assert "--tools=Read,Glob,Grep" in argv
         assert "KIMI_MODEL_API_KEY" not in call["env"]
         assert outgoing.artifacts[0].type is ArtifactType.REVIEW_REPORT
+        assert "OMIT artifact_ids" in prompt
+        assert "NOT a list of Plan, Diff, verification or log evidence" in prompt
+        schema = json.loads(prompt.split("Action schema:\n", 1)[1].split("\n\n", 1)[0])
+        assert "artifact_ids" not in schema["actions"][0]
+        assert schema["actions"][0]["action"] == "approve_review | request_rework"
+        assert schema["actions"][1]["action"] == "finish_turn"
+        examples = json.loads(
+            prompt.split("Reviewer output examples", 1)[1].split(":\n", 1)[1].split("\n\n", 1)[0]
+        )
+        assert [parse_agent_chat_turn(example).actions[0].action.value for example in examples] == [
+            "approve_review", "request_rework"
+        ]
+        for example in examples:
+            assert "artifact_ids" not in example["actions"][0]
+            assert set(example["actions"][0]["artifact_content"]) == {"issues"}
+        assert examples[1]["actions"][0]["artifact_content"]["issues"][0]["resolved"] is False
     for bound_role, name in service.agent_names.items():
         descriptor = service.event_loop.executor.turns.registry.describe(name)
         assert {item.value for item in descriptor.roles} == {bound_role.value}

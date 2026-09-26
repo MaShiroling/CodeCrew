@@ -26,6 +26,35 @@
 - 格式错误、越权审批、含未解决高优先级问题的批准均被拒绝；对应输入保留未 ACK。
 - 角色注册严格分离：白金没有 Implementer 写权限，鲸鲸只注册 Reviewer。
 
+### Reviewer 报告来源契约
+
+`approve_review` / `request_rework` 的 `artifact_ids` 和 `artifact_content` 是
+**两种互斥的评审报告来源**，不是“引用证据 + 输出报告”组合：
+
+- 生成新报告：使用 `artifact_content`，省略 `artifact_ids`。最小报告内容为
+  `{"issues": []}`；是否批准由动作类型决定，不需要额外的 `decision` 字段。
+- 使用已有报告：使用 `artifact_ids` 引用当前任务/Trace 下的 `ReviewReport`，省略
+  `artifact_content`。运行时仍检查报告类型、归属、完整性及评审结论。
+- Plan、Diff、Verifier 和日志属于收到的输入证据，不能填成评审动作的报告来源。
+  可在动作 `content` 中解释支持结论的证据；文字引用不授予新的读取权限。
+- 同时提供两种来源，或两种都没有，均拒绝；不自动删字段、不自动补报告，也不增加模型重试。
+
+批准示例（仅演示格式，实际批准必须以读取的证据为依据）：
+
+```json
+{"actions":[{"action":"approve_review","recipient":{"kind":"role","role":"orchestrator"},"content":"根据已读取的 Diff 和测试证据批准，等待完成守卫。","artifact_content":{"issues":[]}},{"action":"finish_turn","content":"评审回合结束，不代表任务成功。"}]}
+```
+
+返工示例（新问题生成自己的 UUID；历史问题沿用原 ID）：
+
+```json
+{"actions":[{"action":"request_rework","recipient":{"kind":"role","role":"orchestrator"},"content":"测试证据存在未解决的问题，需要返工。","artifact_content":{"issues":[{"issue_id":"00000000-0000-4000-8000-000000000001","priority":"high","summary":"示例问题：实际应填写有证据支持的缺陷。","resolved":false}]}},{"action":"finish_turn","content":"等待返工，不代表任务成功。"}]}
+```
+
+Reviewer 回合提示优先展示新报告形状与上述两类示例，不再把两个来源并列在推荐
+格式中。已有报告路径的代码支持不变；未解决高优先级问题及 CompletionGuard 的校验不变。
+格式示例不保证真实模型遵守，仍需在线验收。
+
 离线预检：
 
 ```bash

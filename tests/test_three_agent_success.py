@@ -99,6 +99,9 @@ class ReviewerProcessRunner:
             "content": "Independent review based on supplied artifacts",
             "artifact_content": {"issues": issues},
         }
+        if self.mode == "dual_sources":
+            # Reproduce the real Reviewer mistake: input citations + new report together.
+            action["artifact_ids"] = [ref["artifact_id"] for ref in evidence]
         answer = json.dumps(
             {"actions": [action, {"action": "finish_turn", "content": "Review ended"}]}
         )
@@ -268,6 +271,7 @@ async def test_oversized_review_evidence_fails_before_launch(tmp_path, monkeypat
         ("tamper", AgentTurnError, "Artifact changed"),
         ("high_issue", AgentTurnError, "high-priority"),
         ("ambiguous", ChatActionError, "not valid JSON"),
+        ("dual_sources", ChatActionError, "requires exactly one"),
     ],
 )
 async def test_review_integrity_failures_cannot_complete(tmp_path, mode, error, message):
@@ -287,3 +291,19 @@ async def test_review_integrity_failures_cannot_complete(tmp_path, mode, error, 
         assert fixture.router.trace_store.list(
             trace_id=fixture.task.trace_id, type=TraceEventType.AGENT_TURN_FAILED
         )
+        if mode == "dual_sources":
+            assert fixture.runner.rooms.pending_for(fixture.members[MemberRole.REVIEWER].member_id)
+            assert not any(
+                item.message.type in {MessageType.REVIEW_APPROVED, MessageType.REWORK_REQUEST}
+                for item in fixture.runner.rooms.list_messages(fixture.room.room_id)
+            )
+            raw_events = fixture.router.trace_store.list(
+                trace_id=fixture.task.trace_id, type=TraceEventType.AGENT_OUTPUT_RECORDED
+            )
+            reviewer_output = next(
+                item.event for item in raw_events if item.event.payload["role"] == "reviewer"
+            )
+            raw = fixture.store.read_json(reviewer_output.payload["artifact_id"])
+            rejected = json.loads(raw["output"]["result"])["actions"][0]
+            assert rejected["artifact_ids"]
+            assert rejected["artifact_content"] == {"issues": []}

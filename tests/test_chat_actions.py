@@ -168,3 +168,25 @@ def test_rework_action_requires_structured_review_evidence() -> None:
         },
     )
     assert action.artifact_content is not None
+
+
+@pytest.mark.parametrize("action", ["approve_review", "request_rework"])
+@pytest.mark.parametrize("source", ["inline", "existing", "both", "neither"])
+def test_review_report_sources_remain_mutually_exclusive(action: str, source: str) -> None:
+    payload = {
+        "action": action,
+        "recipient": {"kind": "role", "role": "orchestrator"},
+        "content": "Review summary based on inspected input evidence",
+    }
+    if source in {"inline", "both"}:
+        payload["artifact_content"] = {"issues": []}
+    if source in {"existing", "both"}:
+        payload["artifact_ids"] = [str(uuid4())]
+    turn = {"actions": [payload, {"action": "finish_turn"}]}
+    if source in {"both", "neither"}:
+        with pytest.raises(ChatActionError, match="requires exactly one"):
+            parse_agent_chat_turn({"result": json.dumps(turn)})
+    else:
+        parsed = parse_agent_chat_turn(turn)
+        assert bool(parsed.actions[0].artifact_ids) == (source == "existing")
+        assert (parsed.actions[0].artifact_content is not None) == (source == "inline")
