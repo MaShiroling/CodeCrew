@@ -12,6 +12,12 @@ def test_three_agent_live_flag_is_explicitly_disabled() -> None:
     )
 
 
+def test_rework_and_budget_live_flags_are_explicitly_disabled() -> None:
+    for flag in ("CODECREW_RUN_THREE_AGENT_REWORK_LIVE", "CODECREW_RUN_THREE_AGENT_BUDGET_LIVE"):
+        assert flag in LIVE_FLAGS
+        assert offline_environment({flag: "1"})[flag] == "0"
+
+
 def test_offline_environment_disables_live_tests_and_does_not_mutate_parent() -> None:
     original = {name: "1" for name in LIVE_FLAGS}
     original.update(dict.fromkeys(MODEL_CREDENTIALS, "fake-test-secret"))

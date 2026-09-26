@@ -171,6 +171,28 @@ class WorkflowDirectiveExecutor:
             if directive.target_role is None:
                 raise WorkflowExecutionError("wake_agent directive requires target_role")
             member = self._member_for_role(runtime.room_id, directive.target_role)
+            if (
+                member.role is MemberRole.IMPLEMENTER
+                and source.message.type in {MessageType.REWORK_REQUEST, MessageType.COMPLETION_REJECTED}
+                and runtime.task.state is TaskState.IMPLEMENTING
+            ):
+                handoff = self._publish_system_event(
+                    runtime,
+                    sender=self._member_for_role(runtime.room_id, MemberRole.ORCHESTRATOR),
+                    recipient=member,
+                    type=MessageType.SYSTEM_EVENT,
+                    content=(
+                        f"Rework round {runtime.task.rework_rounds}: read the supplied review/"
+                        "completion decision, latest Plan and verification evidence; fix unresolved "
+                        "issues without changing requirements or tests, then request_review."
+                    ),
+                    artifacts=self._rework_evidence(runtime, source),
+                    source=source,
+                )
+                result = await self._run_members((member,), runtime, source)
+                return result.model_copy(
+                    update={"produced_events": (handoff, *result.produced_events)}
+                )
             return await self._run_members((member,), runtime, source)
         if directive.kind is WorkflowDirectiveKind.WAKE_MEMBERS:
             members = tuple(
@@ -188,6 +210,22 @@ class WorkflowDirectiveExecutor:
         if directive.kind is WorkflowDirectiveKind.RUN_COMPLETION_GUARD:
             return self._run_completion_guard(source, runtime)
         if directive.kind is WorkflowDirectiveKind.REQUEST_HUMAN:
+            if (
+                runtime.task.state is TaskState.NEEDS_HUMAN
+                and source.message.type in {MessageType.REWORK_REQUEST, MessageType.COMPLETION_REJECTED}
+            ):
+                escalation = self._publish_system_event(
+                    runtime,
+                    sender=self._member_for_role(runtime.room_id, MemberRole.ORCHESTRATOR),
+                    recipient=self._member_for_role(runtime.room_id, MemberRole.HUMAN),
+                    type=MessageType.HUMAN_INPUT_REQUEST,
+                    content=directive.reason,
+                    artifacts=self._rework_evidence(runtime, source),
+                    source=source,
+                )
+                return DirectiveExecutionResult(
+                    produced_events=(escalation,), paused=True, pause_reason=directive.reason
+                )
             return DirectiveExecutionResult(
                 paused=True,
                 pause_reason=directive.reason,
@@ -397,6 +435,23 @@ class WorkflowDirectiveExecutor:
             raise WorkflowExecutionError(
                 "review evidence exceeds the room Artifact reference limit"
             )
+        return tuple(unique.values())
+
+    def _rework_evidence(
+        self, runtime: WorkflowRuntime, source: StoredChatMessage
+    ) -> tuple[ArtifactReference, ...]:
+        references = list(source.message.artifacts)
+        if runtime.latest_verification is not None:
+            references.extend(self._review_evidence(runtime, runtime.latest_verification))
+        else:
+            plan = self.turns.rooms.latest_plan_revision(runtime.room_id)
+            if plan is not None:
+                references.append(ArtifactReference.from_metadata(
+                    self.artifacts.get_metadata(plan.artifact_id), summary=f"Plan v{plan.version}"
+                ))
+        unique = {reference.artifact_id: reference for reference in references}
+        if len(unique) > MAX_CHAT_ARTIFACTS:
+            raise WorkflowExecutionError("rework evidence exceeds the room Artifact reference limit")
         return tuple(unique.values())
 
     def _run_completion_guard(

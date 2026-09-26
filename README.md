@@ -13,7 +13,8 @@ Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不
 > Coordinator 和跨进程崩溃恢复测试已完成。阶段七已打通任务 API、SSE、
 > 显式配置的本地 CLI 服务入口与 Fake Agent 端到端验证；三位成员的人格资料与
 > 团队原则已接入 Agent 回合；本地任务工作台已可创建和取消任务。UI 人工干预、
-> 三真实模型完整闭环和正式评测集尚未完成。最新验证状态见
+> 三真实 Agent 的受控成功夹具已通过；真实返工/预算、UI 真实团队验收和正式评测集
+> 尚未完成。最新验证状态见
 > [项目状态与后续路线](docs/project-status.md)。
 
 ## 目标工作流
@@ -34,7 +35,8 @@ Implementer（月见：Kimi Code CLI，独立 Git Worktree）
               Patch、测试证据和任务报告
 ```
 
-上图是目标团队配置，不表示这套真实三 Agent 组合已经端到端验证。当前服务示例默认
+上图是目标团队配置；这套组合的受控五回合成功夹具已通过，但不等于任意任务或 UI
+端到端验收。当前服务示例默认
 使用 Codex CLI Planner / Implementer 与 Claude Code Reviewer；Kimi 与 DeepSeek
 需要分别显式选择；DeepSeek Reviewer 的独立在线冒烟已由用户本机运行通过。
 

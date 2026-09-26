@@ -15,6 +15,7 @@ class TraceEventType(str, Enum):
     AGENT_TURN_FAILED = "agent_turn_failed"
     AGENT_OUTPUT_RECORDED = "agent_output_recorded"
     AGENT_STREAM_RECORDED = "agent_stream_recorded"
+    TEST_FAULT_INJECTED = "test_fault_injected"
     VERIFICATION_COMPLETED = "verification_completed"
     REVIEW_DECIDED = "review_decided"
     COMPLETION_DECIDED = "completion_decided"

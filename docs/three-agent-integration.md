@@ -1,6 +1,7 @@
 # 三真实 Agent 联调
 
-本阶段分 5 个子步骤。本页记录的是接线和协议验证，不把离线进程模拟当作真实模型验收。
+本页保留历史子步骤，同时按后续统一路线记录成功、返工和预算验收。
+不把离线进程模拟当作真实模型验收。
 
 ## 1. 显式团队配置与聊天协议预检（已完成离线验证）
 
@@ -262,6 +263,68 @@ Plan/Review/Completion 证据。旧归档只有最终结果，没有失败回合
 保持上方真实命令与 180 秒超时不变，不自动重试、不改成忽略超时。成功或失败输出的
 `evidence_archive` 路径可供后续读取诊断，无需先粘贴所有日志。
 
+### 第 2 步在线成功验收记录
+
+用户本机后续运行 `5c67b36b-0aa0-4703-9226-03bd254eaca5` 通过，状态 `completed`。
+已只读核对长期归档的数据库及全部 Blob 哈希，并用证据恢复服务重新核验：五回合
+角色顺序正确，Plan v1/v2 存在，Verifier 全部检查通过，Reviewer 批准且无问题，
+CompletionGuard 十项条件通过，无失败条件。任务报告为
+`457c8947-a126-485c-8d61-b317db2500f5`，完成决策为
+`33a2d3c9-0e87-4a34-8cf5-dfd2ab42b482`。五份事件诊断也已归档。
+这只验收受控成功夹具，不证明此前超时已根治、真实返工、模型具体版本、隐藏测试
+保密隔离、Reviewer OS 沙箱或 UI 端到端体验。
+
+## 第一部分第 3 步：返工与两轮预算（离线通过，在线待验收）
+
+复用生产控制器、指令执行器、Mailbox、Verifier 和 CompletionGuard，不手工设置成功状态。
+修复了只发给 Orchestrator 的拒绝无法唤醒无待处理消息的 Implementer 的接线缺口：
+有预算时由 Orchestrator 发布受控 `system_event`，携带原 ReviewReport/完成决策、最新
+Plan、验证及日志引用，再唤醒 Implementer。保留 correlation/causation、Artifact 归属和
+哈希校验、路由/读取授权及引用数量上限，不复制整段聊天历史。预算耗尽时发布带证据的
+`human_input_request`，不启动第三轮返工。
+
+两个场景是**显式故障注入实验，不是自然出错率或 Reviewer 发现率评测**：
+测试在临时 Worktree 中、实现回合结束后且 Verifier 开始前，把 `src/pricing.py` 改成
+`return sum(items) + 1`。真实测试必须据此失败；Reviewer 必须基于实际 Diff 和日志独立
+给出拒绝。不会由脚本编造、改写或替代真实 Reviewer 结论。错误批准会令该场景立即失败，
+不会追加模型纠错回合。每次注入都有 Artifact 与 `test_fault_injected` Trace，明确区别
+于 Agent 生成的结果；注入器不属于生产任务执行路径，不修改原仓库或测试。
+
+| 场景 | 控制条件 | 预期与回合上限 |
+| --- | --- | --- |
+| 一次返工成功 | 仅在初次实现后注入；返工后的代码保持 Agent 实际输出 | 2 Planner + 3 Implementer + 2 独立 Reviewer，最多 7 回合；1 轮返工，最终守卫通过 |
+| 两轮耗尽转人工 | 初次实现及两次返工后都重新注入；不要求 Agent 故意保留错误 | 2 Planner + 4 Implementer + 3 独立 Reviewer，最多 9 回合；2 轮后再次拒绝，转人工且无成功结论 |
+
+保持每回合 180 秒超时，已报告 Token 总量预算 400,000；缺失用量不按真实消耗为零解释。
+每次评审使用新的原生会话，结构化历史保留此前问题 ID；批准不能把未解决问题从列表
+直接删掉。每次修复后重新运行 Verifier，只读取当前证据。证据和注入记录继续长期归档。
+这不改变生产默认最多两轮预算，也不证明 UI、服务重启或不可信仓库隔离。
+
+离线回归：
+
+```bash
+.venv/bin/pytest -q tests/test_three_agent_rework.py tests/test_three_agent_success.py tests/test_workflow_execution.py tests/test_offline_check.py
+.venv/bin/python scripts/check_offline.py
+```
+
+在线验收分开开启，**先运行一次返工成功**（最多 7 个真实回合）：
+
+```bash
+CODECREW_RUN_THREE_AGENT_REWORK_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_three_agent_rework_live.py::test_live_three_agent_rework_success
+```
+
+通过后再运行两轮耗尽（最多 9 个真实回合）：
+
+```bash
+CODECREW_RUN_THREE_AGENT_BUDGET_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_three_agent_rework_live.py::test_live_three_agent_rework_budget_exhaustion
+```
+
+两个开关在全量离线入口中显式关闭，不自动重试。在线用例未由当前桌面任务运行。
+预算用例预期 pytest 通过且 `scenario_acceptance_passed=true`，但 `task_success=false`、
+`task_state=needs_human`、`rework_rounds=2`：它证明正确停止，而不是完成代码任务。
+归档分别位于 `evals/results/three-agent-rework_success-live/` 和
+`evals/results/three-agent-rework_exhaustion-live/`；失败同样尝试归档，不覆盖旧记录。
+
 此处的 `hidden_tests` 类别仍为可见额外断言，没有保密隔离；成功仅针对该受控夹具，
 不代表正式隐藏测试评测、实际模型版本确认、UI 驱动验收或不可信仓库安全性。
 
@@ -286,7 +349,8 @@ Plan/Review/Completion 证据。旧归档只有最终结果，没有失败回合
 
 离线测试覆盖 Kimi/鲸鲸混合包装的完整成功路径，以及歧义输出不 ACK、原文保留、
 角色越权仍被拒绝、带说明的高优先级批准仍失败、旧 Reviewer 严格接口不变。
-没有增加任何模型纠错回合或自动重试。真实五回合命令不变，仍待用户重跑。
+没有增加任何模型纠错回合或自动重试。真实五回合成功路径后续已通过，详见第 2 步
+在线记录；当前待运行的是第 3 步两个返工/预算用例。
 
 ## 后续子步骤（尚未完成）
 

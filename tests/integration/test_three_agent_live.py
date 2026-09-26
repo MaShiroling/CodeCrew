@@ -25,6 +25,11 @@ pytestmark = pytest.mark.integration
     reason="enable CODECREW_RUN_THREE_AGENT_LIVE=1 to spend up to five real Agent turns",
 )
 async def test_live_three_agent_success_path(tmp_path):
+    await run_live_three_agent_scenario(tmp_path)
+
+
+async def run_live_three_agent_scenario(tmp_path, *, scenario="success"):
+    expected_turns = {"success": 5, "rework_success": 7, "rework_exhaustion": 9}[scenario]
     if platform.system() != "Darwin":
         pytest.fail("three Agent live smoke requires macOS Seatbelt")
     for name in ("codex", "kimi", "claude"):
@@ -45,17 +50,26 @@ async def test_live_three_agent_success_path(tmp_path):
             tmp_path, CodexCliAdapter(), implementer, reviewer=reviewer
         ) as fixture:
             try:
-                result = await run_three_agent(fixture)
-                assert fixture.task.state is TaskState.COMPLETED
-                assert result.runtime.latest_completion and result.runtime.latest_completion.passed
-                assert len(result.workflow.agent_turns) == 5
+                result = await run_three_agent(fixture) if scenario == "success" else (
+                    await run_three_agent(fixture, scenario=scenario)
+                )
+                if scenario == "rework_exhaustion":
+                    assert fixture.task.state is TaskState.NEEDS_HUMAN
+                    assert fixture.task.rework_rounds == 2
+                    assert result.runtime.latest_completion is None
+                else:
+                    assert fixture.task.state is TaskState.COMPLETED
+                    assert result.runtime.latest_completion and result.runtime.latest_completion.passed
+                assert len(result.workflow.agent_turns) == expected_turns
             finally:
                 turn_failure = sys.exception()
                 try:
                     archive = archive_smoke_evidence(
                         fixture.store,
                         fixture.task,
-                        root=Path(__file__).resolve().parents[2] / "evals/results/three-agent-live",
+                        root=Path(__file__).resolve().parents[2] / "evals/results" / (
+                            "three-agent-live" if scenario == "success" else f"three-agent-{scenario}-live"
+                        ),
                     )
                 except Exception as archive_error:
                     print(json.dumps({
@@ -81,8 +95,11 @@ async def test_live_three_agent_success_path(tmp_path):
                         "report_artifact_id": str(result.report.artifact_id),
                         "completion_artifact_id": str(
                             result.runtime.latest_completion.artifact.artifact_id
-                        ),
-                        "task_success": True,
+                        ) if result.runtime.latest_completion else None,
+                        "task_success": fixture.task.state is TaskState.COMPLETED,
+                        "scenario": scenario,
+                        "rework_rounds": fixture.task.rework_rounds,
+                        "scenario_acceptance_passed": True,
                         "evidence_archive": str(archive),
                     }
                 )
