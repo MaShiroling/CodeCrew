@@ -93,6 +93,27 @@ CODECREW_RUN_PLANNER_KIMI_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_p
 不要粘贴凭证；协议或 Read 路径证据不符合要求时必须修复，不能改成跳过检查。
 全量离线入口已追加关闭 `CODECREW_RUN_PLANNER_KIMI_LIVE`，避免误触发付费调用。
 
+### Codex 重连诊断（2026-09-26）
+
+用户首次运行联调在 Planner 回合遇到重连超时；随后独立 CLI 诊断出现多条 `error`，
+但回退 HTTPS 后返回指定消息和 `turn.completed`。这证明该次独立请求最终完成，
+**不代表 Planner → Kimi 联调已经通过**。
+
+适配器已区分中间诊断和最终失败：`error` / `item.completed.error` 保留在事件流中，
+后续 `turn.completed` 可清除此前诊断；明确的 `turn.failed` 不可清除。回合完成还要求
+进程退出码为零，缺少完成事件、非零退出、超时或取消都不能视为完成。
+依据 [Codex 非交互 JSONL 生命周期](https://learn.chatgpt.com/docs/non-interactive-mode)
+和本机观察序列添加离线回归测试；没有修改网络配置、自动重试或放宽超时预算。
+
+若终端找不到桌面应用附带的 CLI，可先执行：
+
+```bash
+export PATH="/Applications/ChatGPT.app/Contents/Resources:$PATH"
+codex --version
+```
+
+修复后需在原配置终端重跑上方在线联调命令；独立 CLI 成功不是完整任务成功证据。
+
 ## 后续子步骤（尚未完成）
 
 3. 完整成功路径：接入 Verifier 和真实独立 Reviewer，再由 CompletionGuard 判断完成。

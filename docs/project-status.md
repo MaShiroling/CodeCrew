@@ -10,7 +10,7 @@
 - `/ui/` 工作台：任务列表、聊天室、Plan、Artifact 预览、实时状态，以及创建/取消任务操作。页面尚未接入人工消息操作。
 - Codex CLI、Claude Code、Kimi Code CLI 与 Fake Agent 适配路径；DeepSeek Reviewer 已通过离线测试和用户本机独立在线冒烟。
 - 三 Agent 联调第 1 子步骤：显式白金/Codex、月见/Kimi、鲸鲸/DeepSeek 配置；角色动作提示与严格 JSON 包装兼容；生产接线的离线聊天协议测试。
-- 第 2 子步骤开发及离线验证：本轮 Artifact 逐文件只读授权、完整性复核，以及 Planner → 澄清 → Plan v2 → Implementer 的固定夹具；真实在线用例已准备但未运行。
+- 第 2 子步骤开发及离线验证：本轮 Artifact 逐文件只读授权、完整性复核，以及 Planner → 澄清 → Plan v2 → Implementer 的固定夹具；真实在线验收已尝试，尚未通过。
 
 ## 验证基线
 
@@ -28,6 +28,8 @@
 - 第 4 子步骤已收尾：统一离线入口 `scripts/check_offline.py`、验收来源/缺失原始证据/成本限制及下一阶段聊天运行时条件已记录。独立 Reviewer 冒烟不覆盖聊天室动作协议或三 Agent 完整闭环。
 - 三 Agent 联调第 1 子步骤的定向测试及全量 `scripts/check_offline.py` 已通过（全量在允许 Seatbelt 的环境重跑）；真实适配器解析模拟 CLI 输出，验证人格、角色权限、会话、Artifact、路由与 ACK。未调用模型，也未运行完整任务闭环。
 - 第 2 子步骤定向用例及最终全量离线入口均通过，Ruff 通过；新增 Seatbelt 文件级读取/写入拒绝测试通过。在线用例显式跳过，尚无真实双 Agent 联调结果。
+- 用户在线联调首次受 CLI PATH 影响，修正后在 Planner 回合遇到重连错误误判。独立 Codex 诊断显示 HTTPS 回退后有 `turn.completed`；已修复适配器并加入离线回归，明确失败/缺少完成/非零退出/超时/取消仍拒绝。该次独立诊断不等于双 Agent 联调通过，在线验收仍需重跑。
+- 本次 Codex 重连修复的定向测试、全量 `scripts/check_offline.py` 和 Ruff 通过；全量在允许 macOS Seatbelt 的环境运行，所有真实模型测试标志关闭。保留现有依赖弃用警告，未调用模型或变更网络设置。
 
 ## 尚未验证或尚未实现
 

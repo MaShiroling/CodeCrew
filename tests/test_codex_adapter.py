@@ -146,9 +146,7 @@ def test_builds_sandboxed_non_shell_command(
 
 
 def test_resume_uses_exec_resume_subcommand() -> None:
-    command = CodexCliAdapter().build_command(
-        make_request(resume_from_session_id="thread-42")
-    )
+    command = CodexCliAdapter().build_command(make_request(resume_from_session_id="thread-42"))
 
     exec_index = command.index("exec")
     assert command[exec_index : exec_index + 3] == ["exec", "resume", "thread-42"]
@@ -230,3 +228,126 @@ async def test_preserves_non_json_stdout() -> None:
     assert events[1].type is AgentEventType.STDOUT
     assert events[1].text == "plain output\n"
 
+
+@pytest.mark.asyncio
+async def test_reconnection_and_https_fallback_can_complete() -> None:
+    reconnects = [
+        {"type": "error", "message": f"Reconnecting... {attempt}/5 (request timed out)"}
+        for attempt in range(2, 6)
+    ]
+    fallback = {
+        "type": "item.completed",
+        "item": {
+            "id": "item_0",
+            "type": "error",
+            "message": "Falling back from WebSockets to HTTPS transport. request timed out",
+        },
+    }
+    process = StubProcess(
+        [
+            json_chunk({"type": "thread.started", "thread_id": "recovered-thread"}),
+            json_chunk({"type": "turn.started"}),
+            ProcessChunk(ProcessStream.STDERR, "failed to refresh available models\n"),
+            *[json_chunk(payload) for payload in reconnects],
+            json_chunk(fallback),
+            json_chunk(
+                {
+                    "type": "item.completed",
+                    "item": {"id": "item_1", "type": "agent_message", "text": "CODECREW_CODEX_OK"},
+                }
+            ),
+            json_chunk(
+                {
+                    "type": "turn.completed",
+                    "usage": {
+                        "input_tokens": 14294,
+                        "cached_input_tokens": 12160,
+                        "output_tokens": 10,
+                    },
+                }
+            ),
+        ],
+        ProcessResult(exit_code=0, duration_ms=120),
+    )
+    adapter = CodexCliAdapter(runner=StubRunner(process))
+    session = await adapter.start(make_request())
+    events = [event async for event in adapter.stream(session.session_id)]
+    result = await adapter.wait(session.session_id)
+
+    assert result.reason is AgentExitReason.COMPLETED
+    assert result.error is None
+    assert result.output == {"message": "CODECREW_CODEX_OK"}
+    assert session.native_session_id == "recovered-thread"
+    assert result.token_usage is not None
+    assert result.token_usage.total_tokens == 14304
+    assert result.token_usage.cached_input_tokens == 12160
+    assert [event.data for event in events if event.native_event_type == "error"] == reconnects
+    assert (
+        next(event for event in events if event.native_event_type == "item.completed.error").data
+        == fallback
+    )
+    assert events[-1].type is AgentEventType.COMPLETED
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payloads",
+    [
+        [],
+        [{"type": "item.completed", "item": {"type": "agent_message", "text": "Done"}}],
+        [{"type": "error", "message": "Reconnecting... 5/5"}],
+        [{"type": "item.completed", "item": {"type": "error", "message": "fallback"}}],
+        [{"type": "turn.failed", "error": {"message": "terminal"}}, {"type": "turn.completed"}],
+        [{"type": "turn.completed"}, {"type": "turn.failed", "error": {"message": "terminal"}}],
+        [
+            {"type": "turn.failed", "error": {"message": "terminal"}},
+            {"type": "error", "message": "retry"},
+            {"type": "turn.completed"},
+        ],
+        [{"type": "turn.completed"}, {"type": "error", "message": "late error"}],
+    ],
+)
+async def test_incomplete_or_failed_stream_never_completes(payloads: list[dict[str, Any]]) -> None:
+    adapter = CodexCliAdapter(
+        runner=StubRunner(
+            StubProcess(
+                [json_chunk(payload) for payload in payloads],
+                ProcessResult(exit_code=0, duration_ms=1),
+            )
+        )
+    )
+    session = await adapter.start(make_request())
+    result = await adapter.wait(session.session_id)
+
+    assert result.reason is AgentExitReason.FAILED
+    assert session.status is AgentSessionStatus.FAILED
+    assert result.error
+    if any(payload.get("type") == "turn.failed" for payload in payloads):
+        assert result.error == "terminal"
+    elif not payloads or payloads[0].get("item", {}).get("type") == "agent_message":
+        assert result.error == "Codex stream ended without turn.completed"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("process_result", "reason"),
+    [
+        (ProcessResult(exit_code=1, duration_ms=1), AgentExitReason.FAILED),
+        (ProcessResult(exit_code=-15, duration_ms=1, timed_out=True), AgentExitReason.TIMED_OUT),
+        (ProcessResult(exit_code=-15, duration_ms=1, cancelled=True), AgentExitReason.CANCELLED),
+    ],
+)
+async def test_completion_does_not_override_process_failure(
+    process_result: ProcessResult,
+    reason: AgentExitReason,
+) -> None:
+    adapter = CodexCliAdapter(
+        runner=StubRunner(
+            StubProcess(
+                [json_chunk({"type": "turn.completed"})],
+                process_result,
+            )
+        )
+    )
+    session = await adapter.start(make_request())
+    assert (await adapter.wait(session.session_id)).reason is reason

@@ -53,6 +53,7 @@ class _CodexSessionState:
     sequence: int = 0
     turn_payload: dict[str, Any] | None = None
     error: str | None = None
+    turn_failed: bool = False
     last_message: str | None = None
 
 
@@ -128,9 +129,7 @@ class CodexCliAdapter(AgentAdapter):
     async def resume(self, native_session_id: str, request: AgentRequest) -> AgentSession:
         if not native_session_id:
             raise ValueError("native_session_id must not be empty")
-        resumed_request = request.model_copy(
-            update={"resume_from_session_id": native_session_id}
-        )
+        resumed_request = request.model_copy(update={"resume_from_session_id": native_session_id})
         return await self.start(resumed_request)
 
     def build_command(self, request: AgentRequest) -> list[str]:
@@ -212,12 +211,21 @@ class CodexCliAdapter(AgentAdapter):
             self._consume_item(state, payload)
         elif native_type == "turn.completed":
             state.turn_payload = payload
+            # Transport errors can precede a successful HTTPS fallback. An explicit
+            # failed turn is terminal, however, and must never be cleared.
+            if not state.turn_failed:
+                state.error = None
         elif native_type in {"turn.failed", "error"}:
-            state.error = self._extract_error(payload)
+            diagnostic = self._extract_error(payload)
+            if native_type == "turn.failed":
+                state.turn_failed = True
+                state.error = diagnostic
+            elif not state.turn_failed:
+                state.error = diagnostic
             self._emit(
                 state,
                 AgentEventType.MESSAGE,
-                text=state.error,
+                text=diagnostic,
                 data=payload,
                 native_event_type=str(native_type),
             )
@@ -252,6 +260,17 @@ class CodexCliAdapter(AgentAdapter):
                 data=item,
                 native_event_type=native_type,
             )
+        elif item_type == "error":
+            diagnostic = self._extract_error(item)
+            if not state.turn_failed:
+                state.error = diagnostic
+            self._emit(
+                state,
+                AgentEventType.MESSAGE,
+                text=diagnostic,
+                data=payload,
+                native_event_type=native_type,
+            )
 
     def _build_result(
         self,
@@ -266,10 +285,21 @@ class CodexCliAdapter(AgentAdapter):
             reason = AgentExitReason.TIMED_OUT
             status = AgentSessionStatus.TIMED_OUT
             event_type = AgentEventType.FAILED
-        elif process_result.exit_code != 0 or state.error is not None:
+        elif (
+            process_result.exit_code != 0
+            or state.turn_failed
+            or state.error is not None
+            or state.turn_payload is None
+        ):
             reason = AgentExitReason.FAILED
             status = AgentSessionStatus.FAILED
             event_type = AgentEventType.FAILED
+            if state.error is None:
+                state.error = (
+                    f"Codex CLI exited with code {process_result.exit_code}"
+                    if process_result.exit_code != 0
+                    else "Codex stream ended without turn.completed"
+                )
         else:
             reason = AgentExitReason.COMPLETED
             status = AgentSessionStatus.COMPLETED
@@ -337,4 +367,3 @@ class CodexCliAdapter(AgentAdapter):
             output_tokens=usage.get("output_tokens"),
             cached_input_tokens=usage.get("cached_input_tokens"),
         )
-
