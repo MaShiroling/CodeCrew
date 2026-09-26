@@ -1,7 +1,7 @@
 # 真实模型接入与权限边界（2026-09-26）
 
 本页记录接口事实、已验证的边界及未完成的接入工作。**Kimi Code 会员模型的单任务
-真实冒烟已通过；DeepSeek Reviewer 已尝试在线调用，但尚未通过完整冒烟验收**。角色仍是白金（Codex/GPT）规划、
+真实冒烟已通过；DeepSeek Reviewer 的独立在线冒烟也已由用户本机运行通过**。角色仍是白金（Codex/GPT）规划、
 月见（Kimi Code CLI 接会员模型）实现、鲸鲸（Claude Code 接入 DeepSeek Flash）评审。
 这里的 CLI 是 Agent 执行环境，
 模型是其背后的推理服务，两者不可混同。
@@ -26,7 +26,7 @@
 | 角色 | 官方入口与模型 | 鉴权及输出 | 工具边界 |
 | --- | --- | --- | --- |
 | 月见 / Implementer | Kimi Code 会员 API：`https://api.kimi.com/coding/v1`，`kimi-for-coding`；Kimi Code CLI 使用 `kimi -p ... --output-format stream-json` | 会员密钥只经子进程 `KIMI_MODEL_API_KEY` 传入；CLI 的 `KIMI_MODEL_*` 变量在内存中创建临时模型配置。`kimi-for-coding` 是别名，实际后端版本可能变化 | CLI 受限 Agent 只暴露文件工具，Seatbelt 限制写入；测试由 CodeCrew 的命令白名单执行器运行 |
-| 鲸鲸 / Reviewer | Claude Code CLI 接 DeepSeek Anthropic 兼容地址 `https://api.deepseek.com/anthropic`；明确选择 `deepseek-flash` | DeepSeek 官方 Claude Code 配置使用 `ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL` 与模型环境变量；供应商 API Key 只能进入 Reviewer 子进程环境 | 复用 Claude Code Adapter 的只读工具限制，仍需验证实际 provider、模型及最终 JSON 评审结果 |
+| 鲸鲸 / Reviewer | Claude Code CLI 接 DeepSeek Anthropic 兼容地址 `https://api.deepseek.com/anthropic`；明确选择 `deepseek-flash` | DeepSeek 官方 Claude Code 配置使用 `ANTHROPIC_AUTH_TOKEN`、`ANTHROPIC_BASE_URL` 与模型环境变量；供应商 API Key 只能进入 Reviewer 子进程环境 | 用户本机独立冒烟已验证结构化评审和只读工具/文件状态断言；实际远端模型版本仍未确认 |
 
 **Kimi Code 会员密钥与 Moonshot Platform API Key 不是同一种接入**：后者的
 `https://api.moonshot.ai/v1` / `kimi-k3` 组合不适用于当前会员密钥 Adapter。
@@ -50,8 +50,8 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
 
 ## 剩余真实接入验收
 
-1. 对鲸鲸进行 DeepSeek Flash 在线冒烟，核对只读工具、独立会话、结构化 JSON 审批，
-   并验证无有效证据时拒绝审批。Reviewer 批准仍不能绕过 Verifier 与 CompletionGuard。
+1. 鲸鲸独立在线冒烟已通过用户本机验证；仍需确认实际远端模型版本并整理验收限制。
+   Reviewer 批准不能绕过 Verifier 与 CompletionGuard。
 2. 对白金 → 月见 → Verifier → 鲸鲸 → CompletionGuard 跑一条完整真实任务，再覆盖
    Reviewer 拒绝返工和预算耗尽。
 3. 主动诱导月见执行禁止命令，验证边界确实拒绝；独立 Verifier 小任务通过不能替代该测试。
@@ -61,8 +61,8 @@ Claude 模型名的自动映射，避免评测中无意使用不同模型。Revi
 
 当前进度：已实现 `DeepSeekClaudeReviewerAdapter` 的只读工具装配和子进程环境隔离，
 用模拟进程测试，并验证了本机 Claude Code CLI 的所需选项。详见
-[DeepSeek Reviewer 分步冒烟](deepseek-reviewer-smoke.md)；用户已尝试在线调用，结果因
-Markdown JSON 包装解析失败，格式修复后尚待重跑，实际远端模型身份仍未验证，
+[DeepSeek Reviewer 分步冒烟](deepseek-reviewer-smoke.md)；用户首次在线运行因
+Markdown JSON 包装解析失败，格式修复后在 2026-09-26 重跑通过，实际远端模型版本仍未验证，
 且工具限制不等同于操作系统只读沙箱。Kimi 侧新增了只暴露
 `Read/Grep/Glob/Write/Edit` 的独立 Agent 文件（没有 `Bash` 或子 Agent），以及
 `KimiWriteBoundary`：在 macOS 上用 Seatbelt 限制 CLI 及其子进程只能写授权目录和
@@ -129,7 +129,7 @@ CODECREW_RUN_KIMI_VERIFIER_LIVE=1 .venv/bin/pytest -q tests/integration/test_kim
 批准或 CompletionGuard 已作成功判定。
 默认服务器配置继续使用原 Claude Code Reviewer，必须显式配置
 `reviewer_adapter: "deepseek-claude-reviewer"` 才切换，且启动时需要
-`DEEPSEEK_API_KEY`。真实模型身份仍待联网冒烟验证。
+`DEEPSEEK_API_KEY`。独立在线冒烟通过不等于实际远端模型版本已确认。
 
 ## 官方资料
 

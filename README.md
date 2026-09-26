@@ -36,7 +36,7 @@ Implementer（月见：Kimi Code CLI，独立 Git Worktree）
 
 上图是目标团队配置，不表示这套真实三 Agent 组合已经端到端验证。当前服务示例默认
 使用 Codex CLI Planner / Implementer 与 Claude Code Reviewer；Kimi 与 DeepSeek
-需要分别显式选择，且 DeepSeek 尚未完成在线冒烟。
+需要分别显式选择；DeepSeek Reviewer 的独立在线冒烟已由用户本机运行通过。
 
 ## 核心原则
 
@@ -214,7 +214,7 @@ flowchart TB
 
 - 多 worker 分布式派发与跨进程租约
 - Trace 与领域记录不一致时的自动回填
-- 三真实模型完整任务闭环、DeepSeek Flash 在线验证及实际模型身份确认
+- 三真实模型完整任务闭环及实际远端模型版本确认
 - UI 人工对话干预；远程使用所需的 API 身份认证
 - 真正对 Agent 不可见的隐藏测试隔离环境
 - 12～15 条正式编码评测集
@@ -393,7 +393,7 @@ docs/                # 架构和 Adapter 文档
 - [x] UI 任务操作之三：页面/API 创建与取消联调、离线回归和浏览器冒烟
 - [x] DeepSeek Reviewer 真实冒烟之一：本机 CLI 选项、只读工具装配和密钥隔离预检（无模型调用）
 - [x] DeepSeek Reviewer 真实冒烟之二：真实 Diff/Verifier 证据夹具、模拟 CLI 双会话与错误失败关闭（无模型调用）
-- [ ] DeepSeek Reviewer 真实冒烟之三：在线测试入口已备妥，真实 API 调用与结果尚待用户本机验收
+- [x] DeepSeek Reviewer 真实冒烟之三：用户本机在线用例通过（有效证据批准、无 Diff 拒绝、工具/文件状态检查）
 - [ ] 真实模型接入之二 B2b-2c：禁止命令主动拒绝验证
 - [ ] 阶段九：多语言编码任务评测集
 - [ ] 阶段十：单 Agent / 多 Agent 对照实验与指标报告
