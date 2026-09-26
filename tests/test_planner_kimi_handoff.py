@@ -7,7 +7,15 @@ import pytest
 
 from app.agents import CodexCliAdapter, KimiCodeAdapter
 from app.agents.process import ProcessChunk, ProcessResult, ProcessStream
-from app.team import AgentTurnError, MemberRole, MessageType
+from app.team import (
+    AgentTurnError,
+    ChatActionError,
+    ChatMessage,
+    MemberRole,
+    MessageRecipient,
+    MessageType,
+    RecipientKind,
+)
 from scripts.planner_kimi_smoke import FIXED_SOURCE, handoff_fixture, run_handoff
 
 
@@ -75,9 +83,10 @@ class PlannerProcessRunner:
 
 
 class KimiProcessRunner:
-    def __init__(self, *, edit=True):
+    def __init__(self, *, edit=True, response_style="raw"):
         self.calls = []
         self.edit = edit
+        self.response_style = response_style
 
     async def start(self, argv, **options):
         self.calls.append((argv, options))
@@ -102,6 +111,22 @@ class KimiProcessRunner:
                 "recipient": {"kind": "role", "role": "orchestrator"},
                 "content": "Implementation ready; Verifier must run tests",
             }
+        raw = json.dumps(
+            {"actions": [action, {"action": "finish_turn", "content": "Turn ended"}]},
+            ensure_ascii=False,
+        )
+        fenced = f"```json\n{raw}\n```"
+        responses = {
+            "raw": raw,
+            "fenced": fenced,
+            "prose_prefix": f"我已阅读 Plan v1，并已向白金提问测试职责。\n\n{fenced}",
+            "prose_suffix": f"{fenced}\n已完成澄清，请等待回复。",
+            "multiple_blocks": f"{fenced}\n{fenced}",
+            "prose_only": "已阅读 Plan v1 并已向白金提问测试职责，等待 Plan v2。",
+            "unknown_field": json.dumps(
+                {"actions": [action, {"action": "finish_turn", "success": True}]}
+            ),
+        }
         return Process(
             [
                 {
@@ -112,9 +137,7 @@ class KimiProcessRunner:
                 },
                 {
                     "role": "assistant",
-                    "content": json.dumps(
-                        {"actions": [action, {"action": "finish_turn", "content": "Turn ended"}]}
-                    ),
+                    "content": responses[self.response_style],
                 },
             ]
         )
@@ -142,8 +165,9 @@ def factory(kimi_runner):
 
 
 @pytest.mark.asyncio
-async def test_plan_clarification_v2_edit_and_verification(tmp_path):
-    planner, kimi = PlannerProcessRunner(), KimiProcessRunner()
+@pytest.mark.parametrize("response_style", ["raw", "fenced"])
+async def test_plan_clarification_v2_edit_and_verification(tmp_path, response_style):
+    planner, kimi = PlannerProcessRunner(), KimiProcessRunner(response_style=response_style)
     Boundary.grants = []
     async with handoff_fixture(tmp_path, CodexCliAdapter(runner=planner), factory(kimi)) as fixture:
         report = await run_handoff(fixture)
@@ -163,11 +187,80 @@ async def test_plan_clarification_v2_edit_and_verification(tmp_path):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("response_style", "error"),
+    [
+        ("prose_prefix", "not valid JSON"),
+        ("prose_suffix", "not valid JSON"),
+        ("multiple_blocks", "not valid JSON"),
+        ("prose_only", "not valid JSON"),
+        ("unknown_field", "invalid agent chat turn"),
+    ],
+)
+async def test_kimi_invalid_clarification_has_no_ack_or_routing_side_effects(
+    tmp_path,
+    response_style,
+    error,
+):
+    planner = PlannerProcessRunner()
+    kimi = KimiProcessRunner(response_style=response_style)
+    async with handoff_fixture(tmp_path, CodexCliAdapter(runner=planner), factory(kimi)) as fixture:
+        sender = fixture.members[MemberRole.ORCHESTRATOR]
+        fixture.router.route(
+            ChatMessage(
+                room_id=fixture.room.room_id,
+                task_id=fixture.task.id,
+                trace_id=fixture.task.trace_id,
+                sender_id=sender.member_id,
+                recipients=(MessageRecipient(kind=RecipientKind.ROLE, role=MemberRole.PLANNER),),
+                type=MessageType.ISSUE_POSTED,
+                content=fixture.task.issue,
+                idempotency_key="invalid-output-test",
+            ),
+            authenticated_sender_id=sender.member_id,
+        )
+        await fixture.turn(MemberRole.PLANNER)
+        rooms = fixture.runner.rooms
+        room_id = fixture.room.room_id
+        messages_before = rooms.list_messages(room_id)
+        plans_before = rooms.list_plan_revisions(room_id)
+        pending_before = {
+            role: rooms.pending_for(member.member_id) for role, member in fixture.members.items()
+        }
+        assert len(pending_before[MemberRole.IMPLEMENTER]) == 1
+        assert pending_before[MemberRole.PLANNER] == ()
+        with fixture.store.database.connect() as connection:
+            artifacts_before = connection.execute(
+                "SELECT artifact_id FROM artifacts ORDER BY artifact_id"
+            ).fetchall()
+        source_before = (fixture.handle.worktree_path / "src/pricing.py").read_bytes()
+
+        with pytest.raises(ChatActionError, match=error):
+            await fixture.turn(MemberRole.IMPLEMENTER)
+
+        # Exercise the production Kimi parser and runner, not just the JSON helper.
+        # Neither the prose claim nor embedded actions may become a delivered question.
+        assert rooms.list_messages(room_id) == messages_before
+        assert rooms.list_plan_revisions(room_id) == plans_before
+        for role, member in fixture.members.items():
+            assert rooms.pending_for(member.member_id) == pending_before[role]
+        with fixture.store.database.connect() as connection:
+            assert (
+                connection.execute(
+                    "SELECT artifact_id FROM artifacts ORDER BY artifact_id"
+                ).fetchall()
+                == artifacts_before
+            )
+        assert (fixture.handle.worktree_path / "src/pricing.py").read_bytes() == source_before
+        assert len(planner.calls) == len(kimi.calls) == 1  # No automatic paid retry.
+        assert len(fixture.turns) == 1  # The failed turn is not a completed turn.
+        assert fixture.task.state.value == "created"
+
+
+@pytest.mark.asyncio
 async def test_plan_tampering_prevents_kimi_launch_and_preserves_pending_message(tmp_path):
     planner, kimi = PlannerProcessRunner(), KimiProcessRunner()
     async with handoff_fixture(tmp_path, CodexCliAdapter(runner=planner), factory(kimi)) as fixture:
-        from app.team import ChatMessage, MessageRecipient, RecipientKind
-
         sender = fixture.members[MemberRole.ORCHESTRATOR]
         fixture.router.route(
             ChatMessage(

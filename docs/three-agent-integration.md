@@ -125,6 +125,16 @@ codex --version
 动作契约时仍遵循其自己的输出要求。未修改解析器、增加付费重试或放宽权限。
 离线提示接线测试只能证明规则已注入，不能证明真实模型一定遵守；在线验收仍待重跑。
 
+专项离线回归通过生产 Kimi 适配器和 `AgentTurnRunner`，模拟 CLI 的真实输出协议：
+原始 JSON 和完整单个 JSON 代码块均走完四回合交接及确定性验证；前置/尾部说明文字、
+多代码块、纯文字“已提问”和未知字段均被拒绝。异常回合后所有成员的待处理消息、
+聊天室消息、Plan 版本、Artifact 和夹具源文件保持不变；不 ACK、不路由、不自动重试。
+这些模拟结果不代替真实模型验收，也不保证异常回复前没有发生模型工具操作。
+
+```bash
+.venv/bin/pytest -q tests/test_planner_kimi_handoff.py tests/test_chat_actions.py tests/test_agent_turn_runner.py
+```
+
 ## 后续子步骤（尚未完成）
 
 3. 完整成功路径：接入 Verifier 和真实独立 Reviewer，再由 CompletionGuard 判断完成。
