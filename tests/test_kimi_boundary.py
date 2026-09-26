@@ -41,6 +41,43 @@ def test_profile_allows_only_configured_write_roots(tmp_path: Path) -> None:
     assert f'(deny file-write* (subpath "{boundary.worktree / ".git"}"))' in profile
 
 
+def test_clarification_profile_has_no_worktree_write_exception(tmp_path):
+    boundary = make_boundary(tmp_path, allowed_paths=(".",))
+    boundary.worktree_read_only = True
+    profile = boundary.profile()
+    assert f'(deny file-write* (subpath "{boundary.worktree}"))' in profile
+    assert f'(allow file-write* (subpath "{boundary.worktree}"))' not in profile
+    assert f'(allow file-write* (subpath "{boundary.runtime_directory}"))' in profile
+
+
+@pytest.mark.skipif(platform.system() != "Darwin", reason="Seatbelt is macOS-only")
+def test_seatbelt_clarification_can_read_and_write_runtime_but_cannot_mutate_worktree(tmp_path):
+    boundary = make_boundary(tmp_path, allowed_paths=(".",))
+    boundary.worktree_read_only = True
+    source = boundary.worktree / "app/source.txt"
+    source.write_text("original")
+    probes = [
+        ("assert p.read_text() == 'original'", source, True),
+        ("p.write_text('changed')", source, False),
+        ("p.write_text('created')", boundary.worktree / "app/new.txt", False),
+        ("p.unlink()", source, False),
+        ("p.rename(p.with_name('renamed.txt'))", source, False),
+        ("p.write_text('runtime')", boundary.runtime_directory / "session.txt", True),
+    ]
+    for operation, target, allowed in probes:
+        command = boundary.wrap([
+            "/usr/bin/python3", "-c",
+            "from pathlib import Path; import sys; p=Path(sys.argv[1]); " + operation, str(target),
+        ])
+        result = subprocess.run(
+            command, cwd=boundary.worktree, capture_output=True, text=True, timeout=10, check=False,
+        )
+        assert (result.returncode == 0) is allowed, result.stderr
+        assert source.read_text() == "original"
+    assert not (source.parent / "new.txt").exists()
+    assert not (source.parent / "renamed.txt").exists()
+
+
 def test_boundary_rejects_symlinked_or_denied_write_root(tmp_path: Path) -> None:
     worktree = tmp_path / "worktree"
     worktree.mkdir()

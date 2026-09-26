@@ -33,6 +33,20 @@ def test_request_keeps_provider_details_out_of_core_contract() -> None:
     assert request.permission_mode is PermissionMode.READ_ONLY
     assert request.timeout_seconds == 900
     assert request.resume_from_session_id is None
+    assert request.clarification_only is False
+
+
+@pytest.mark.parametrize("role,permission", [
+    (AgentRole.PLANNER, PermissionMode.READ_ONLY),
+    (AgentRole.REVIEWER, PermissionMode.READ_ONLY),
+    (AgentRole.IMPLEMENTER, PermissionMode.WORKSPACE_WRITE),
+])
+def test_clarification_contract_cannot_request_other_roles_or_write_permission(role, permission):
+    with pytest.raises(ValidationError, match="read-only implementer"):
+        AgentRequest(
+            task_id=uuid4(), trace_id=uuid4(), role=role, permission_mode=permission,
+            prompt="Clarify", working_directory=Path("/tmp/worktree"), clarification_only=True,
+        )
 
 
 def test_request_rejects_empty_prompt_and_unknown_fields() -> None:

@@ -98,7 +98,7 @@ def build_server_app(config: ServerConfig, *, settings: Settings) -> FastAPI:
                 executable=settings.kimi_cli_path,
             ),
             roles={AgentRole.IMPLEMENTER},
-            permission_modes={PermissionMode.WORKSPACE_WRITE},
+            permission_modes={PermissionMode.WORKSPACE_WRITE, PermissionMode.READ_ONLY},
         )
     runtime = build_task_runtime(
         settings=settings,

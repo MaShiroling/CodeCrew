@@ -34,7 +34,9 @@ from app.team.models import (
     ChatMessage,
     MemberKind,
     MemberRole,
+    MessageRecipient,
     MessageType,
+    RecipientKind,
     RoomMember,
     StoredChatMessage,
 )
@@ -134,6 +136,7 @@ class AgentTurnRunner:
         agent_name: str,
         working_directory: Path,
         resume_native_session_id: str | None = None,
+        clarification_only: bool = False,
     ) -> AgentTurnResult:
         room = self.rooms.get_room(room_id)
         if room.task_id != task.id or room.trace_id != task.trace_id:
@@ -143,6 +146,9 @@ class AgentTurnRunner:
             raise AgentTurnError("member does not belong to the requested team room")
         if member.kind is not MemberKind.AGENT or member.role not in _AGENT_ROLES:
             raise AgentTurnError("only planner, implementer, or reviewer agents can run turns")
+        if clarification_only and member.role is not MemberRole.IMPLEMENTER:
+            raise AgentTurnError("clarification-only turns require an implementer")
+        permission_mode = PermissionMode.READ_ONLY if clarification_only else _PERMISSIONS[member.role]
         incoming = self.rooms.pending_for(member_id, limit=self.pending_limit)
         if not incoming:
             raise AgentTurnError("agent has no pending room messages")
@@ -152,9 +158,12 @@ class AgentTurnRunner:
             task_id=task.id,
             trace_id=task.trace_id,
             role=_AGENT_ROLES[member.role],
-            prompt=self._build_prompt(task, room.members, member_id, incoming),
+            prompt=self._build_prompt(
+                task, room.members, member_id, incoming, clarification_only=clarification_only,
+            ),
             working_directory=working_directory,
-            permission_mode=_PERMISSIONS[member.role],
+            permission_mode=permission_mode,
+            clarification_only=clarification_only,
             timeout_seconds=self.timeout_for_role(member.role),
             resume_from_session_id=resume_native_session_id,
             artifact_inputs=inputs,
@@ -171,7 +180,7 @@ class AgentTurnRunner:
         async with self.registry.acquire(
             agent_name,
             role=_AGENT_ROLES[member.role],
-            permission_mode=_PERMISSIONS[member.role],
+            permission_mode=permission_mode,
             required_capabilities=_CAPABILITIES[member.role],
         ) as adapter:
             if resume_native_session_id is None:
@@ -207,6 +216,7 @@ class AgentTurnRunner:
                     self._record_stream(
                         task, member, session, incoming, collected,
                         stream_complete=stream_complete, outcome=stream_outcome,
+                        clarification_only=clarification_only, permission_mode=permission_mode,
                     )
                 except Exception as diagnostic_error:
                     if original_error is None:
@@ -258,6 +268,20 @@ class AgentTurnRunner:
         turn = parse_agent_chat_turn(
             result.output, require_structured_output=request.output_schema is not None,
         )
+        if clarification_only:
+            recipient = turn.actions[0].recipient
+            to_planner = recipient is not None and (
+                recipient == MessageRecipient(kind=RecipientKind.ROLE, role=MemberRole.PLANNER)
+                or (
+                    recipient.kind is RecipientKind.MEMBER
+                    and any(
+                        member.member_id == recipient.member_id and member.role is MemberRole.PLANNER
+                        for member in room.members
+                    )
+                )
+            )
+            if len(turn.actions) != 2 or turn.actions[0].action is not ChatActionType.ASK_QUESTION or not to_planner:
+                raise AgentTurnError("clarification-only turn requires ask_question to planner then finish_turn")
         routed = self._route_actions(task, member_id, incoming, turn)
         for item in incoming:
             self.rooms.acknowledge(item.message.message_id, recipient_id=member_id)
@@ -281,6 +305,8 @@ class AgentTurnRunner:
         *,
         stream_complete: bool,
         outcome: str,
+        clarification_only: bool = False,
+        permission_mode: PermissionMode | None = None,
     ) -> None:
         """Record received normalized events, including partial failed turns.
 
@@ -297,6 +323,8 @@ class AgentTurnRunner:
                 "role": member.role.value,
                 "stream_complete": stream_complete,
                 "timeout_seconds": self.timeout_for_role(member.role),
+                "clarification_only": clarification_only,
+                "permission_mode": permission_mode.value if permission_mode is not None else None,
                 "outcome": outcome,
                 "events": [event.model_dump(mode="json") for event in events],
             },
@@ -324,6 +352,8 @@ class AgentTurnRunner:
                     "role": member.role.value,
                     "event_count": len(events),
                     "timeout_seconds": self.timeout_for_role(member.role),
+                    "clarification_only": clarification_only,
+                    "permission_mode": permission_mode.value if permission_mode is not None else None,
                     "stderr_event_count": sum(event.type.value == "stderr" for event in events),
                     "stream_complete": stream_complete,
                     "outcome": outcome,
@@ -532,6 +562,8 @@ class AgentTurnRunner:
         members: tuple[RoomMember, ...],
         member_id: UUID,
         incoming: tuple[StoredChatMessage, ...],
+        *,
+        clarification_only: bool = False,
     ) -> str:
         own_role = next(member.role for member in members if member.member_id == member_id)
         profile = self.personas.for_role(own_role)
@@ -638,6 +670,34 @@ class AgentTurnRunner:
                 "include unresolved high or critical issues. Do not approve without evidence."
             ),
         }[own_role]
+        if clarification_only:
+            # Present only the legal actions for this trusted phase, not the
+            # generic role menu. References are taken from delivered inputs.
+            question_example = {
+                "action": "ask_question",
+                "recipient": {"kind": "role", "role": "planner"},
+                "content": "Your actual clarification question, not a progress report",
+            }
+            plan_ids = [
+                str(ref.artifact_id) for item in incoming for ref in item.message.artifacts
+                if ref.type is ArtifactType.PLAN
+            ]
+            if plan_ids:
+                question_example["artifact_ids"] = list(dict.fromkeys(plan_ids))
+            schema = {"actions": [
+                question_example, {"action": "finish_turn", "content": "Waiting for Planner"},
+            ]}
+            role_protocol = (
+                "This is a trusted clarification-only turn, not an implementation turn. "
+                "The workspace is read-only. Read the supplied Plan and only the relevant source; "
+                "once the question is clear, stop using tools and do not re-read unchanged files. "
+                "There is no messaging tool: your final JSON itself is routed by CodeCrew. "
+                "Return exactly ask_question to the planner then finish_turn. "
+                "Do not edit, revert, request_review, run tests or fabricate an answer.\n"
+                'Example: {"actions":[{"action":"ask_question","recipient":'
+                '{"kind":"role","role":"planner"},"content":"Your actual question"},'
+                '{"action":"finish_turn","content":"Waiting for the Planner answer"}]}\n'
+            )
         review_examples_prompt = ""
         if own_role is MemberRole.REVIEWER:
             # Show the recommended new-report shape, not two alternative sources together.

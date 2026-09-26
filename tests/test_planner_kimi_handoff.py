@@ -152,9 +152,11 @@ class KimiProcessRunner:
 
 class Boundary:
     grants: ClassVar[list] = []
+    readonly_modes: ClassVar[list] = []
 
     def __init__(self, **options):
         self.grants.append(options["read_only_files"])
+        self.readonly_modes.append(options["worktree_read_only"])
 
     def wrap(self, argv):
         return ["sandbox-stub", *argv]
@@ -172,17 +174,59 @@ def factory(kimi_runner):
 
 
 @pytest.mark.asyncio
+async def test_kimi_step_exhaustion_is_recorded_without_ack_or_retry(tmp_path):
+    class ExhaustedProcess(Process):
+        async def stream(self):
+            async for chunk in super().stream():
+                yield chunk
+            yield ProcessChunk(
+                ProcessStream.STDERR,
+                "error: failed to run prompt: loop.max_steps_exceeded: Turn exceeded maxSteps=12.\n",
+            )
+
+        async def wait(self):
+            return ProcessResult(exit_code=1, duration_ms=64_000)
+
+    class ExhaustedKimi(KimiProcessRunner):
+        async def start(self, argv, **options):
+            process = await super().start(argv, **options)
+            return ExhaustedProcess(process.events)
+
+    kimi = ExhaustedKimi()
+    async with handoff_fixture(tmp_path, CodexCliAdapter(runner=PlannerProcessRunner()), factory(kimi)) as fixture:
+        implementer = fixture.members[MemberRole.IMPLEMENTER]
+        with pytest.raises(AgentTurnError, match="loop.max_steps_exceeded"):
+            await run_handoff(fixture)
+        assert len(kimi.calls) == 1
+        pending = fixture.runner.rooms.pending_for(implementer.member_id)
+        assert len(pending) == 1 and pending[0].message.type is MessageType.PLAN_SHARED
+        assert fixture.runner.rooms.pending_for(fixture.members[MemberRole.PLANNER].member_id) == ()
+        recorded = fixture.router.trace_store.list(
+            trace_id=fixture.task.trace_id, type=TraceEventType.AGENT_OUTPUT_RECORDED,
+        )
+        saved = fixture.store.read_json(recorded[-1].event.payload["artifact_id"])
+        assert saved["exit_code"] == 1 and saved["reason"] == "failed"
+        assert "loop.max_steps_exceeded" in saved["error"]
+        assert not fixture.router.trace_store.list(
+            trace_id=fixture.task.trace_id, type=TraceEventType.COMPLETION_DECIDED,
+        )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "response_style", ["raw", "fenced", "prose_prefix", "prose_suffix", "bare_tail"]
 )
 async def test_plan_clarification_v2_edit_and_verification(tmp_path, response_style):
     planner, kimi = PlannerProcessRunner(), KimiProcessRunner(response_style=response_style)
     Boundary.grants = []
+    Boundary.readonly_modes = []
     async with handoff_fixture(tmp_path, CodexCliAdapter(runner=planner), factory(kimi)) as fixture:
         report = await run_handoff(fixture)
         assert report.passed
         assert len(planner.calls) == len(kimi.calls) == 2
         assert len(Boundary.grants) == 2
+        assert Boundary.readonly_modes == [True, False]
+        assert any(arg.endswith("/kimi_readonly_clarifier.md") for arg in kimi.calls[0][0])
         assert all(len(paths) == 1 for paths in Boundary.grants)
         assert Boundary.grants[0] != Boundary.grants[1]
         for role in (MemberRole.PLANNER, MemberRole.IMPLEMENTER):

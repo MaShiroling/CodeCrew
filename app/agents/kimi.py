@@ -55,6 +55,7 @@ class _ProcessRunner(Protocol):
 
 _END_OF_EVENTS = object()
 _ALLOWED_TOOLS = frozenset({"Read", "Grep", "Glob", "Write", "Edit"})
+_READ_ONLY_TOOLS = frozenset({"Read", "Grep", "Glob"})
 _INFORMATIONAL_META_TYPES = frozenset(
     {"system.version", "turn.step.retrying", "session.resume_hint"}
 )
@@ -66,6 +67,13 @@ tools:
   - Glob
   - Write
   - Edit
+subagents: []"""
+_CLARIFICATION_FRONTMATTER = """name: codecrew-readonly-clarifier
+description: Read the supplied plan and ask the planner a question without editing
+tools:
+  - Read
+  - Grep
+  - Glob
 subagents: []"""
 
 
@@ -80,6 +88,9 @@ class _KimiSessionState:
     sequence: int = 0
     last_message: str | None = None
     error: str | None = None
+    allowed_tools: frozenset[str] = _ALLOWED_TOOLS
+    stderr_tail: str = ""
+    cli_failure: str | None = None
 
 
 class KimiCodeAdapter(AgentAdapter):
@@ -133,6 +144,7 @@ class KimiCodeAdapter(AgentAdapter):
         self._agent_file = (
             Path(__file__).resolve().parent / "assets" / "kimi_restricted_implementer.md"
         )
+        self._clarification_file = self._agent_file.with_name("kimi_readonly_clarifier.md")
         self._sessions: dict[UUID, _KimiSessionState] = {}
 
     @property
@@ -152,8 +164,12 @@ class KimiCodeAdapter(AgentAdapter):
     async def start(self, request: AgentRequest) -> AgentSession:
         if request.role is not AgentRole.IMPLEMENTER:
             raise AgentAdapterError("Kimi Code adapter accepts implementer requests only")
-        if request.permission_mode is not PermissionMode.WORKSPACE_WRITE:
-            raise AgentAdapterError("Kimi Code adapter requires workspace-write permission")
+        expected_permission = (
+            PermissionMode.READ_ONLY if request.clarification_only else PermissionMode.WORKSPACE_WRITE
+        )
+        if request.permission_mode is not expected_permission:
+            mode = expected_permission.value.replace("_", "-")
+            raise AgentAdapterError(f"Kimi Code adapter requires {mode} permission")
         if request.resume_from_session_id is not None:
             raise AgentAdapterError("Kimi resume is disabled with the restricted agent file")
         key = self._env_source.get("KIMI_MODEL_API_KEY", "").strip()
@@ -176,17 +192,22 @@ class KimiCodeAdapter(AgentAdapter):
             status=AgentSessionStatus.RUNNING,
         )
         runtime = self._prepare_runtime(request.task_id, session.session_id)
-        self._validate_agent_file()
+        agent_file = self._agent_file_for(request)
+        self._validate_agent_file(
+            agent_file,
+            _CLARIFICATION_FRONTMATTER if request.clarification_only else _AGENT_FRONTMATTER,
+        )
         try:
             boundary = self._boundary_factory(
                 worktree=worktree,
                 runtime_directory=runtime,
                 policy=self._policy,
                 readable_files=(
-                    self._agent_file,
+                    agent_file,
                     Path(shutil.which(self._executable) or self._executable),
                 ),
                 read_only_files=input_paths,
+                worktree_read_only=request.clarification_only,
             )
             command = boundary.wrap(self.build_command(request))
         except KimiBoundaryError as exc:
@@ -202,7 +223,8 @@ class KimiCodeAdapter(AgentAdapter):
             raise AgentAdapterError(str(exc)) from exc
 
         state = _KimiSessionState(
-            session=session, process=process, artifact_inputs=request.artifact_inputs
+            session=session, process=process, artifact_inputs=request.artifact_inputs,
+            allowed_tools=_READ_ONLY_TOOLS if request.clarification_only else _ALLOWED_TOOLS,
         )
         self._sessions[session.session_id] = state
         state.completion = asyncio.create_task(self._consume(state))
@@ -216,8 +238,11 @@ class KimiCodeAdapter(AgentAdapter):
             "--output-format",
             "stream-json",
             "--agent-file",
-            str(self._agent_file),
+            str(self._agent_file_for(request)),
         ]
+
+    def _agent_file_for(self, request: AgentRequest) -> Path:
+        return self._clarification_file if request.clarification_only else self._agent_file
 
     def build_process_env(self, runtime: Path, key: str) -> dict[str, str]:
         environment = {
@@ -275,13 +300,13 @@ class KimiCodeAdapter(AgentAdapter):
                 raise AgentAdapterError(f"Kimi runtime directory is accessible by others: {path}")
         return runtime
 
-    def _validate_agent_file(self) -> None:
+    def _validate_agent_file(self, agent_file: Path, frontmatter: str) -> None:
         try:
-            contents = self._agent_file.read_text(encoding="utf-8")
+            contents = agent_file.read_text(encoding="utf-8")
         except OSError as exc:
             raise AgentAdapterError("restricted Kimi agent file is unavailable") from exc
         parts = contents.split("---", maxsplit=2)
-        if len(parts) != 3 or parts[0].strip() or parts[1].strip() != _AGENT_FRONTMATTER:
+        if len(parts) != 3 or parts[0].strip() or parts[1].strip() != frontmatter:
             raise AgentAdapterError("restricted Kimi agent file changed unexpectedly")
 
     def stream(self, session_id: UUID) -> AsyncIterator[AgentEvent]:
@@ -321,6 +346,10 @@ class KimiCodeAdapter(AgentAdapter):
             async for chunk in state.process.stream():
                 if chunk.stream is ProcessStream.STDERR:
                     self._emit(state, AgentEventType.STDERR, text=chunk.text)
+                    # Bounded diagnostic classification, not a success criterion.
+                    state.stderr_tail = (state.stderr_tail + chunk.text)[-4096:]
+                    if "error: failed to run prompt: loop.max_steps_exceeded" in state.stderr_tail:
+                        state.cli_failure = "loop.max_steps_exceeded: Kimi turn step budget exhausted"
                 elif not self._consume_stdout(state, chunk):
                     await state.process.cancel()
                     break
@@ -360,7 +389,7 @@ class KimiCodeAdapter(AgentAdapter):
                 return False
             for call in calls:
                 name = self._tool_name(call)
-                if name not in _ALLOWED_TOOLS:
+                if name not in state.allowed_tools:
                     state.error = f"Kimi CLI attempted a disallowed tool: {name or 'unknown'}"
                     return False
                 data = {"name": name}
@@ -452,6 +481,10 @@ class KimiCodeAdapter(AgentAdapter):
                 AgentEventType.FAILED,
             )
         elif process.exit_code != 0 or state.last_message is None:
+            state.error = state.cli_failure or (
+                f"Kimi CLI exited with code {process.exit_code}"
+                if process.exit_code != 0 else "Kimi CLI produced no assistant output"
+            )
             reason, status, event = (
                 AgentExitReason.FAILED,
                 AgentSessionStatus.FAILED,

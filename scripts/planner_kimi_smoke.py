@@ -107,6 +107,10 @@ class HandoffFixture:
                 room_id=self.room.room_id,
                 member_id=member.member_id,
                 agent_name=self.agent_names[role],
+                clarification_only=(
+                    role is MemberRole.IMPLEMENTER
+                    and not any(turn.session.role is AgentRole.IMPLEMENTER for turn in self.turns)
+                ),
                 working_directory=(
                     self.handle.repository_root
                     if role is MemberRole.PLANNER
@@ -243,7 +247,7 @@ async def handoff_fixture(
         registry.register(
             implementer,
             roles={AgentRole.IMPLEMENTER},
-            permission_modes={PermissionMode.WORKSPACE_WRITE},
+            permission_modes={PermissionMode.WORKSPACE_WRITE, PermissionMode.READ_ONLY},
         )
         agent_names = {MemberRole.PLANNER: planner.name, MemberRole.IMPLEMENTER: implementer.name}
         if reviewer is not None:

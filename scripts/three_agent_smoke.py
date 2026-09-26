@@ -80,6 +80,10 @@ class _EvidenceTurnRunner(AgentTurnRunner):
         if self.attempts >= len(expected) or member.role is not expected[self.attempts]:
             raise WorkflowExecutionError("bounded smoke budget or role order exceeded")
         self.attempts += 1
+        # Only this controlled fixture's first implementation turn is mandated
+        # clarification. Never infer authorization from an Agent's plan or prose.
+        if member.role is MemberRole.IMPLEMENTER and self.attempts == 2:
+            kwargs["clarification_only"] = True
         readonly = member.role in {MemberRole.PLANNER, MemberRole.REVIEWER} or self.attempts == 2
         worktree_before = _snapshot(self.fixture.handle.worktree_path)
         evidence_before = (
@@ -232,6 +236,7 @@ async def run_three_agent(
             "transport": "cli-default", "automatic_workflow_retries": 0,
             "reviewer_structured_output": reviewer_structured_output,
             "structured_output_max_attempts": 1 if reviewer_structured_output else None,
+            "initial_clarification_read_only": True,
         },
         task_id=fixture.task.id, trace_id=fixture.task.trace_id, type=ArtifactType.GENERIC,
         created_by="three-agent-smoke", filename="smoke-runtime-policy.json",

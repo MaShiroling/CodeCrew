@@ -52,6 +52,15 @@ Implementer: it checks the task-owned worktree, gives each turn a fresh private 
 selects `kimi-for-coding` at `https://api.kimi.com/coding/v1`, and launches the
 CLI inside macOS `KimiWriteBoundary`. Its packaged agent file exposes only
 `Read/Grep/Glob/Write/Edit`; CodeCrew's `CommandExecutor`, not Kimi's `Bash`, runs tests.
+Explicit trusted `clarification_only` requests must use Implementer / `read_only`.
+They select a separately validated `kimi_readonly_clarifier.md` (Read/Grep/Glob only)
+and a Seatbelt profile with no Worktree write exceptions; the private CLI runtime remains writable.
+The turn runner only routes one question to the actual Planner followed by finish_turn,
+and rejects other actions before ACK. This mode is currently selected by the bounded handoff
+fixtures, not automatically inferred from arbitrary plans or Agent messages.
+Observed nonzero CLI step-budget failures are classified as `loop.max_steps_exceeded`;
+unknown failures report the exit code without copying private stderr into the short error.
+Original stderr stays in the stream evidence. No retries or budget increases are introduced.
 Unexpected JSONL tool names or malformed output fail the turn. The write boundary has system-level
 tests for permitted paths, denied repository metadata, outside paths, and symlink escape; the actual
 Kimi binary has been started under it with `--version`. A user-run opt-in live smoke test

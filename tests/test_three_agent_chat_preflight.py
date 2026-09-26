@@ -320,7 +320,10 @@ async def test_real_adapter_shapes_route_persona_bound_chat_actions(
             if bound_role is MemberRole.IMPLEMENTER
             else PermissionMode.READ_ONLY
         )
-        assert descriptor.permission_modes == {expected}
+        expected_modes = {expected}
+        if bound_role is MemberRole.IMPLEMENTER:
+            expected_modes.add(PermissionMode.READ_ONLY)
+        assert descriptor.permission_modes == expected_modes
     registry = service.event_loop.executor.turns.registry
     with pytest.raises(AgentCompatibilityError):
         registry.resolve(

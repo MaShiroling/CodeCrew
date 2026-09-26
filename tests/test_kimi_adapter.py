@@ -99,6 +99,107 @@ def json_chunk(payload: dict[str, Any]) -> ProcessChunk:
     return ProcessChunk(ProcessStream.STDOUT, json.dumps(payload) + "\n")
 
 
+def clarification_request(request):
+    return AgentRequest.model_validate({
+        **request.model_dump(), "clarification_only": True, "permission_mode": PermissionMode.READ_ONLY,
+    })
+
+
+@pytest.mark.asyncio
+async def test_kimi_clarification_uses_validated_readonly_profile_and_boundary(tmp_path):
+    process = StubProcess(
+        [json_chunk({"role": "assistant", "tool_calls": [{"function": {"name": "Read"}}]}),
+         json_chunk({"role": "assistant", "content": "question"})],
+        ProcessResult(exit_code=0, duration_ms=1),
+    )
+    adapter, runner, request = make_adapter(tmp_path, process)
+    captured = []
+
+    def boundary(**options):
+        captured.append(options)
+        return StubBoundary(**options)
+
+    adapter._boundary_factory = boundary
+    session = await adapter.start(clarification_request(request))
+    result = await adapter.wait(session.session_id)
+    assert result.reason is AgentExitReason.COMPLETED
+    argv = runner.calls[0]["argv"]
+    profile = Path(argv[argv.index("--agent-file") + 1])
+    assert profile.name == "kimi_readonly_clarifier.md"
+    frontmatter = profile.read_text().split("---", maxsplit=2)[1]
+    assert "  - Write" not in frontmatter and "  - Edit" not in frontmatter
+    assert captured[0]["worktree_read_only"] is True
+    assert profile in captured[0]["readable_files"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["Write", "Edit", "Bash"])
+async def test_kimi_clarification_rejects_write_or_command_tool_calls(tmp_path, tool):
+    process = StubProcess(
+        [json_chunk({"role": "assistant", "tool_calls": [{"function": {"name": tool}}]})],
+        ProcessResult(exit_code=0, duration_ms=1),
+    )
+    adapter, _, request = make_adapter(tmp_path, process)
+    session = await adapter.start(clarification_request(request))
+    result = await adapter.wait(session.session_id)
+    assert result.reason is AgentExitReason.FAILED and process.cancelled
+    assert result.error == f"Kimi CLI attempted a disallowed tool: {tool}"
+
+
+@pytest.mark.asyncio
+async def test_kimi_rejects_tampered_clarification_profile_before_launch(tmp_path):
+    adapter, runner, request = make_adapter(tmp_path, StubProcess([], ProcessResult(exit_code=0, duration_ms=1)))
+    modified = tmp_path / "unsafe-clarifier.md"
+    modified.write_text(adapter._clarification_file.read_text().replace("  - Glob\n", "  - Glob\n  - Edit\n"))
+    adapter._clarification_file = modified
+    with pytest.raises(AgentAdapterError, match="changed unexpectedly"):
+        await adapter.start(clarification_request(request))
+    assert runner.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exit_code,cancelled,timed_out,expected", [
+    (1, False, False, AgentExitReason.FAILED),
+    (0, False, False, AgentExitReason.COMPLETED),
+    (143, True, False, AgentExitReason.CANCELLED),
+    (143, False, True, AgentExitReason.TIMED_OUT),
+])
+async def test_step_exhaustion_diagnostic_does_not_override_execution_facts(
+    tmp_path, exit_code, cancelled, timed_out, expected,
+):
+    stderr = "error: failed to run prompt: loop.max_steps_exceeded: Turn exceeded maxSteps=12. private-details\n"
+    process = StubProcess(
+        [json_chunk({"role": "assistant", "content": "intermediate prose"}),
+         ProcessChunk(ProcessStream.STDERR, stderr[:42]), ProcessChunk(ProcessStream.STDERR, stderr[42:])],
+        ProcessResult(exit_code=exit_code, duration_ms=1, cancelled=cancelled, timed_out=timed_out),
+    )
+    adapter, runner, request = make_adapter(tmp_path, process)
+    session = await adapter.start(request)
+    events = [event async for event in adapter.stream(session.session_id)]
+    result = await adapter.wait(session.session_id)
+    assert result.reason is expected
+    if expected is AgentExitReason.FAILED:
+        assert result.error == "loop.max_steps_exceeded: Kimi turn step budget exhausted"
+        assert events[-1].text == result.error
+    else:
+        assert result.error is None
+    assert "private-details" not in (result.error or "")
+    assert "".join(e.text for e in events if e.type is AgentEventType.STDERR) == stderr
+    assert len(runner.calls) == 1  # No retry or extra model turn.
+
+
+@pytest.mark.asyncio
+async def test_unknown_cli_exit_still_has_safe_diagnostic(tmp_path):
+    process = StubProcess(
+        [ProcessChunk(ProcessStream.STDERR, "secret diagnostic\n")],
+        ProcessResult(exit_code=7, duration_ms=1),
+    )
+    adapter, _, request = make_adapter(tmp_path, process)
+    session = await adapter.start(request)
+    result = await adapter.wait(session.session_id)
+    assert result.error == "Kimi CLI exited with code 7"
+
+
 def test_kimi_step_budget_is_explicit_and_validated(tmp_path: Path) -> None:
     adapter, _, _ = make_adapter(
         tmp_path, StubProcess([], ProcessResult(exit_code=0, duration_ms=1))

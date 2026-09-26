@@ -37,7 +37,7 @@ from app.team import (
 from app.trace import TraceEventType
 
 
-def make_context(tmp_path: Path, scenario: FakeAgentScenario):
+def make_context(tmp_path: Path, scenario: FakeAgentScenario, *, read_only_support=False):
     database = SQLiteDatabase(tmp_path / "codecrew.sqlite3")
     artifacts = ArtifactStore(database, tmp_path / "artifacts")
     rooms = TeamRoomStore(database)
@@ -78,7 +78,10 @@ def make_context(tmp_path: Path, scenario: FakeAgentScenario):
     registry.register(
         adapter,
         roles={AgentRole.IMPLEMENTER},
-        permission_modes={PermissionMode.WORKSPACE_WRITE},
+        permission_modes=(
+            {PermissionMode.READ_ONLY, PermissionMode.WORKSPACE_WRITE}
+            if read_only_support else {PermissionMode.WORKSPACE_WRITE}
+        ),
     )
     runner = AgentTurnRunner(registry, router)
     members = {
@@ -104,6 +107,88 @@ def send_trigger(router, room, sender, recipient, **updates):
     }
     values.update(updates)
     return router.route(ChatMessage(**values), authenticated_sender_id=sender.member_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("recipient_kind", ["role", "member"])
+async def test_trusted_clarification_turn_is_readonly_and_routes_one_question(tmp_path, recipient_kind):
+    runner, router, rooms, _, adapter, task, room, members = make_context(
+        tmp_path, FakeAgentScenario(), read_only_support=True,
+    )
+    implementer = members[MemberRole.IMPLEMENTER]
+    planner = members[MemberRole.PLANNER]
+    recipient = (
+        {"kind": "role", "role": "planner"} if recipient_kind == "role"
+        else {"kind": "member", "member_id": str(planner.member_id)}
+    )
+    adapter._scenario = FakeAgentScenario(output={"actions": [
+        {"action": "ask_question", "recipient": recipient, "content": "Who runs tests?"},
+        {"action": "finish_turn"},
+    ]})
+    trigger = send_trigger(router, room, members[MemberRole.ORCHESTRATOR], implementer)
+    result = await runner.run(
+        task, room_id=room.room_id, member_id=implementer.member_id, agent_name=adapter.name,
+        working_directory=tmp_path, clarification_only=True,
+    )
+    request = adapter.requests[0]
+    assert request.clarification_only and request.permission_mode is PermissionMode.READ_ONLY
+    assert "trusted clarification-only turn" in request.prompt
+    assert "There is no messaging tool" in request.prompt
+    example = json.loads(request.prompt.split("Action schema:\n", 1)[1].split("\n\n", 1)[0])
+    assert [action["action"] for action in example["actions"]] == ["ask_question", "finish_turn"]
+    assert result.consumed_message_ids == (trigger.message.message_id,)
+    assert rooms.pending_for(implementer.member_id) == ()
+    assert len(rooms.pending_for(planner.member_id)) == 1
+    stream = router.trace_store.list(trace_id=task.trace_id, type=TraceEventType.AGENT_STREAM_RECORDED)[0]
+    assert stream.event.payload["clarification_only"] is True
+    assert stream.event.payload["permission_mode"] == PermissionMode.READ_ONLY.value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_action", ["finish_only", "request_review", "send_message", "wrong_recipient", "extra_action"])
+async def test_clarification_invalid_actions_are_not_routed_or_acked(tmp_path, bad_action):
+    question = {"action": "ask_question", "recipient": {"kind": "role", "role": "planner"}, "content": "Who runs tests?"}
+    finish = {"action": "finish_turn"}
+    actions = [question, finish]
+    if bad_action == "finish_only":
+        actions = [finish]
+    elif bad_action == "extra_action":
+        actions = [question, {**question, "action": "send_message"}, finish]
+    elif bad_action == "wrong_recipient":
+        question["recipient"] = {"kind": "role", "role": "reviewer"}
+    else:
+        question["action"] = bad_action
+        if bad_action == "request_review":
+            question["recipient"] = {"kind": "role", "role": "orchestrator"}
+    runner, router, rooms, _, adapter, task, room, members = make_context(
+        tmp_path, FakeAgentScenario(output={"actions": actions}), read_only_support=True,
+    )
+    implementer = members[MemberRole.IMPLEMENTER]
+    trigger = send_trigger(router, room, members[MemberRole.ORCHESTRATOR], implementer)
+    with pytest.raises(AgentTurnError, match="clarification-only"):
+        await runner.run(
+            task, room_id=room.room_id, member_id=implementer.member_id, agent_name=adapter.name,
+            working_directory=tmp_path, clarification_only=True,
+        )
+    assert rooms.pending_for(implementer.member_id) == (trigger,)
+    assert rooms.pending_for(members[MemberRole.PLANNER].member_id) == ()
+    assert len(adapter.requests) == 1
+    assert len(rooms.list_messages(room.room_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_clarification_requires_explicit_registry_permission_and_never_falls_back(tmp_path):
+    from app.agents.registry import AgentCompatibilityError
+
+    runner, router, _, _, adapter, task, room, members = make_context(tmp_path, FakeAgentScenario())
+    implementer = members[MemberRole.IMPLEMENTER]
+    send_trigger(router, room, members[MemberRole.ORCHESTRATOR], implementer)
+    with pytest.raises(AgentCompatibilityError):
+        await runner.run(
+            task, room_id=room.room_id, member_id=implementer.member_id, agent_name=adapter.name,
+            working_directory=tmp_path, clarification_only=True,
+        )
+    assert adapter.requests == []
 
 
 @pytest.mark.asyncio

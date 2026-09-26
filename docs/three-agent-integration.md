@@ -416,6 +416,35 @@ Codex `0.155.0-alpha.9.2` 支持逐次 `-c` 配置，旧 `responses_websockets` 
 
 ## 原生 Reviewer 结构化输出（显式选择，在线兼容性待验收）
 
+### 首个澄清回合的受控只读模式
+
+最近尝试 `4418c79a-22c5-4ed1-9cd0-3a89b32d064f` 未进入 Reviewer：月见在首个
+澄清回合调用两次 Edit 并反复读取文件，最终触及 12 步上限。模型声称已恢复文件
+不能代替权限证据。现在交接夹具和三 Agent 夹具均由可信测试控制器显式指定
+`AgentTurnRunner.run(..., clarification_only=True)`：
+
+- `AgentRequest` 限定该标记只能搭配 Implementer / `read_only`；Registry 必须显式
+  注册该权限，缺失权限则拒绝，不回退到可写模式。聊天或 Plan 正文不能设置这个标记。
+- Kimi 使用 `kimi_readonly_clarifier.md`，只暴露 Read/Grep/Glob；工具流中发现
+  Write/Edit/Bash 仍拒绝并取消。真正的写入阻止由 Seatbelt 执行，不依赖事后工具流。
+- 本轮 Worktree 禁止所有写入（包含编辑、创建、删除及重命名）；仅私有 runtime
+  继续允许 CLI 正常保存会话数据。本轮 Artifact 仍是逐文件只读授权。
+- 提示明确最终 JSON 本身就是消息，不需要找“发送消息”工具；读到足够信息后停止
+  使用工具，返回一个 `ask_question` 和一个 `finish_turn`，不提前实现或请求评审。
+  收件人必须是 Planner 角色或房间中实际 Planner 成员；校验在路由/ACK 之前完成。
+- Agent 事件 Artifact 和 Trace 记录 `clarification_only` 与有效 `permission_mode`；
+  三 Agent 夹具的 runtime policy 记录首个澄清只读。后续实现/返工回合保留原写权限。
+- 这是显式回合接口和受控夹具接线，不是生产控制器已经自动识别任意澄清阶段。
+  本步不根据模型生成的 Plan、自然语言或版本号自动授予权限。
+
+Kimi 非零退出时识别已观察到的 `loop.max_steps_exceeded`，不再只显示 `failed`；
+未知错误仅报告退出码，不把敏感 stderr 搬入简短错误。原始日志仍留在证据 Artifact。
+成功、超时和取消仍按执行事实判定，单条 stderr 不足以改变这些结果。
+12 步上限和所有回合预算不变，不额外重试或修补 JSON。提示改进不能保证模型永不循环，
+真实效果需要重新显式运行前述在线命令，旧失败归档保持不变。
+
+### 原生输出契约与验收
+
 为处理两轮耗尽测试中 Reviewer 错置括号导致的 JSON 错误，提供
 `CODECREW_REVIEWER_STRUCTURED_OUTPUT=true`（默认 false）：
 

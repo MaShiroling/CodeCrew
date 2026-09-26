@@ -33,11 +33,13 @@ class KimiWriteBoundary:
         policy: PermissionPolicy,
         readable_files: Sequence[Path] = (),
         read_only_files: Sequence[Path] = (),
+        worktree_read_only: bool = False,
         sandbox_executable: str = "/usr/bin/sandbox-exec",
     ) -> None:
         self.worktree = self._existing_directory(worktree, "worktree")
         self.runtime_directory = self._existing_directory(runtime_directory, "runtime directory")
         self.policy = policy
+        self.worktree_read_only = worktree_read_only
         self.protected_home = Path.home().resolve(strict=True)
         self.readable_files = tuple(
             dict.fromkeys(
@@ -111,8 +113,11 @@ class KimiWriteBoundary:
             f"(subpath {json.dumps(str(self.protected_home))}) " + " ".join(read_exceptions) + "))",
             "(deny file-write*)",
         ]
-        for path in (*self.allowed_directories, self.runtime_directory):
+        write_directories = () if self.worktree_read_only else self.allowed_directories
+        for path in (*write_directories, self.runtime_directory):
             lines.append(f"(allow file-write* (subpath {json.dumps(str(path))}))")
+        if self.worktree_read_only:
+            lines.append(f"(deny file-write* (subpath {json.dumps(str(self.worktree))}))")
         for path in self.denied_paths:
             lines.append(f"(deny file-write* (subpath {json.dumps(str(path))}))")
         for path in self.read_only_files:

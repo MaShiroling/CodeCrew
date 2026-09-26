@@ -96,9 +96,16 @@ class AgentRequest(BaseModel):
     artifact_inputs: tuple[AgentArtifactInput, ...] = Field(default=(), max_length=1000)
     # Internal execution contract, not a user-authored prompt or success verdict.
     output_schema: dict[str, Any] | None = None
+    # Set only by a trusted controller/caller, never inferred from Agent prose.
+    clarification_only: bool = False
 
     @model_validator(mode="after")
     def validate_artifact_inputs(self) -> "AgentRequest":
+        if self.clarification_only and (
+            self.role is not AgentRole.IMPLEMENTER
+            or self.permission_mode is not PermissionMode.READ_ONLY
+        ):
+            raise ValueError("clarification-only requests require a read-only implementer")
         if any(
             item.task_id != self.task_id or item.trace_id != self.trace_id
             for item in self.artifact_inputs
