@@ -13,6 +13,7 @@ class TraceEventType(str, Enum):
     AGENT_TURN_STARTED = "agent_turn_started"
     AGENT_TURN_COMPLETED = "agent_turn_completed"
     AGENT_TURN_FAILED = "agent_turn_failed"
+    AGENT_OUTPUT_RECORDED = "agent_output_recorded"
     VERIFICATION_COMPLETED = "verification_completed"
     REVIEW_DECIDED = "review_decided"
     COMPLETION_DECIDED = "completion_decided"

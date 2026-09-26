@@ -104,6 +104,10 @@ class ReviewerProcessRunner:
         )
         if self.mode == "prose":
             answer = f"Reviewed and approved.\n```json\n{answer}\n```"
+        elif self.mode == "high_issue":
+            answer = f"Approved despite the issues.\n```json\n{answer}\n```"
+        elif self.mode == "ambiguous":
+            answer = f"```json\n{answer}\n```\n```json\n{answer}\n```"
         events.append({"type": "result", "session_id": "independent-reviewer", "result": answer})
         return Process(events)
 
@@ -116,8 +120,11 @@ def reviewer_adapter(runner):
 
 
 @pytest.mark.asyncio
-async def test_production_event_loop_completes_only_after_review_and_guard(tmp_path):
-    planner, kimi, reviewer = PlannerProcessRunner(), KimiProcessRunner(), ReviewerProcessRunner()
+@pytest.mark.parametrize("wrapped", [False, True])
+async def test_production_event_loop_completes_only_after_review_and_guard(tmp_path, wrapped):
+    planner = PlannerProcessRunner()
+    kimi = KimiProcessRunner(response_style="prose_prefix" if wrapped else "raw")
+    reviewer = ReviewerProcessRunner("prose" if wrapped else "approve")
     async with handoff_fixture(
         tmp_path,
         CodexCliAdapter(runner=planner),
@@ -260,7 +267,7 @@ async def test_oversized_review_evidence_fails_before_launch(tmp_path, monkeypat
         ("write", WorkflowExecutionError, "changed the workspace"),
         ("tamper", AgentTurnError, "Artifact changed"),
         ("high_issue", AgentTurnError, "high-priority"),
-        ("prose", ChatActionError, "not valid JSON"),
+        ("ambiguous", ChatActionError, "not valid JSON"),
     ],
 )
 async def test_review_integrity_failures_cannot_complete(tmp_path, mode, error, message):

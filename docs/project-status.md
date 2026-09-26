@@ -11,7 +11,8 @@
 - Codex CLI、Claude Code、Kimi Code CLI 与 Fake Agent 适配路径；DeepSeek Reviewer 已通过离线测试和用户本机独立在线冒烟。
 - 三 Agent 联调第 1 子步骤：显式白金/Codex、月见/Kimi、鲸鲸/DeepSeek 配置；角色动作提示与严格 JSON 包装兼容；生产接线的离线聊天协议测试。
 - 第 2 子步骤开发、离线和用户本机在线验收通过：本轮 Artifact 逐文件只读授权、完整性复核，以及 Planner → 澄清 → Plan v2 → Implementer → Verifier 的固定夹具。
-- 第 3 子步骤已开发：生产事件循环驱动五回合成功路径、Reviewer 显式证据引用、独立评审及 CompletionGuard；已加入模拟失败反例和显式开启的真实用例，三模型在线验收尚未运行。
+- 第 3 子步骤已开发：生产事件循环驱动五回合成功路径、Reviewer 显式证据引用、独立评审及 CompletionGuard；已加入模拟失败反例和显式开启的真实用例，三模型在线验收已尝试但尚未通过。
+- 聊天动作受控输出归一化：唯一 JSON 代码块可带外围说明，歧义输出仍拒绝；原始 AgentResult 保存为诊断 Artifact 并通过 Trace 引用，未增加模型重试。
 
 ## 验证基线
 
@@ -35,6 +36,7 @@
 - Kimi 混合输出专项离线回归、全量 `scripts/check_offline.py` 和 Ruff 已通过：合法 JSON/完整 JSON 代码块可交接；混合文字、多代码块、纯文字提问声明和未知字段被拒绝，消息保留未 ACK，无新增路由/Plan/Artifact，也无自动重试。真实双 Agent 联调仍需在已配置终端重跑。
 - 上述历史待验收状态已更新：用户重跑第 2 子步骤并提供通过输出，trace_id 为 `5f646b43-1d20-4278-825e-016c22398d60`。四回合双 Agent 交接及 Verifier 已通过；`task_success=false` 为该用例预期，不代表三模型完整任务成功。
 - 第 3 子步骤定向回归和全量 `scripts/check_offline.py` 通过，Ruff 通过；全量在支持 Seatbelt 的环境运行，六个在线标志全部关闭。完成、假批准、拒绝、只读/证据/工具/格式异常以及 ACK 队列回归均为模拟 CLI 输出；真实五回合结果仍待验收。
+- 用户已尝试五回合在线验收，但 Kimi 澄清回合仍返回说明加 JSON，尚未到达鲸鲸。现加入受控包装归一化，定向模拟测试验证混合包装可执行、歧义不 ACK、原文审计以及权限/高优先级守卫未放宽；全量 `scripts/check_offline.py` 和 Ruff 通过，六个在线标志关闭，三模型在线验收仍待重跑。
 
 ## 尚未验证或尚未实现
 

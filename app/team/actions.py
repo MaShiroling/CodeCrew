@@ -122,7 +122,7 @@ def parse_agent_chat_turn(output: dict[str, Any]) -> AgentChatTurn:
         candidate = output.get("result", output.get("message"))
     if isinstance(candidate, str):
         try:
-            candidate = parse_json_response(candidate)
+            candidate = parse_json_response(candidate, allow_surrounding_prose=True)
         except json.JSONDecodeError as exc:
             raise ChatActionError("agent chat output is not valid JSON") from exc
     if not isinstance(candidate, dict):

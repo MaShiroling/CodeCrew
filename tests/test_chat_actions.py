@@ -97,15 +97,18 @@ def test_parser_rejects_non_json_and_unknown_fields() -> None:
 
 
 @pytest.mark.parametrize("field", ["turn", "message", "result"])
-def test_parser_accepts_only_whole_json_fence(field: str) -> None:
+def test_parser_accepts_one_explicit_json_fence_with_optional_prose(field: str) -> None:
     payload = {"actions": [{"action": "finish_turn", "content": "done"}]}
     raw = json.dumps(payload)
     assert parse_agent_chat_turn({field: f" \n```json\n{raw}\n```\n"}) == (
         parse_agent_chat_turn(payload)
     )
-    for invalid in (
+    for accepted in (
         f"Here is the answer:\n```json\n{raw}\n```",
         f"```json\n{raw}\n```\nDone",
+    ):
+        assert parse_agent_chat_turn({field: accepted}) == parse_agent_chat_turn(payload)
+    for invalid in (
         f"```json\n{raw}\n```\n```json\n{raw}\n```",
         f"```\n{raw}\n```",
         f"```python\n{raw}\n```",
@@ -121,7 +124,9 @@ def test_fenced_json_still_requires_action_schema() -> None:
         {"actions": []},
     ):
         with pytest.raises(ChatActionError, match="invalid agent chat turn"):
-            parse_agent_chat_turn({"result": f"```json\n{json.dumps(payload)}\n```"})
+            parse_agent_chat_turn(
+                {"result": f"I approved it.\n```json\n{json.dumps(payload)}\n```"}
+            )
 
 
 def test_plan_revision_fields_are_scoped_to_share_plan() -> None:

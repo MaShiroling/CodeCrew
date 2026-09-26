@@ -39,6 +39,7 @@ from app.team.models import (
 from app.team.personas import TeamPersonaCatalog, default_team_personas
 from app.team.router import ConversationRouter
 from app.team.store import TeamRoomStore
+from app.trace import TraceActorKind, TraceEvent, TraceEventType
 from app.verification import ReviewIssue, ReviewIssuePriority, ReviewVerdict
 
 
@@ -171,6 +172,35 @@ class AgentTurnRunner:
 
         if result.trace_id != task.trace_id:
             raise AgentTurnError("agent result belongs to another trace")
+        # Preserve exact string content before normalization, including rejected
+        # replies. Diagnostic evidence is not an ACK or a routed Agent action.
+        output_artifact = self.artifacts.put_json(
+            result.model_dump(mode="json"),
+            task_id=task.id,
+            trace_id=task.trace_id,
+            type=ArtifactType.GENERIC,
+            created_by="agent-output-recorder",
+            filename=f"agent-output-{session.session_id}.json",
+            metadata={"purpose": "raw-agent-output", "session_id": str(session.session_id)},
+        )
+        self.router.trace_store.append(
+            TraceEvent(
+                task_id=task.id,
+                trace_id=task.trace_id,
+                type=TraceEventType.AGENT_OUTPUT_RECORDED,
+                actor_kind=TraceActorKind.DETERMINISTIC,
+                actor_id="agent-output-recorder",
+                correlation_id=incoming[-1].message.correlation_id,
+                causation_id=incoming[-1].message.message_id,
+                idempotency_key=f"agent-output:{session.session_id}",
+                payload={
+                    "session_id": str(session.session_id),
+                    "artifact_id": str(output_artifact.artifact_id),
+                    "sha256": output_artifact.sha256,
+                    "role": member.role.value,
+                },
+            )
+        )
         if result.reason is not AgentExitReason.COMPLETED or result.exit_code not in {0, None}:
             detail = result.error or result.reason.value
             raise AgentTurnError(f"agent turn failed: {detail}")

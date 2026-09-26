@@ -14,7 +14,19 @@ An Agent turn returns one JSON object containing up to 20 actions. Supported act
 - `finish_turn`.
 
 Exactly one `finish_turn` must appear at the end. Answers require `reply_to`; Artifact sharing
-requires Artifact IDs. Unknown fields and prose outside the JSON object are rejected.
+requires Artifact IDs. Unknown fields are rejected. Chat turns accept raw JSON or one
+explicitly `json`-labelled fenced block with optional surrounding prose. Prose is never
+an action or completion evidence. Multiple/other/unbalanced fences, extra JSON object/array
+candidates outside the block, duplicate keys, and non-JSON constants are rejected. Wrapper
+prose is bounded to 16,000 characters and 100 possible object/array starts. Schema, role,
+recipient, Artifact ownership and CompletionGuard checks remain mandatory.
+
+Once a matching-trace AgentResult is available, the full result (including the exact output
+string before normalization) is saved as a diagnostic Generic Artifact with purpose
+`raw-agent-output`. An `agent_output_recorded` Trace event references its ID and SHA-256;
+both accepted and rejected replies are recorded. This recording is not a message ACK,
+an action Artifact, or proof of success. Cancellation before a result exists cannot record
+a final result. The standalone legacy Reviewer verdict parser does not opt into prose wrappers.
 
 ## Planner clarification and Plan versions
 

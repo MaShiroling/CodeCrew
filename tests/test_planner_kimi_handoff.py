@@ -16,6 +16,7 @@ from app.team import (
     MessageType,
     RecipientKind,
 )
+from app.trace import TraceEventType
 from scripts.planner_kimi_smoke import FIXED_SOURCE, handoff_fixture, run_handoff
 
 
@@ -87,6 +88,7 @@ class KimiProcessRunner:
         self.calls = []
         self.edit = edit
         self.response_style = response_style
+        self.outputs = []
 
     async def start(self, argv, **options):
         self.calls.append((argv, options))
@@ -123,10 +125,12 @@ class KimiProcessRunner:
             "prose_suffix": f"{fenced}\n已完成澄清，请等待回复。",
             "multiple_blocks": f"{fenced}\n{fenced}",
             "prose_only": "已阅读 Plan v1 并已向白金提问测试职责，等待 Plan v2。",
+            "extra_candidate": f'{{"actions": []}}\n{fenced}',
             "unknown_field": json.dumps(
                 {"actions": [action, {"action": "finish_turn", "success": True}]}
             ),
         }
+        self.outputs.append(responses[self.response_style])
         return Process(
             [
                 {
@@ -165,7 +169,7 @@ def factory(kimi_runner):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("response_style", ["raw", "fenced"])
+@pytest.mark.parametrize("response_style", ["raw", "fenced", "prose_prefix", "prose_suffix"])
 async def test_plan_clarification_v2_edit_and_verification(tmp_path, response_style):
     planner, kimi = PlannerProcessRunner(), KimiProcessRunner(response_style=response_style)
     Boundary.grants = []
@@ -184,15 +188,23 @@ async def test_plan_clarification_v2_edit_and_verification(tmp_path, response_st
         assert [item.message.type for item in messages_to_controller] == [
             MessageType.IMPLEMENTATION_READY
         ]
+        recorded = fixture.router.trace_store.list(
+            trace_id=fixture.task.trace_id, type=TraceEventType.AGENT_OUTPUT_RECORDED
+        )
+        kimi_outputs = [
+            fixture.store.read_json(item.event.payload["artifact_id"])["output"]["message"]
+            for item in recorded
+            if item.event.payload["role"] == "implementer"
+        ]
+        assert kimi_outputs == kimi.outputs  # Full prose is retained, not passed as extra actions.
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("response_style", "error"),
     [
-        ("prose_prefix", "not valid JSON"),
-        ("prose_suffix", "not valid JSON"),
         ("multiple_blocks", "not valid JSON"),
+        ("extra_candidate", "not valid JSON"),
         ("prose_only", "not valid JSON"),
         ("unknown_field", "invalid agent chat turn"),
     ],
@@ -239,18 +251,22 @@ async def test_kimi_invalid_clarification_has_no_ack_or_routing_side_effects(
             await fixture.turn(MemberRole.IMPLEMENTER)
 
         # Exercise the production Kimi parser and runner, not just the JSON helper.
-        # Neither the prose claim nor embedded actions may become a delivered question.
+        # Neither prose claims nor ambiguous payloads may become a delivered question.
         assert rooms.list_messages(room_id) == messages_before
         assert rooms.list_plan_revisions(room_id) == plans_before
         for role, member in fixture.members.items():
             assert rooms.pending_for(member.member_id) == pending_before[role]
         with fixture.store.database.connect() as connection:
-            assert (
-                connection.execute(
-                    "SELECT artifact_id FROM artifacts ORDER BY artifact_id"
-                ).fetchall()
-                == artifacts_before
-            )
+            after = connection.execute(
+                "SELECT artifact_id FROM artifacts ORDER BY artifact_id"
+            ).fetchall()
+        new_ids = {row["artifact_id"] for row in after} - {
+            row["artifact_id"] for row in artifacts_before
+        }
+        assert len(new_ids) == 1  # Only diagnostic raw output, never an action Artifact.
+        raw_id = new_ids.pop()
+        assert fixture.store.get_metadata(raw_id).metadata["purpose"] == "raw-agent-output"
+        assert fixture.store.read_json(raw_id)["output"]["message"] == kimi.outputs[0]
         assert (fixture.handle.worktree_path / "src/pricing.py").read_bytes() == source_before
         assert len(planner.calls) == len(kimi.calls) == 1  # No automatic paid retry.
         assert len(fixture.turns) == 1  # The failed turn is not a completed turn.
