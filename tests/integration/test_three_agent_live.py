@@ -4,6 +4,7 @@ import json
 import os
 import platform
 import shutil
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
@@ -12,6 +13,7 @@ import pytest
 from app.agents import CodexCliAdapter, DeepSeekClaudeReviewerAdapter, KimiCodeAdapter
 from app.orchestration.models import TaskState
 from scripts.planner_kimi_smoke import handoff_fixture
+from scripts.smoke_evidence import archive_smoke_evidence
 from scripts.three_agent_smoke import run_three_agent
 
 pytestmark = pytest.mark.integration
@@ -42,10 +44,34 @@ async def test_live_three_agent_success_path(tmp_path):
         async with handoff_fixture(
             tmp_path, CodexCliAdapter(), implementer, reviewer=reviewer
         ) as fixture:
-            result = await run_three_agent(fixture)
-            assert fixture.task.state is TaskState.COMPLETED
-            assert result.runtime.latest_completion and result.runtime.latest_completion.passed
-            assert len(result.workflow.agent_turns) == 5
+            try:
+                result = await run_three_agent(fixture)
+                assert fixture.task.state is TaskState.COMPLETED
+                assert result.runtime.latest_completion and result.runtime.latest_completion.passed
+                assert len(result.workflow.agent_turns) == 5
+            finally:
+                turn_failure = sys.exception()
+                try:
+                    archive = archive_smoke_evidence(
+                        fixture.store,
+                        fixture.task,
+                        root=Path(__file__).resolve().parents[2] / "evals/results/three-agent-live",
+                    )
+                except Exception as archive_error:
+                    print(json.dumps({
+                        "trace_id": str(fixture.task.trace_id),
+                        "archive_error": type(archive_error).__name__,
+                        "archive_integrity_verified": False,
+                    }))
+                    if turn_failure is None:
+                        raise
+                else:
+                    print(json.dumps({
+                        "trace_id": str(fixture.task.trace_id),
+                        "evidence_archive": str(archive),
+                        "task_state": fixture.task.state.value,
+                        "archive_integrity_verified": True,
+                    }))
             print(
                 json.dumps(
                     {
@@ -57,6 +83,7 @@ async def test_live_three_agent_success_path(tmp_path):
                             result.runtime.latest_completion.artifact.artifact_id
                         ),
                         "task_success": True,
+                        "evidence_archive": str(archive),
                     }
                 )
             )

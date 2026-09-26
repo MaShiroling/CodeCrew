@@ -200,7 +200,8 @@ codex --version
 
 离线回归覆盖完整成功、假批准但无 Diff/测试失败、评审拒绝，以及漏读、禁止工具、
 改代码、篡改 Artifact、歧义回复、高优先级未解决问题。所有进程输出为模拟；
-真实三模型成功路径尚未运行。使用：
+真实三模型成功路径已尝试但尚未通过；最新运行到达 Reviewer 后因报告来源冲突失败。
+使用：
 
 ```bash
 .venv/bin/pytest -q tests/test_three_agent_success.py tests/test_workflow_controller.py tests/test_offline_check.py
@@ -219,6 +220,38 @@ CODECREW_RUN_THREE_AGENT_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_th
 时延及缺失 Token 的 null；每回合原始规范化事件保存为 Artifact。失败不能通过改断言
 或自动批准消除。全量离线入口显式关闭新的 `CODECREW_RUN_THREE_AGENT_LIVE` 标志。
 测试退出会移除临时 Worktree/Reviewer HOME，证据可能被 pytest 清理。
+
+### 第一部分第 2 步：真实成功闭环与长期证据
+
+上述命令保持不变，不增加自动重试或额外模型回合。开始真实运行前，需在同一终端
+确认三个 CLI、Codex 登录以及两个环境变量已经配置；不要把密钥放进命令、页面或仓库。
+本轮桌面任务进程只检查了凭证是否存在：三个 CLI 可用，两个密钥均未继承，因此没有
+代跑真实用例。Reviewer 契约修复后的真实成功验收仍待用户终端执行。
+
+一旦进入已创建的任务夹具，不论工作流成功或失败，测试都会尝试把证据归档到
+`evals/results/three-agent-live/<trace_id>-<随机后缀>/`；此路径已有 Git 忽略规则，
+不会被 pytest 的临时目录清理。每次创建独立目录，不覆盖此前运行。
+
+- `trace.sqlite3`：SQLite backup 快照，包括聊天室、Plan 版本、Trace 与 Artifact 元数据。
+- `artifacts/sha256/`：仅复制已登记的内容寻址 Blob，按归档元数据核验 SHA-256 和大小。
+- `manifest.json`：任务快照、任务/Trace ID、数据库哈希、Artifact 清单及使用限制。
+
+不复制 CLI HOME、Kimi runtime、原仓库、Worktree 或父进程环境。目录权限为 `0700`，
+完成归档的数据库、Blob 和清单为 `0600`。原始回复、聊天及日志仍可能包含敏感信息，
+分享前必须检查；不承诺对任意日志内容自动脱敏，也不把文件权限当作恶意用户隔离。
+清单记录的是归档完整性，**不是任务成功判定**。目录中的旧工作区路径不用于重新执行
+命令，该归档不是可续跑工作区。
+
+失败时也输出 `evidence_archive` 与实际 `task_state`，不能把目录存在视为验收通过。
+归档异常会输出 `archive_error` 类别，不打印异常内容或凭证；若工作流本来已失败，
+保留原失败，不用归档异常替换它。校验不通过的部分目录没有有效清单，不可作为完整证据。
+若工作流通过但归档失败，用例仍失败。CLI/凭证预检或夹具创建前的失败没有可归档的任务。
+
+验收需要同时满足：pytest 用例通过、`task_success=true`、五个规定 Agent 回合，以及
+可核验的 Plan v1/v2、Diff、Verifier、ReviewReport 与 CompletionGuard 证据。通过后请
+保留输出中的归档路径；失败时提供失败断言和路径，不必粘贴全部原始回复或任何凭证。
+离线模拟已覆盖成功证据恢复、双来源审批失败归档、缺失/篡改/跨任务/符号链接拒绝；
+这些结果不替代真实模型验收。
 
 此处的 `hidden_tests` 类别仍为可见额外断言，没有保密隔离；成功仅针对该受控夹具，
 不代表正式隐藏测试评测、实际模型版本确认、UI 驱动验收或不可信仓库安全性。

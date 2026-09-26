@@ -7,7 +7,8 @@ import pytest
 
 from app.agents import CodexCliAdapter, DeepSeekClaudeReviewerAdapter
 from app.orchestration.models import TaskState
-from app.storage import ArtifactReference, ArtifactType
+from app.recovery import EvidenceRecoveryService
+from app.storage import ArtifactReference, ArtifactStore, ArtifactType, SQLiteDatabase
 from app.team import (
     AgentTurnError,
     ChatActionError,
@@ -15,9 +16,10 @@ from app.team import (
     MessageType,
     WorkflowExecutionError,
 )
-from app.trace import TraceEventType
+from app.trace import TraceEventType, TraceStore
 from app.verification import CompletionConditionKind
 from scripts.planner_kimi_smoke import handoff_fixture
+from scripts.smoke_evidence import archive_smoke_evidence
 from scripts.three_agent_smoke import run_three_agent
 from tests.test_planner_kimi_handoff import (
     KimiProcessRunner,
@@ -179,6 +181,18 @@ async def test_production_event_loop_completes_only_after_review_and_guard(tmp_p
         assert report["patch_artifact_id"] and report["review_artifact_ids"]
         assert report["sessions"][1]["token_usage"] is None
         assert report["reviewer_os_sandbox"] is report["hidden_test_secrecy"] is False
+        archive = archive_smoke_evidence(
+            fixture.store, fixture.task, root=tmp_path / "archives"
+        )
+        database = SQLiteDatabase(archive / "trace.sqlite3")
+        archived_store = ArtifactStore(database, archive / "artifacts")
+        recovered = EvidenceRecoveryService(archived_store, TraceStore(database)).recover(
+            task_id=fixture.task.id, trace_id=fixture.task.trace_id
+        )
+        assert recovered.completion and recovered.completion.passed
+        assert recovered.verification and recovered.verification.passed
+        assert recovered.review
+        assert archived_store.read_json(result.report.artifact_id) == report
 
 
 @pytest.mark.asyncio
@@ -307,3 +321,11 @@ async def test_review_integrity_failures_cannot_complete(tmp_path, mode, error, 
             rejected = json.loads(raw["output"]["result"])["actions"][0]
             assert rejected["artifact_ids"]
             assert rejected["artifact_content"] == {"issues": []}
+            archive = archive_smoke_evidence(
+                fixture.store, fixture.task, root=tmp_path / "archives"
+            )
+            archived_store = ArtifactStore(
+                SQLiteDatabase(archive / "trace.sqlite3"), archive / "artifacts"
+            )
+            assert archived_store.read_json(reviewer_output.payload["artifact_id"]) == raw
+            assert json.loads((archive / "manifest.json").read_text())["task_state"] == "reviewing"
