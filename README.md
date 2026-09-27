@@ -332,6 +332,8 @@ Reviewer 已统一提示词、CLI 原生参数与本地 Draft-07 校验契约：
 该增强契约已通过离线测试，尚未完成真实提供商验收，详见联调说明。
 历史输出可用 `.venv/bin/python -m scripts.replay_reviewer` 离线回归；
 也支持只读核验并逐字回放本机归档，见[Reviewer 离线回放](docs/reviewer-replay.md)。
+现提供[仅 Reviewer 的原生聊天室验收](docs/reviewer-chat-smoke.md)：单回合批准与两回合
+拒绝/再批准分开运行，不启动 Planner/Implementer；入口已离线验证，在线结果仍待取得。
 
 ## 配置
 

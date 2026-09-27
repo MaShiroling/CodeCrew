@@ -8,7 +8,6 @@ import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.agents import AgentEventType
 from app.agents.timeouts import validate_planner_timeout
 from app.orchestration.models import TaskState
 from app.storage import ArtifactReference, ArtifactType
@@ -31,6 +30,7 @@ from app.team import (
 from app.trace import TraceActorKind, TraceEvent, TraceEventType
 from app.verification import CompletionGuard, VerificationCheckKind, VerificationStatus
 from scripts.planner_kimi_smoke import HandoffFixture, _assert_plan_read, _source_hashes
+from scripts.reviewer_evidence import check_reviewer_evidence
 
 
 def _snapshot(root: Path) -> dict[str, str]:
@@ -121,41 +121,16 @@ class _EvidenceTurnRunner(AgentTurnRunner):
             after = _snapshot(self.fixture.store.root)
             if any(after.get(path) != digest for path, digest in evidence_before.items()):
                 raise WorkflowExecutionError("Reviewer changed existing evidence")
-            if not turn.session.native_session_id:
-                raise WorkflowExecutionError("Reviewer returned no native session identifier")
-            if turn.session.native_session_id in self.reviewer_sessions:
-                raise WorkflowExecutionError("Reviewer reused a prior native session")
-            self.reviewer_sessions.add(turn.session.native_session_id)
-            calls = [event.data for event in turn.events if event.type is AgentEventType.TOOL_CALL]
-            # Keep formatter invocations in the audit stream. They are not file reads
-            # and cannot substitute for the mandatory evidence Read calls below.
-            def allowed_call(call):
-                return call.get("name") in {"Read", "Glob", "Grep"} or (
-                    self.reviewer_structured_output
-                    and call.get("name") == "StructuredOutput"
-                    and call.get("input") == turn.agent_result.output.get("structured_output")
-                )
-
-            if any(not allowed_call(call) for call in calls):
-                raise WorkflowExecutionError("Reviewer attempted an unapproved tool")
-            paths = set()
-            for call in calls:
-                args = call.get("input")
-                path = args.get("file_path", args.get("path")) if isinstance(args, dict) else None
-                if call.get("name") == "Read" and isinstance(path, str):
-                    candidate = Path(path)
-                    if not candidate.is_absolute():
-                        candidate = self.fixture.handle.worktree_path / candidate
-                    paths.add(candidate.resolve())
             required = {
-                self.fixture.store.blob_path_for(ref.artifact_id).resolve()
+                self.fixture.store.blob_path_for(ref.artifact_id)
                 for message in pending
                 for ref in message.message.artifacts
             }
-            if not required or not required <= paths:
-                raise WorkflowExecutionError(
-                    "Reviewer did not visibly read every supplied evidence Artifact"
-                )
+            check_reviewer_evidence(
+                turn, working_directory=self.fixture.handle.worktree_path,
+                required_paths=required, native_sessions=self.reviewer_sessions,
+                native_output=self.reviewer_structured_output,
+            )
             if self.reviews <= self.inject_count and not any(
                 item.message.type is MessageType.REWORK_REQUEST for item in turn.routed_messages
             ):
