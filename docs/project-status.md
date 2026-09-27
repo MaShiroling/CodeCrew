@@ -6,6 +6,15 @@
 
 ## 最新验收与当前阻塞
 
+- 统一 15 步路线第 2 步：内部受控恢复、授权再次核验与原子消费已完成离线验收。
+  Migration 14 将授权消费、Task/Runtime 修订、新 Claim 和 Trace 同事务提交；
+  Planner→planning、Implementer→implementing、Reviewer→verifying，不放开通用终态回归。
+  所有旧 native session 清空，运行上下文不加载历史验证/完成结论；不 ACK、不运行模型、
+  不重置预算。重放不给 owner/Runtime；启动扫描和恢复入口遇未解决占用保守转人工。
+  新增 44 项用例，237 项定向回归及最终全量 `scripts/check_offline.py` pytest / Ruff
+  通过，九个在线开关关闭，未调用真实模型；保留既有依赖弃用警告。
+  context7-mcp 用于核对 Pydantic `model_copy` 不校验的边界，恢复后的领域对象重新验证后持久化。
+  HTTP 执行与取消接线仍待第 3 步，首次人工等待入口亦须补齐。详见[受控恢复](controlled-resumption.md)。
 - 后续路线第一部分第 1 步：显式新意图授权记录增量已完成离线验收。
   仅接受最新成功提交回合后的新 Human 意图；记录目标、修订号、Runtime/消息哈希、
   Artifact 引用和同事务 Human Trace。Migration 13、幂等重放、独立连接唯一约束；

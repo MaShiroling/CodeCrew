@@ -79,6 +79,19 @@ class Task(BaseModel):
         self.state = target
         self.updated_at = utc_now()
 
+    def resume_for_continuation(self, target: TaskState) -> None:
+        """Trusted recovery primitive; authorization must be checked by storage.
+
+        Ordinary transitions out of terminal states remain forbidden. Never
+        resume directly into review/completion or reset the rework counter.
+        """
+        if self.state is not TaskState.NEEDS_HUMAN or target not in {
+            TaskState.PLANNING, TaskState.IMPLEMENTING, TaskState.VERIFYING,
+        }:
+            raise InvalidTaskTransition("controlled continuation requires needs_human and a safe resume state")
+        self.state = target
+        self.updated_at = utc_now()
+
     @property
     def is_terminal(self) -> bool:
         return self.state in TERMINAL_STATES

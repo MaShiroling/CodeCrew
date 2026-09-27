@@ -6,6 +6,11 @@ from uuid import UUID
 
 from app.orchestration.models import TERMINAL_STATES, TaskState
 from app.recovery.evidence import EvidenceRecoveryError, EvidenceRecoveryService
+from app.storage.continuations import (
+    ContinuationIntegrityError,
+    ContinuationRepository,
+    ContinuationState,
+)
 from app.storage.runtime import (
     RuntimeContextIntegrityError,
     RuntimeContextNotFoundError,
@@ -118,6 +123,7 @@ class WorkflowRecoveryCoordinator:
             raise RecoveryCoordinatorError(
                 f"runtime context for task {entry.task_id} changed after recovery scan"
             )
+        self._require_no_continuation_reservation(entry.task_id)
         room = self.rooms.get_room(entry.runtime.room_id)
         orchestrator = self._unique_orchestrator(room.members)
         current_pending = self._pending_events(orchestrator.member_id)
@@ -201,6 +207,7 @@ class WorkflowRecoveryCoordinator:
             )
 
         try:
+            self._require_no_continuation_reservation(task.id)
             context_snapshot = self.contexts.get(task.id)
             context = context_snapshot.context
             if context.trace_id != task.trace_id:
@@ -263,8 +270,22 @@ class WorkflowRecoveryCoordinator:
             RecoveryCoordinatorError,
             RuntimeContextIntegrityError,
             WorktreeError,
+            ContinuationIntegrityError,
         ) as exc:
             return self._needs_human(snapshot, str(exc))
+
+    def _require_no_continuation_reservation(self, task_id: UUID) -> None:
+        # Standalone legacy recovery stores may not install continuation tables.
+        # Never reinterpret staged/uncertain Human execution as an ordinary
+        # replayable controller event, including between scan and resume.
+        with self.tasks.database.connect() as connection:
+            if connection.execute("SELECT name FROM sqlite_master WHERE name='continuation_requests'").fetchone() is None:
+                return
+            rows = connection.execute("SELECT * FROM continuation_requests WHERE task_id=?",
+                                      (str(task_id),)).fetchall()
+            records = [ContinuationRepository(self.tasks.database)._decode(row) for row in rows]
+            if any(record.receipt.state is not ContinuationState.SUCCEEDED for record in records):
+                raise RecoveryCoordinatorError("unresolved continuation reservation; automatic recovery is forbidden")
 
     def _needs_human(self, snapshot: TaskSnapshot, reason: str) -> RecoveryEntry:
         task = snapshot.task

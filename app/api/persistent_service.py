@@ -53,6 +53,7 @@ from app.storage import (
 )
 from app.storage.continuation_authorizations import ContinuationAuthorizationRepository
 from app.storage.continuation_cancellations import ContinuationCancellationRepository
+from app.storage.continuation_resumptions import ContinuationResumptionRepository
 from app.storage.continuations import (
     ContinuationConflictError,
     ContinuationIntegrityError,
@@ -142,6 +143,8 @@ class PersistentTaskService:
         self.continuation_cancellations.initialize()
         self.continuation_authorizations = ContinuationAuthorizationRepository(self.continuations)
         self.continuation_authorizations.initialize()
+        self.continuation_resumptions = ContinuationResumptionRepository(self.continuation_authorizations)
+        self.continuation_resumptions.initialize()
         self._continuation_runs = {}
         self.continuation_cancellation_timeout_seconds = 5.0
 

@@ -76,7 +76,7 @@ async def test_authorization_is_bound_durable_idempotent_and_does_not_execute(pa
     reopened = ContinuationAuthorizationRepository(service.continuations)
     reopened.database = SQLiteDatabase(service.tasks.database.path)
     reopened.initialize()
-    assert reopened.database.schema_version == 13
+    assert reopened.database.schema_version == 14
     from uuid import UUID
     assert reopened.get(task_id=view.task_id, authorization_id=UUID(receipt["authorization_id"])).model_dump(mode="json") == receipt
 
