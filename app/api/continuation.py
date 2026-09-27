@@ -12,6 +12,7 @@ from app.api.service import (
     TaskStateConflict,
 )
 from app.orchestration.models import TaskState
+from app.storage.continuations import ContinuationIntegrityError, ContinuationState
 from app.team.budgets import ConversationBudgetGuard
 from app.team.models import MemberKind, MemberRole, MessageDeliveryStatus, MessageType, RoomStatus
 from app.team.store import ChatMessageNotFoundError
@@ -26,6 +27,16 @@ def preflight_continuation(service, task_id, request: ContinueTaskPreflightReque
         raise TaskStateConflict("task execution or cancellation is still active")
     if task.state is not TaskState.NEEDS_HUMAN or room.status is not RoomStatus.ACTIVE:
         raise TaskStateConflict("continuation preflight requires a paused task and active room")
+    try:
+        active = service.continuations.active_for_task(task_id)
+    except (sqlite3.Error, ContinuationIntegrityError) as exc:
+        raise TaskServiceUnavailable("continuation reservations cannot be read") from exc
+    if active is not None and (
+        active.receipt.state is not ContinuationState.PENDING
+        or active.receipt.request.message_id != request.message_id
+        or active.receipt.request.target_role.value != request.target_role.value
+    ):
+        raise TaskStateConflict("task has an unresolved continuation reservation")
     try:
         stored = service.rooms.get_message(request.message_id)
     except ChatMessageNotFoundError as exc:

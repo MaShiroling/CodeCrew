@@ -44,6 +44,7 @@ from app.storage import (
     TaskRepository,
     TaskSnapshot,
 )
+from app.storage.continuations import ContinuationRepository
 from app.team.execution import WorkflowEventLoop, WorkflowRuntime
 from app.team.models import (
     ChatMessage,
@@ -117,6 +118,8 @@ class PersistentTaskService:
         self.rooms.initialize()
         self.router.artifacts.initialize()
         self.event_loop.controller.initialize()
+        self.continuations = ContinuationRepository(self.tasks.database)
+        self.continuations.initialize()
 
     async def create_task(self, request: CreateTaskRequest) -> TaskView:
         task = Task(issue=request.issue, repository_path=request.repository_path)

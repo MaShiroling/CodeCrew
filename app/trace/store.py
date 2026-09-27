@@ -60,45 +60,45 @@ class TraceStore:
         self.database.initialize(TRACE_STORE_MIGRATIONS)
 
     def append(self, event: TraceEvent) -> StoredTraceEvent:
-        fingerprint = _fingerprint(event)
         with self.database.transaction() as connection:
-            existing = connection.execute(
-                """
-                SELECT event_id, event_fingerprint FROM trace_events
-                WHERE trace_id = ? AND idempotency_key = ?
-                """,
-                (str(event.trace_id), event.idempotency_key),
-            ).fetchone()
-            if existing is not None:
-                if existing["event_fingerprint"] != fingerprint:
-                    raise TraceIdempotencyConflictError(
-                        "trace idempotency key was used for different event content"
-                    )
-                return self._get(connection, UUID(existing["event_id"]))
-            connection.execute(
-                """
-                INSERT INTO trace_events(
-                    event_id, task_id, trace_id, event_type, actor_kind, actor_id,
-                    correlation_id, causation_id, idempotency_key, event_json,
-                    event_fingerprint, occurred_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    str(event.event_id),
-                    str(event.task_id),
-                    str(event.trace_id),
-                    event.type.value,
-                    event.actor_kind.value,
-                    event.actor_id,
-                    str(event.correlation_id) if event.correlation_id else None,
-                    str(event.causation_id) if event.causation_id else None,
-                    event.idempotency_key,
-                    event.model_dump_json(),
-                    fingerprint,
-                    event.occurred_at.isoformat(),
-                ),
-            )
-            return self._get(connection, event.event_id)
+            return self.append_in_transaction(connection, event)
+
+    def append_in_transaction(
+        self, connection: sqlite3.Connection, event: TraceEvent,
+    ) -> StoredTraceEvent:
+        """Append without committing a caller-owned write transaction.
+
+        The caller must supply this database's active write connection.
+        """
+        if not connection.in_transaction:
+            raise ValueError("trace append requires an active transaction")
+        fingerprint = _fingerprint(event)
+        existing = connection.execute(
+            """SELECT event_id, event_fingerprint FROM trace_events
+            WHERE trace_id = ? AND idempotency_key = ?""",
+            (str(event.trace_id), event.idempotency_key),
+        ).fetchone()
+        if existing is not None:
+            if existing["event_fingerprint"] != fingerprint:
+                raise TraceIdempotencyConflictError(
+                    "trace idempotency key was used for different event content"
+                )
+            return self._get(connection, UUID(existing["event_id"]))
+        connection.execute(
+            """INSERT INTO trace_events(
+                event_id, task_id, trace_id, event_type, actor_kind, actor_id,
+                correlation_id, causation_id, idempotency_key, event_json,
+                event_fingerprint, occurred_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(event.event_id), str(event.task_id), str(event.trace_id), event.type.value,
+                event.actor_kind.value, event.actor_id,
+                str(event.correlation_id) if event.correlation_id else None,
+                str(event.causation_id) if event.causation_id else None,
+                event.idempotency_key, event.model_dump_json(), fingerprint, event.occurred_at.isoformat(),
+            ),
+        )
+        return self._get(connection, event.event_id)
 
     def get(self, event_id: UUID) -> StoredTraceEvent:
         with self.database.connect() as connection:

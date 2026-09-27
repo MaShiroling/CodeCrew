@@ -4,6 +4,16 @@
 
 ## 最新验收与当前阻塞
 
+- 第 6 项第 3 子步骤：SQLite 持久化继续请求、认领与幂等回执已完成。
+  Migration 10 记录原 Human 意图哈希、目标与修订号；事务内 state/token CAS 与任务
+  占用唯一索引防重复派发，Runtime/选定 ACK/成功回执/Trace 原子提交。重复请求只读
+  重放回执，独立连接争抢仅一个认领成功；子进程留下的 Claim 不因重启自动再租用。
+  失败/取消保守保留占用，不重置预算；请求 `succeeded` 不等于任务完成。
+  新增 32 个离线用例，200 项定向及全量离线 pytest / Ruff 通过；九个在线开关关闭，
+  未调用模型。context7-mcp 用于核对 Pydantic v2 严格字段与回执一致性校验。
+  下一子步骤处理失败成本记账、人工处置不确定 Claim、运行中取消与受控状态回归；
+  暂不开放 HTTP 执行/UI 继续按钮，也不宣称外部 CLI exactly-once 或完整多 worker 安全。
+  详见[持久化认领与回执](continuation-claims.md)。
 - 第 6 项第 2 子步骤：内部 Runtime 恢复与单目标回合内核已完成。
   重新预检 revision/预算，核验 Worktree、验证计划、注册表权限/能力和 Artifact 完整性，
   通过指定消息 ID 派发一次新会话；其他待办不消费，输出不自动连锁执行。
@@ -11,8 +21,8 @@
   Task 仍为 `needs_human`，不新增通用状态回归；暂不提供 HTTP 执行或 UI 按钮。
   新增 33 个离线用例，117 项定向测试及全量离线 pytest / Ruff 通过；九个在线开关
   关闭，未调用模型。context7-mcp 用于核对 pytest 参数化反例写法。
-  下一子步骤是持久化继续请求与幂等认领；崩溃防重复、跨事务部分写入和失败成本记账
-  尚未完成。详见[Runtime 与单目标回合](continuation-runtime.md)。
+  持久化认领现已完成；Agent 文件写入/输出路由等跨事务副作用仍不能回滚，失败成本
+  与人工解除占用待后续。详见[Runtime 与单目标回合](continuation-runtime.md)。
 - 第 6 项第 1 子步骤：继续任务契约与只读预检已实现。
   `POST .../continue/preflight` 验证暂停状态、revision、已有 Human 意图及待处理投递、
   目标 Agent/持久化 binding 和当前服务的真实预算账本；没有 Guard 则失败，不默认补齐。

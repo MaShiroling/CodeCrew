@@ -238,6 +238,7 @@ class WorkflowDirectiveExecutor:
         self, *, runtime: WorkflowRuntime, source: StoredChatMessage,
         target: RoomMember, input_message_ids: tuple[UUID, ...],
         validate_before_routing: Callable[[AgentTurnResult, AgentChatTurn], None] | None = None,
+        acknowledge_inputs: bool = True,
     ) -> DirectiveExecutionResult:
         """Internal bounded dispatch; never consume follow-on workflow events.
 
@@ -251,6 +252,7 @@ class WorkflowDirectiveExecutor:
         return await self._run_members(
             (target,), runtime, source, input_message_ids=input_message_ids,
             validate_before_routing=validate_before_routing,
+            acknowledge_inputs=acknowledge_inputs,
         )
 
     async def _run_members(
@@ -261,6 +263,7 @@ class WorkflowDirectiveExecutor:
         *,
         input_message_ids: tuple[UUID, ...] | None = None,
         validate_before_routing: Callable[[AgentTurnResult, AgentChatTurn], None] | None = None,
+        acknowledge_inputs: bool = True,
     ) -> DirectiveExecutionResult:
         turns: list[AgentTurnResult] = []
         events: list[StoredChatMessage] = []
@@ -299,6 +302,7 @@ class WorkflowDirectiveExecutor:
                     resume_native_session_id=runtime.native_session_ids.get(member.role),
                     input_message_ids=input_message_ids,
                     validate_before_routing=validate_before_routing,
+                    acknowledge_inputs=acknowledge_inputs,
                 )
             except Exception as exc:
                 self.router.trace_store.append(

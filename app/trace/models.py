@@ -22,6 +22,10 @@ class TraceEventType(str, Enum):
     RECOVERY_DECIDED = "recovery_decided"
     BUDGET_EXCEEDED = "budget_exceeded"
     HUMAN_INPUT_REQUESTED = "human_input_requested"
+    CONTINUATION_REQUESTED = "continuation_requested"
+    CONTINUATION_CLAIMED = "continuation_claimed"
+    CONTINUATION_SUCCEEDED = "continuation_succeeded"
+    CONTINUATION_PAUSED = "continuation_paused"
     SYSTEM_ERROR = "system_error"
 
 

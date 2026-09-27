@@ -43,6 +43,8 @@ correlation_id、解析出的 target_member_id/role、rework_rounds/max_rework_r
 ## 前置条件与错误
 
 - 任务为 `needs_human`，聊天室 Active，无本地执行/取消，修订号匹配；否则 409。
+- 第 3 子步骤加入持久化占用检查：Claimed/NeedsHuman 请求阻止新预检；Pending 仅
+  允许同消息/目标预检，实际继续仍须匹配幂等命令并认领。占用记录不可读取则 503。
 - 消息属于当前 task/room/trace，Human 身份与目标身份唯一；缺失或跨任务消息 404，
   非受控 Human 意图/目标不匹配 422，已 ACK 的消息 409。
 - 已持久化的目标 Agent binding 必须与当前服务配置一致；不匹配 409。
@@ -67,7 +69,7 @@ CompletionGuard，不建立远程身份认证或多 worker 锁；仅限可信本
 
 1. 已完成本步：契约、前置条件和只读预检。
 2. 已完成内部 Runtime/Artifact 恢复与单个目标回合；任务仍停在人工等待，不开放通用状态回归。
-3. 持久化继续请求、幂等认领/消费，处理重复点击与并发。
+3. 已完成[持久化继续请求、幂等认领/消费](continuation-claims.md)，处理重复点击与独立连接争抢。
 4. 保持预算边界、故障后的安全暂停与恢复。
 5. Fake 完整闭环验收，再接第 7 项 UI 输入/继续按钮。
 

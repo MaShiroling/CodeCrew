@@ -153,8 +153,10 @@ async def test_single_target_dispatch_is_fresh_scoped_and_leaves_task_parked(pau
     usage = executor.budget_guard.usage(view.task_id, room_id=before[1].context.room_id)
     assert usage.agent_turns == usage_before.agent_turns + 1
     assert usage.turns_without_token_usage == usage_before.turns_without_token_usage + 1
-    with pytest.raises(TaskStateConflict, match="acknowledged"):
-        await kernel.run_single(view.task_id, request)
+    replay = await kernel.run_single(view.task_id, request)
+    assert replay.replayed and replay.receipt == result.receipt
+    assert replay.prepared is None and replay.result is None
+    assert state(service, view) == after
 
 
 @pytest.mark.asyncio
@@ -249,7 +251,8 @@ async def test_local_parallel_attempts_only_start_one_turn_and_http_stays_absent
     service, view, agents = paused
     kernel, request = await intent(paused)
     outcomes = await asyncio.gather(*(kernel.run_single(view.task_id, request) for _ in range(2)), return_exceptions=True)
-    assert sum(isinstance(result, TaskStateConflict) for result in outcomes) == 1
+    assert sum(result.replayed for result in outcomes) == 1
+    assert outcomes[0].receipt == outcomes[1].receipt
     assert [len(a.requests) for a in agents] == [2, 1, 1]
     client = TestClient(create_app(task_service=service))
     assert client.post(f"/api/v1/tasks/{view.task_id}/continue", json=request.model_dump(mode="json")).status_code == 404

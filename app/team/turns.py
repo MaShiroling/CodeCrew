@@ -151,6 +151,7 @@ class AgentTurnRunner:
         clarification_only: bool = False,
         validate_before_routing: Callable[[AgentTurnResult, AgentChatTurn], None] | None = None,
         input_message_ids: tuple[UUID, ...] | None = None,
+        acknowledge_inputs: bool = True,
     ) -> AgentTurnResult:
         room = self.rooms.get_room(room_id)
         if room.task_id != task.id or room.trace_id != task.trace_id:
@@ -316,8 +317,9 @@ class AgentTurnRunner:
                 finish_summary=turn.actions[-1].content,
             ), turn)
         routed = self._route_actions(task, member_id, incoming, turn)
-        for item in incoming:
-            self.rooms.acknowledge(item.message.message_id, recipient_id=member_id)
+        if acknowledge_inputs:
+            for item in incoming:
+                self.rooms.acknowledge(item.message.message_id, recipient_id=member_id)
         finish = turn.actions[-1].content
         return AgentTurnResult(
             session=session,

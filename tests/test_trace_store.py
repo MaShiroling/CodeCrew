@@ -49,6 +49,25 @@ def test_trace_round_trips_across_restart(tmp_path: Path) -> None:
         reopened.get(uuid4())
 
 
+def test_caller_owned_trace_append_rolls_back_with_transaction(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    original = event()
+    with pytest.raises(RuntimeError, match="rollback"), store.database.transaction() as connection:
+        store.append_in_transaction(connection, original)
+        raise RuntimeError("rollback")
+    assert not store.list(trace_id=original.trace_id)
+    with store.database.transaction() as connection:
+        first = store.append_in_transaction(connection, original)
+        assert store.append_in_transaction(connection, original) == first
+    assert store.get(original.event_id) == first
+
+
+def test_caller_owned_trace_append_rejects_autocommit_connection(tmp_path: Path) -> None:
+    store = make_store(tmp_path)
+    with store.database.connect() as connection, pytest.raises(ValueError, match="active transaction"):
+        store.append_in_transaction(connection, event())
+
+
 def test_trace_append_is_idempotent_and_rejects_conflicts(tmp_path: Path) -> None:
     store = make_store(tmp_path)
     original = event()
