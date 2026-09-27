@@ -1,10 +1,12 @@
 import asyncio
 import hashlib
 import json
-import sys
 from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from uuid import UUID
+from time import monotonic
+from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
 
@@ -23,7 +25,7 @@ from app.agents import (
 )
 from app.agents.artifact_inputs import verify_artifact_files
 from app.agents.timeouts import validate_planner_timeout
-from app.orchestration.models import Task
+from app.orchestration.models import Task, utc_now
 from app.storage import ArtifactReference, ArtifactStore, ArtifactType
 from app.team.actions import (
     AgentChatAction,
@@ -52,6 +54,17 @@ from app.verification import ReviewIssue, ReviewIssuePriority, ReviewVerdict
 
 class AgentTurnError(RuntimeError):
     """Raised when an Agent turn cannot be safely completed and acknowledged."""
+
+
+@dataclass(frozen=True)
+class AgentAttemptUsage:
+    """Execution facts; an attempt ID exists even if start never returns a session."""
+
+    attempt_id: UUID
+    started_at: datetime
+    duration_ms: int = 0
+    session: AgentSession | None = None
+    result: AgentResult | None = None
 
 
 class AgentTurnResult(BaseModel):
@@ -152,6 +165,7 @@ class AgentTurnRunner:
         validate_before_routing: Callable[[AgentTurnResult, AgentChatTurn], None] | None = None,
         input_message_ids: tuple[UUID, ...] | None = None,
         acknowledge_inputs: bool = True,
+        record_attempt: Callable[[AgentAttemptUsage], None] | None = None,
     ) -> AgentTurnResult:
         room = self.rooms.get_room(room_id)
         if room.task_id != task.id or room.trace_id != task.trace_id:
@@ -208,48 +222,88 @@ class AgentTurnRunner:
             if (input_message_ids is not None
                     and self._selected_inputs(task, room_id, member_id, input_message_ids) != incoming):
                 raise AgentTurnError("selected input messages changed before dispatch")
-            if resume_native_session_id is None:
-                session = await adapter.start(request)
-            else:
-                session = await adapter.resume(resume_native_session_id, request)
+            attempt_id = uuid4()
+            started_at = utc_now()
+            started_clock = monotonic()
+            # Reserve before the external side effect. A failed durable write
+            # prevents dispatch; a crash after it leaves a charged unknown turn.
+            if record_attempt is not None:
+                record_attempt(AgentAttemptUsage(attempt_id, started_at))
+            session = None
+            result = None
             collected: list[AgentEvent] = []
             stream_complete = False
             stream_outcome = "interrupted"
+            lifecycle_error = None
             try:
+                if resume_native_session_id is None:
+                    session = await adapter.start(request)
+                else:
+                    session = await adapter.resume(resume_native_session_id, request)
+                if (session.task_id != task.id or session.trace_id != task.trace_id
+                        or session.role != request.role or session.agent_name != agent_name):
+                    raise AgentTurnError("agent session does not match dispatch")
                 async for event in adapter.stream(session.session_id):
                     collected.append(event.model_copy(deep=True))
                 stream_complete = True
                 result = await adapter.wait(session.session_id)
+                if result.session_id != session.session_id or result.trace_id != task.trace_id:
+                    result = None
+                    raise AgentTurnError("agent result belongs to another session or trace")
                 stream_outcome = result.reason.value
             except asyncio.CancelledError as cancellation:
+                lifecycle_error = cancellation
                 stream_outcome = "cancelled"
                 try:
-                    await adapter.cancel(session.session_id)
+                    if session is not None:
+                        await adapter.cancel(session.session_id)
                 except Exception as cancel_error:  # noqa: BLE001 - cancellation remains authoritative.
                     cancellation.add_note(f"Agent cancellation failed: {type(cancel_error).__name__}")
                 raise
             except Exception as stream_error:
+                lifecycle_error = stream_error
                 stream_outcome = "adapter_exception"
                 try:
-                    await adapter.cancel(session.session_id)
+                    if session is not None:
+                        await adapter.cancel(session.session_id)
                 except Exception as cancel_error:  # noqa: BLE001 - preserve the stream exception.
                     stream_error.add_note(f"Agent cancellation failed: {type(cancel_error).__name__}")
                 raise
             finally:
-                original_error = sys.exception()
+                original_error = lifecycle_error
+                accounting_error = None
                 try:
-                    self._record_stream(
-                        task, member, session, incoming, collected,
-                        stream_complete=stream_complete, outcome=stream_outcome,
-                        clarification_only=clarification_only, permission_mode=permission_mode,
-                    )
-                except Exception as diagnostic_error:
+                    if record_attempt is not None:
+                        record_attempt(AgentAttemptUsage(
+                            attempt_id, started_at,
+                            max(int((monotonic() - started_clock) * 1000),
+                                result.duration_ms if result else 0),
+                            session, result,
+                        ))
+                except Exception as diagnostic_error:  # noqa: BLE001 - preserve lifecycle failure.
                     if original_error is None:
+                        accounting_error = diagnostic_error
+                    else:
+                        original_error.add_note(
+                            f"Agent attempt accounting failed: {type(diagnostic_error).__name__}"
+                        )
+                try:
+                    if session is not None:
+                        self._record_stream(
+                            task, member, session, incoming, collected,
+                            stream_complete=stream_complete, outcome=stream_outcome,
+                            clarification_only=clarification_only, permission_mode=permission_mode,
+                        )
+                except Exception as diagnostic_error:
+                    primary_error = original_error or accounting_error
+                    if primary_error is None:
                         raise
-                    original_error.add_note(
+                    primary_error.add_note(
                         "Agent stream diagnostic recording failed: "
                         f"{type(diagnostic_error).__name__}"
                     )
+                if accounting_error is not None:
+                    raise accounting_error
             events = tuple(collected)
 
         if result.trace_id != task.trace_id:

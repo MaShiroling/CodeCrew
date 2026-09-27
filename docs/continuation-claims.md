@@ -3,6 +3,9 @@
 本步将第 2 子步骤的单回合内核接到 SQLite 认领账本。仍然没有 HTTP 执行接口、UI
 继续按钮或自动状态回归；测试只使用 Fake Agent 和临时仓库，不调用真实模型。
 
+后续第 4 子步骤 A 已接入[失败与取消尝试记账](attempt-accounting.md)，
+替代本页开发时的失败成本待实现状态；人工解除占用和状态回归仍未完成。
+
 ## 请求与回执
 
 内部 `HumanContinuationKernel.run_single(task_id, request, idempotency_key=UUID(...))`

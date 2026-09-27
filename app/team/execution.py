@@ -1,6 +1,7 @@
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from functools import partial
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict
@@ -303,6 +304,10 @@ class WorkflowDirectiveExecutor:
                     input_message_ids=input_message_ids,
                     validate_before_routing=validate_before_routing,
                     acknowledge_inputs=acknowledge_inputs,
+                    record_attempt=partial(
+                        self.budget_guard.record_attempt, runtime.task, room_id=runtime.room_id,
+                        member_id=member.member_id, agent_name=agent_name,
+                    ),
                 )
             except Exception as exc:
                 self.router.trace_store.append(
@@ -332,12 +337,6 @@ class WorkflowDirectiveExecutor:
             turns.append(turn)
             events.extend(turn.routed_messages)
             self._trace_agent_turn(runtime, member, source, turn)
-            self.budget_guard.record_turn(
-                runtime.task,
-                room_id=runtime.room_id,
-                member_id=member.member_id,
-                turn=turn,
-            )
         return DirectiveExecutionResult(
             produced_events=tuple(events),
             agent_turns=tuple(turns),

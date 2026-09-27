@@ -11,7 +11,7 @@ from app.orchestration.models import Task
 from app.storage import Migration
 from app.team.models import MessageType
 from app.team.store import TeamRoomStore
-from app.team.turns import AgentTurnResult
+from app.team.turns import AgentAttemptUsage, AgentTurnResult
 
 
 class ConversationBudgetCode(str, Enum):
@@ -128,8 +128,77 @@ class ConversationBudgetGuard:
         member_id: UUID,
         turn: AgentTurnResult,
     ) -> None:
-        usage = turn.agent_result.token_usage
+        self.record_attempt(
+            task, room_id=room_id, member_id=member_id,
+            agent_name=turn.session.agent_name,
+            attempt=AgentAttemptUsage(
+                turn.session.session_id, turn.session.started_at,
+                turn.agent_result.duration_ms, turn.session, turn.agent_result,
+            ),
+        )
+
+    def record_attempt(
+        self, task: Task, attempt: AgentAttemptUsage, *, room_id: UUID, member_id: UUID,
+        agent_name: str,
+    ) -> None:
+        """Reserve/update one dispatch, including failed starts and unknown costs.
+
+        The legacy session_id column is the stable accounting ID, not proof
+        that the provider returned a native session. Updates never erase facts.
+        """
+        room = self.rooms.get_room(room_id)
+        member = self.rooms.get_member(member_id)
+        if (room.task_id != task.id or room.trace_id != task.trace_id
+                or member.room_id != room_id or member.kind.value != "agent"
+                or member.role.value not in {"planner", "implementer", "reviewer"}
+                or not agent_name or attempt.duration_ms < 0
+                or attempt.started_at.tzinfo is None):
+            raise ValueError("Agent accounting scope is invalid")
+        session, result = attempt.session, attempt.result
+        if session is not None and (
+            session.task_id != task.id or session.trace_id != task.trace_id
+            or session.agent_name != agent_name or session.role.value != member.role.value
+        ):
+            raise ValueError("Agent accounting session does not match dispatch")
+        if result is not None and (
+            session is None or result.session_id != session.session_id
+            or result.trace_id != task.trace_id
+        ):
+            raise ValueError("Agent accounting result does not match session")
+        usage = result.token_usage if result else None
+        identity = (
+            str(task.id), str(task.trace_id), str(room_id), str(member_id),
+            agent_name, member.role.value,
+        )
+        tokens = (
+            usage.input_tokens if usage else None,
+            usage.output_tokens if usage else None,
+            usage.cached_input_tokens if usage else None,
+        )
+        duration = max(attempt.duration_ms, result.duration_ms if result else 0)
         with self.rooms.database.transaction() as connection:
+            row = connection.execute(
+                "SELECT * FROM agent_turn_usage WHERE session_id = ?",
+                (str(attempt.attempt_id),),
+            ).fetchone()
+            if row is not None:
+                columns = ("task_id", "trace_id", "room_id", "member_id", "agent_name", "role")
+                if (tuple(row[column] for column in columns) != identity
+                        or row["created_at"] != attempt.started_at.isoformat()):
+                    raise ValueError("Agent accounting ID has conflicting identity")
+                token_columns = ("input_tokens", "output_tokens", "cached_input_tokens")
+                if any(row[col] is not None and value is not None and row[col] != value
+                       for col, value in zip(token_columns, tokens, strict=True)):
+                    raise ValueError("Agent accounting has conflicting token facts")
+                connection.execute(
+                    """UPDATE agent_turn_usage SET
+                    input_tokens = COALESCE(input_tokens, ?),
+                    output_tokens = COALESCE(output_tokens, ?),
+                    cached_input_tokens = COALESCE(cached_input_tokens, ?),
+                    duration_ms = MAX(duration_ms, ?) WHERE session_id = ?""",
+                    (*tokens, duration, str(attempt.attempt_id)),
+                )
+                return
             connection.execute(
                 """
                 INSERT OR IGNORE INTO agent_turn_usage(
@@ -139,18 +208,8 @@ class ConversationBudgetGuard:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    str(turn.session.session_id),
-                    str(task.id),
-                    str(task.trace_id),
-                    str(room_id),
-                    str(member_id),
-                    turn.session.agent_name,
-                    turn.session.role.value,
-                    usage.input_tokens if usage else None,
-                    usage.output_tokens if usage else None,
-                    usage.cached_input_tokens if usage else None,
-                    turn.agent_result.duration_ms,
-                    turn.session.started_at.isoformat(),
+                    str(attempt.attempt_id), *identity, *tokens, duration,
+                    attempt.started_at.isoformat(),
                 ),
             )
 
