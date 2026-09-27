@@ -66,6 +66,8 @@ async def run_live_three_agent_scenario(tmp_path, *, scenario="success"):
                     assert fixture.task.state is TaskState.NEEDS_HUMAN
                     assert fixture.task.rework_rounds == 2
                     assert result.runtime.latest_completion is None
+                    report = fixture.store.read_json(result.report.artifact_id)
+                    assert report["rework_exhaustion_acceptance"]["acceptance_passed"]
                 else:
                     assert fixture.task.state is TaskState.COMPLETED
                     assert result.runtime.latest_completion and result.runtime.latest_completion.passed
@@ -109,6 +111,10 @@ async def run_live_three_agent_scenario(tmp_path, *, scenario="success"):
                         "scenario": scenario,
                         "rework_rounds": fixture.task.rework_rounds,
                         "scenario_acceptance_passed": True,
+                        "rework_exhaustion_acceptance": (
+                            report["rework_exhaustion_acceptance"]
+                            if scenario == "rework_exhaustion" else None
+                        ),
                         "evidence_archive": str(archive),
                     }
                 )

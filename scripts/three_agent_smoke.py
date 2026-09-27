@@ -187,6 +187,70 @@ class ThreeAgentResult:
     report: ArtifactReference
 
 
+def check_rework_exhaustion(
+    fixture: HandoffFixture, workflow: WorkflowRunResult, runtime: WorkflowRuntime,
+) -> dict:
+    """Fail closed on the controlled nine-turn scenario; never mutate workflow state."""
+    def require(condition: bool, detail: str) -> None:
+        if not condition:
+            raise WorkflowExecutionError(f"rework exhaustion acceptance: {detail}")
+
+    require(fixture.task.state is TaskState.NEEDS_HUMAN, "task must need human")
+    require(fixture.task.rework_rounds == 2, "exactly two rework rounds required")
+    require(workflow.paused and workflow.pause_reason == "rework budget exhausted",
+            "wrong pause reason")
+    require(not workflow.limit_reached, "event limit is not rework exhaustion")
+    require(len(workflow.agent_turns) == fixture.runner.attempts == 9,
+            "exactly nine turns required")
+    require(runtime.latest_completion is None, "completion must not be evaluated")
+    require(runtime.latest_verification is not None and not runtime.latest_verification.passed,
+            "latest verification must fail")
+    messages = fixture.runner.rooms.list_messages(fixture.room.room_id)
+    rejections = [item.message for item in messages
+                  if item.message.type is MessageType.REWORK_REQUEST]
+    require(len(rejections) == 3, "three rejected reviews required")
+    require(not any(item.message.type in {MessageType.REVIEW_APPROVED,
+                                         MessageType.COMPLETION_PASSED,
+                                         MessageType.COMPLETION_REJECTED} for item in messages),
+            "unexpected approval or completion message")
+    human = fixture.runner.rooms.pending_for(fixture.members[MemberRole.HUMAN].member_id)
+    require(len(human) == 1 and human[0].message.type is MessageType.HUMAN_INPUT_REQUEST,
+            "exactly one pending human request required")
+    escalation = human[0].message
+    last = rejections[-1]
+    require(escalation.causation_id == last.message_id
+            and escalation.correlation_id == last.correlation_id,
+            "human request must correlate to final rejection")
+    require(escalation.sender_id == fixture.members[MemberRole.ORCHESTRATOR].member_id,
+            "human request must be system authored")
+    latest_review = next(ref for ref in last.artifacts if ref.type is ArtifactType.REVIEW_REPORT)
+    plan = fixture.runner.rooms.latest_plan_revision(fixture.room.room_id)
+    verification = runtime.latest_verification
+    require(plan is not None and verification.change_set.diff_artifact is not None,
+            "handoff requires plan and diff")
+    required_ids = {latest_review.artifact_id, plan.artifact_id,
+                    verification.artifact.artifact_id,
+                    verification.change_set.diff_artifact.artifact_id}
+    require(required_ids <= {ref.artifact_id for ref in escalation.artifacts},
+            "human request missing latest evidence")
+    review = fixture.store.read_json(latest_review.artifact_id)
+    unresolved = [issue["issue_id"] for issue in review["issues"] if not issue["resolved"]]
+    require(bool(unresolved), "unresolved findings required")
+    trace = fixture.router.trace_store.list(trace_id=fixture.task.trace_id, limit=1000)
+    require(not any(item.event.type is TraceEventType.COMPLETION_DECIDED for item in trace),
+            "unexpected completion trace")
+    return {
+        "acceptance_passed": True,
+        "human_request_message_id": str(escalation.message_id),
+        "final_rejection_message_id": str(last.message_id),
+        "correlation_id": str(escalation.correlation_id),
+        "evidence_artifact_ids": sorted(str(item) for item in required_ids),
+        "unresolved_issue_ids": unresolved,
+        "agent_turns": 9,
+        "completion_evaluated": False,
+    }
+
+
 async def run_three_agent(
     fixture: HandoffFixture, *, scenario="success", planner_timeout_seconds: int | None = None,
     reviewer_structured_output: bool = False,
@@ -308,6 +372,10 @@ async def run_three_agent(
             assert workflow.pause_reason == "rework budget exhausted"
             assert not runtime.latest_verification.passed and guard is None
             assert fixture.runner.rooms.pending_for(fixture.members[MemberRole.HUMAN].member_id)
+    exhaustion = (
+        check_rework_exhaustion(fixture, workflow, runtime)
+        if scenario == "rework_exhaustion" else None
+    )
     metadata = fixture.store.put_json(
         {
             "scope": f"three-agent-{scenario.replace('_', '-')}-path",
@@ -353,6 +421,7 @@ async def run_three_agent(
             "rework_rounds": fixture.task.rework_rounds,
             "fault_injection_artifact_ids": fixture.runner.fault_artifacts,
             "fault_injection_experiment": bool(inject_count),
+            "rework_exhaustion_acceptance": exhaustion,
         },
         task_id=fixture.task.id,
         trace_id=fixture.task.trace_id,

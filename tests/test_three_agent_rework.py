@@ -16,7 +16,7 @@ from app.team.actions import ChatActionError
 from app.trace import TraceEventType, TraceStore
 from scripts.planner_kimi_smoke import FIXED_SOURCE, handoff_fixture
 from scripts.smoke_evidence import archive_smoke_evidence
-from scripts.three_agent_smoke import run_three_agent
+from scripts.three_agent_smoke import check_rework_exhaustion, run_three_agent
 from tests.test_planner_kimi_handoff import (
     KimiProcessRunner,
     PlannerProcessRunner,
@@ -241,12 +241,68 @@ async def test_rework_and_two_round_escalation_use_production_controller(
             )
         else:
             assert fixture.task.state is TaskState.NEEDS_HUMAN and not report["task_success"]
+            acceptance = report["rework_exhaustion_acceptance"]
+            assert acceptance["acceptance_passed"] and not acceptance["completion_evaluated"]
+            assert acceptance["unresolved_issue_ids"] == [reviewer.issue_id]
+            assert acceptance["agent_turns"] == 9
             assert result.workflow.pause_reason == "rework budget exhausted"
             assert recovered.completion is None and not recovered.review.issues[0].resolved
             human = fixture.runner.rooms.pending_for(fixture.members[MemberRole.HUMAN].member_id)
             assert len(human) == 1 and human[0].message.type is MessageType.HUMAN_INPUT_REQUEST
             assert any(ref.type is ArtifactType.REVIEW_REPORT for ref in human[0].message.artifacts)
+            assert acceptance["human_request_message_id"] == str(human[0].message.message_id)
+            assert len(acceptance["evidence_artifact_ids"]) == 4
             assert not any(e.event.type is TraceEventType.COMPLETION_DECIDED for e in trace)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("fault,detail", [
+    ("state", "task must need human"),
+    ("rounds", "exactly two rework"),
+    ("pause", "wrong pause reason"),
+    ("limit", "event limit"),
+    ("turns", "exactly nine turns"),
+    ("completion", "completion must not"),
+    ("human_missing", "exactly one pending"),
+    ("correlation", "correlate"),
+    ("evidence", "missing latest evidence"),
+])
+async def test_exhaustion_acceptance_rejects_incomplete_handoff(tmp_path, monkeypatch, fault, detail):
+    kimi, reviewer = ReworkKimiRunner(), ReworkReviewerRunner(native=True)
+    async with handoff_fixture(
+        tmp_path, CodexCliAdapter(runner=PlannerProcessRunner()), factory(kimi),
+        reviewer=reviewer_adapter(reviewer),
+    ) as fixture:
+        result = await run_three_agent(
+            fixture, scenario="rework_exhaustion", reviewer_structured_output=True,
+        )
+        workflow, runtime = result.workflow, result.runtime
+        if fault == "state":
+            fixture.task.state = TaskState.COMPLETED  # Negative test only.
+        elif fault == "rounds":
+            fixture.task.rework_rounds = 1
+        elif fault == "pause":
+            workflow = workflow.model_copy(update={"pause_reason": "timeout"})
+        elif fault == "limit":
+            workflow = workflow.model_copy(update={"limit_reached": True})
+        elif fault == "turns":
+            workflow = workflow.model_copy(update={"agent_turns": workflow.agent_turns[:-1]})
+        elif fault == "completion":
+            runtime.latest_completion = object()  # Presence alone invalidates this scenario.
+        else:
+            pending = fixture.runner.rooms.pending_for(fixture.members[MemberRole.HUMAN].member_id)
+            if fault == "human_missing":
+                replacement = ()
+            else:
+                update = {"correlation_id": uuid4()} if fault == "correlation" else {"artifacts": ()}
+                replacement = (pending[0].model_copy(update={
+                    "message": pending[0].message.model_copy(update=update),
+                }),)
+            monkeypatch.setattr(fixture.runner.rooms, "pending_for", lambda member: replacement)
+        calls_before = len(kimi.calls) + len(reviewer.calls)
+        with pytest.raises(WorkflowExecutionError, match=detail):
+            check_rework_exhaustion(fixture, workflow, runtime)
+        assert len(kimi.calls) + len(reviewer.calls) == calls_before
 
 
 @pytest.mark.asyncio
