@@ -110,6 +110,66 @@ def send_trigger(router, room, sender, recipient, **updates):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("fault", ["empty", "duplicate", "over_limit", "wrong_recipient", "acked", "foreign_scope"])
+async def test_selected_inputs_reject_invalid_selection_before_start(tmp_path, fault):
+    runner, router, rooms, _, adapter, task, room, members = make_context(
+        tmp_path, FakeAgentScenario(output={"actions": [{"action": "finish_turn"}]}),
+    )
+    implementer = members[MemberRole.IMPLEMENTER]
+    recipient = members[MemberRole.REVIEWER] if fault == "wrong_recipient" else implementer
+    trigger = send_trigger(router, room, members[MemberRole.ORCHESTRATOR], recipient)
+    message_ids = (trigger.message.message_id,)
+    if fault == "empty":
+        message_ids = ()
+    elif fault == "duplicate":
+        message_ids *= 2
+    elif fault == "over_limit":
+        runner.pending_limit = 1
+        message_ids += (uuid4(),)
+    elif fault == "acked":
+        rooms.acknowledge(trigger.message.message_id, recipient_id=implementer.member_id)
+    elif fault == "foreign_scope":
+        original = rooms.get_message
+
+        def foreign(message_id):
+            stored = original(message_id)
+            return stored.model_copy(update={"message": stored.message.model_copy(update={"trace_id": uuid4()})})
+
+        # Inject a corrupted detached read, not a forged stored routing event.
+        rooms.get_message = foreign
+    with pytest.raises(AgentTurnError):
+        await runner.run(task, room_id=room.room_id, member_id=implementer.member_id,
+                         agent_name=adapter.name, working_directory=tmp_path, input_message_ids=message_ids)
+    assert not adapter.requests
+
+
+@pytest.mark.asyncio
+async def test_selected_input_is_rechecked_after_registry_queue_wait(tmp_path):
+    runner, router, rooms, _, adapter, task, room, members = make_context(
+        tmp_path, FakeAgentScenario(output={"actions": [{"action": "finish_turn"}]}),
+    )
+    implementer = members[MemberRole.IMPLEMENTER]
+    trigger = send_trigger(router, room, members[MemberRole.ORCHESTRATOR], implementer)
+    async with runner.registry.acquire(adapter.name, role=AgentRole.IMPLEMENTER,
+                                       permission_mode=PermissionMode.WORKSPACE_WRITE):
+        operation = asyncio.create_task(runner.run(
+            task, room_id=room.room_id, member_id=implementer.member_id,
+            agent_name=adapter.name, working_directory=tmp_path,
+            input_message_ids=(trigger.message.message_id,),
+        ))
+
+        async def queued():
+            while runner.registry.describe(adapter.name).queued_sessions == 0:
+                await asyncio.sleep(0)
+
+        await asyncio.wait_for(queued(), timeout=2)
+        rooms.acknowledge(trigger.message.message_id, recipient_id=implementer.member_id)
+    with pytest.raises(AgentTurnError, match="not pending"):
+        await operation
+    assert not adapter.requests
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("reject", [True, False])
 async def test_trusted_pre_route_audit_runs_after_recording_before_outputs_or_ack(tmp_path, reject):
     scenario = FakeAgentScenario(output={"actions": [

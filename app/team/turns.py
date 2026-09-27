@@ -35,6 +35,7 @@ from app.team.models import (
     ChatMessage,
     MemberKind,
     MemberRole,
+    MessageDeliveryStatus,
     MessageRecipient,
     MessageType,
     RecipientKind,
@@ -129,6 +130,15 @@ class AgentTurnRunner:
             return self.planner_timeout_seconds
         return self.timeout_seconds
 
+    def validate_binding(self, role: MemberRole, agent_name: str) -> None:
+        """Check the same role/capability/permission contract used by a turn."""
+        if role not in _AGENT_ROLES:
+            raise AgentTurnError("only Agent roles have executable bindings")
+        self.registry.resolve(
+            agent_name, role=_AGENT_ROLES[role], permission_mode=_PERMISSIONS[role],
+            required_capabilities=_CAPABILITIES[role],
+        )
+
     async def run(
         self,
         task: Task,
@@ -140,6 +150,7 @@ class AgentTurnRunner:
         resume_native_session_id: str | None = None,
         clarification_only: bool = False,
         validate_before_routing: Callable[[AgentTurnResult, AgentChatTurn], None] | None = None,
+        input_message_ids: tuple[UUID, ...] | None = None,
     ) -> AgentTurnResult:
         room = self.rooms.get_room(room_id)
         if room.task_id != task.id or room.trace_id != task.trace_id:
@@ -152,7 +163,11 @@ class AgentTurnRunner:
         if clarification_only and member.role is not MemberRole.IMPLEMENTER:
             raise AgentTurnError("clarification-only turns require an implementer")
         permission_mode = PermissionMode.READ_ONLY if clarification_only else _PERMISSIONS[member.role]
-        incoming = self.rooms.pending_for(member_id, limit=self.pending_limit)
+        incoming = (
+            self.rooms.pending_for(member_id, limit=self.pending_limit)
+            if input_message_ids is None
+            else self._selected_inputs(task, room_id, member_id, input_message_ids)
+        )
         if not incoming:
             raise AgentTurnError("agent has no pending room messages")
 
@@ -187,6 +202,11 @@ class AgentTurnRunner:
             permission_mode=permission_mode,
             required_capabilities=_CAPABILITIES[member.role],
         ) as adapter:
+            # Acquiring a registry lease may wait. Do not start a duplicate
+            # turn if another consumer ACKed the selection in the meantime.
+            if (input_message_ids is not None
+                    and self._selected_inputs(task, room_id, member_id, input_message_ids) != incoming):
+                raise AgentTurnError("selected input messages changed before dispatch")
             if resume_native_session_id is None:
                 session = await adapter.start(request)
             else:
@@ -307,6 +327,23 @@ class AgentTurnRunner:
             routed_messages=routed,
             finish_summary=finish,
         )
+
+    def _selected_inputs(
+        self, task: Task, room_id: UUID, member_id: UUID, message_ids: tuple[UUID, ...],
+    ) -> tuple[StoredChatMessage, ...]:
+        if (not message_ids or len(message_ids) > self.pending_limit
+                or len(set(message_ids)) != len(message_ids)):
+            raise AgentTurnError("selected inputs must be nonempty, unique and within the limit")
+        selected = tuple(self.rooms.get_message(message_id) for message_id in message_ids)
+        for item in selected:
+            message = item.message
+            if (message.task_id != task.id or message.trace_id != task.trace_id
+                    or message.room_id != room_id):
+                raise AgentTurnError("selected input belongs to another task or room")
+            deliveries = [d for d in item.deliveries if d.recipient_id == member_id]
+            if len(deliveries) != 1 or deliveries[0].status is not MessageDeliveryStatus.PENDING:
+                raise AgentTurnError("selected input is not pending for the target Agent")
+        return selected
 
     def _record_stream(
         self,

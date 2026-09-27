@@ -4,11 +4,20 @@
 
 ## 最新验收与当前阻塞
 
+- 第 6 项第 2 子步骤：内部 Runtime 恢复与单目标回合内核已完成。
+  重新预检 revision/预算，核验 Worktree、验证计划、注册表权限/能力和 Artifact 完整性，
+  通过指定消息 ID 派发一次新会话；其他待办不消费，输出不自动连锁执行。
+  历史完成结论不复用，Implementer 清空旧验证状态，历史证据不能直接生成正式评审。
+  Task 仍为 `needs_human`，不新增通用状态回归；暂不提供 HTTP 执行或 UI 按钮。
+  新增 33 个离线用例，117 项定向测试及全量离线 pytest / Ruff 通过；九个在线开关
+  关闭，未调用模型。context7-mcp 用于核对 pytest 参数化反例写法。
+  下一子步骤是持久化继续请求与幂等认领；崩溃防重复、跨事务部分写入和失败成本记账
+  尚未完成。详见[Runtime 与单目标回合](continuation-runtime.md)。
 - 第 6 项第 1 子步骤：继续任务契约与只读预检已实现。
   `POST .../continue/preflight` 验证暂停状态、revision、已有 Human 意图及待处理投递、
   目标 Agent/持久化 binding 和当前服务的真实预算账本；没有 Guard 则失败，不默认补齐。
   响应显式 `execution_ready=false`、`agent_dispatched=false`，不改状态、不 ACK、
-  不运行 Agent、不预留继续请求。Runtime/证据恢复与实际继续接口仍待下一子步骤。
+  不运行 Agent、不预留继续请求。Runtime/证据恢复现已完成内部内核，实际继续接口仍待后续。
   新增 51 项预检用例，112 项定向及全量离线 pytest / Ruff 均通过；九个在线开关
   关闭，未调用模型。context7-mcp 用于核对 FastAPI 请求/响应契约。
   详见[继续任务预检](continuation-preflight.md)。

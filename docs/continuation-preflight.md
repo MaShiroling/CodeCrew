@@ -57,15 +57,16 @@ correlation_id、解析出的 target_member_id/role、rework_rounds/max_rework_r
 
 ## 本子步骤没有覆盖的内容
 
-Worktree 重新核验、Artifact 证据恢复/完整性、当前 Plan 与 Review 合法性、注册表实际
-适配器/会话准备、权限接线由下一子步骤处理。此处不提供已批准的执行授权，不运行
+Worktree 重新核验、Artifact 证据恢复/完整性、注册表实际适配器/会话准备与权限接线
+已由[第 2 子步骤内部内核](continuation-runtime.md)实现；本 HTTP 预检仍不执行这些准备。
+证据时效性与正式评审仍需后续受控验证。此处不提供已批准的执行授权，不运行
 CompletionGuard，不建立远程身份认证或多 worker 锁；仅限可信本地单进程。
 `needs_human` 的原状态转换规则保持不变；现有启动恢复仍不会自动恢复此等待态。
 
 后续顺序：
 
 1. 已完成本步：契约、前置条件和只读预检。
-2. 受控恢复 Runtime/Artifact 与单个目标派发，明确允许的状态回归路径。
+2. 已完成内部 Runtime/Artifact 恢复与单个目标回合；任务仍停在人工等待，不开放通用状态回归。
 3. 持久化继续请求、幂等认领/消费，处理重复点击与并发。
 4. 保持预算边界、故障后的安全暂停与恢复。
 5. Fake 完整闭环验收，再接第 7 项 UI 输入/继续按钮。

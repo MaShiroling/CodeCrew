@@ -1,4 +1,5 @@
 from collections import deque
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from uuid import UUID, uuid4
 
@@ -14,6 +15,7 @@ from app.storage import (
     ArtifactType,
     WorkflowRuntimeContext,
 )
+from app.team.actions import AgentChatTurn
 from app.team.budgets import (
     ConversationBudgetGuard,
     ConversationBudgetPolicy,
@@ -232,11 +234,33 @@ class WorkflowDirectiveExecutor:
             )
         return DirectiveExecutionResult()
 
+    async def execute_single_turn(
+        self, *, runtime: WorkflowRuntime, source: StoredChatMessage,
+        target: RoomMember, input_message_ids: tuple[UUID, ...],
+        validate_before_routing: Callable[[AgentTurnResult, AgentChatTurn], None] | None = None,
+    ) -> DirectiveExecutionResult:
+        """Internal bounded dispatch; never consume follow-on workflow events.
+
+        All controlled Human turns start fresh. In particular, a Reviewer must
+        not inherit a prior native conversation after a Human intervention.
+        This is not a durable claim or a task-state transition.
+        """
+        if target.room_id != runtime.room_id:
+            raise WorkflowExecutionError("single-turn target belongs to another room")
+        runtime.native_session_ids.pop(target.role, None)
+        return await self._run_members(
+            (target,), runtime, source, input_message_ids=input_message_ids,
+            validate_before_routing=validate_before_routing,
+        )
+
     async def _run_members(
         self,
         members: tuple[RoomMember, ...],
         runtime: WorkflowRuntime,
         source: StoredChatMessage,
+        *,
+        input_message_ids: tuple[UUID, ...] | None = None,
+        validate_before_routing: Callable[[AgentTurnResult, AgentChatTurn], None] | None = None,
     ) -> DirectiveExecutionResult:
         turns: list[AgentTurnResult] = []
         events: list[StoredChatMessage] = []
@@ -248,7 +272,7 @@ class WorkflowDirectiveExecutor:
             # Multiple messages produced by one Agent turn can each request a wake-up.
             # The first wake consumes the complete pending batch, so later directives
             # are intentionally coalesced instead of failing with "no pending messages".
-            if not self.turns.rooms.pending_for(member.member_id, limit=1):
+            if input_message_ids is None and not self.turns.rooms.pending_for(member.member_id, limit=1):
                 continue
             violation = self.budget_guard.evaluate(runtime.task.id, room_id=runtime.room_id)
             if violation is not None:
@@ -273,6 +297,8 @@ class WorkflowDirectiveExecutor:
                     agent_name=agent_name,
                     working_directory=runtime.worktree.worktree_path,
                     resume_native_session_id=runtime.native_session_ids.get(member.role),
+                    input_message_ids=input_message_ids,
+                    validate_before_routing=validate_before_routing,
                 )
             except Exception as exc:
                 self.router.trace_store.append(
