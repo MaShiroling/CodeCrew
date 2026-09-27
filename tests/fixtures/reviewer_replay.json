@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "description": "Portable, manually minimized protocol regressions. Historical prose is replaced; these are NOT byte-exact archived outputs or model-quality evidence. Source hashes identify the original AgentResult blobs, not these minimized cases.",
+  "cases": [
+    {
+      "case_id": "historical-native-missing-report",
+      "provenance": {"kind": "minimized-historical", "trace_id": "6613fe69-be35-4282-b10e-9f5afcb5b276", "artifact_id": "746141cc-f496-43fc-b332-ae13f75beca1", "source_sha256": "f7884a6e610144833cd162e00b48814d0b3ede778bddb64d48b21b031392f513", "changes": "Replace evidence prose; preserve missing report sources and action topology."},
+      "source": "native",
+      "output": {"structured_output": {"actions": [{"action": "request_rework", "recipient": {"kind": "role", "role": "orchestrator"}, "content": "Independent tests fail; request rework."}, {"action": "finish_turn", "content": "Not task success."}]}},
+      "expected": {"decision": "rejected", "reason": "contract_rejected"}
+    },
+    {
+      "case_id": "historical-text-misplaced-report-brace",
+      "provenance": {"kind": "minimized-historical", "trace_id": "bf0b59b8-6e00-4ab6-a755-c53993f244bc", "artifact_id": "45dfbf48-0fd2-4685-bb93-5b0d3f17a8f3", "source_sha256": "48d511d08dde835479c6e04de73eabb4c65abb669ef24dd15b29b85412859c7b", "changes": "Replace prose and issue list; retain the brace placing artifact_content outside the action object. Syntax coordinates refer to this minimized string, not the original."},
+      "source": "text",
+      "output": {"result": "{\"actions\":[{\"action\":\"request_rework\",\"recipient\":{\"kind\":\"role\",\"role\":\"orchestrator\"},\"content\":\"Tests fail\"},\"artifact_content\":{\"issues\":[]},{\"action\":\"finish_turn\"}]}"},
+      "expected": {"decision": "rejected", "reason": "invalid_json"}
+    },
+    {
+      "case_id": "historical-valid-rework",
+      "provenance": {"kind": "minimized-historical", "trace_id": "5bb1332e-666f-4d34-8a0a-57998df8c43f", "artifact_id": "f6d39ced-80e8-4a2f-9718-93cb0d2c9eaf", "source_sha256": "fffdb4b2a31bceaaa72d40a78045a6345bc443d3346b4e025139d1c4bf215a28", "changes": "Replace prose and two critical issues with one. Original archive replay checks exact outputs separately."},
+      "source": "text",
+      "output": {"result": "{\"actions\":[{\"action\":\"request_rework\",\"recipient\":{\"kind\":\"role\",\"role\":\"orchestrator\"},\"content\":\"Tests expose an offset error\",\"artifact_content\":{\"issues\":[{\"issue_id\":\"3f6b7a1c-9d24-4e58-8b3a-0c5f2e7d14a9\",\"priority\":\"critical\",\"summary\":\"Unwanted offset\",\"resolved\":false}]}},{\"action\":\"finish_turn\"}]}"},
+      "expected": {"decision": "accepted", "reason": "valid_contract"}
+    },
+    {
+      "case_id": "historical-valid-approval",
+      "provenance": {"kind": "minimized-historical", "trace_id": "5bb1332e-666f-4d34-8a0a-57998df8c43f", "artifact_id": "45d89746-5768-4e07-865c-4438a3a8cc07", "source_sha256": "9dd07a5083ec13190cc63b29f8c9ce31765571fc6ec59cab121559f34b697127", "changes": "Replace evidence prose; minimize to one resolved issue with its original stable ID."},
+      "source": "text",
+      "output": {"result": "{\"actions\":[{\"action\":\"approve_review\",\"recipient\":{\"kind\":\"role\",\"role\":\"orchestrator\"},\"content\":\"Diff and independent tests show the fix\",\"artifact_content\":{\"issues\":[{\"issue_id\":\"3f6b7a1c-9d24-4e58-8b3a-0c5f2e7d14a9\",\"priority\":\"critical\",\"summary\":\"Offset fixed\",\"resolved\":true}]}},{\"action\":\"finish_turn\"}]}"},
+      "expected": {"decision": "accepted", "reason": "valid_contract"}
+    },
+    {
+      "case_id": "counterexample-dual-report-sources",
+      "provenance": {"kind": "synthetic-counterexample", "changes": "Reproduce the previously documented dual-source failure shape, not a copied model response."},
+      "source": "native",
+      "output": {"structured_output": {"actions": [{"action": "approve_review", "recipient": {"kind": "role", "role": "orchestrator"}, "content": "Conflicting report sources", "artifact_content": {"issues": []}, "artifact_ids": ["00000000-0000-4000-8000-000000000001"]}, {"action": "finish_turn"}]}},
+      "expected": {"decision": "rejected", "reason": "contract_rejected"}
+    },
+    {
+      "case_id": "counterexample-no-native-text-fallback",
+      "provenance": {"kind": "synthetic-counterexample", "changes": "Absent native output with a valid text result must not be repaired by fallback."},
+      "source": "native",
+      "output": {"result": "{\"actions\":[{\"action\":\"approve_review\",\"recipient\":{\"kind\":\"role\",\"role\":\"orchestrator\"},\"content\":\"Valid text cannot substitute native output\",\"artifact_content\":{\"issues\":[]}},{\"action\":\"finish_turn\"}]}"},
+      "expected": {"decision": "rejected", "reason": "native_output_missing"}
+    }
+  ]
+}

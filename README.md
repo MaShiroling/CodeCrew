@@ -330,6 +330,8 @@ Code CLI（仅限 macOS，并需在 shell 环境提供新的 Kimi Code **会员*
 Reviewer 已统一提示词、CLI 原生参数与本地 Draft-07 校验契约：报告来源二选一、
 审批/返工只能交给 Orchestrator，问题字段必须显式填写；在路由和 ACK 前拒绝错误。
 该增强契约已通过离线测试，尚未完成真实提供商验收，详见联调说明。
+历史输出可用 `.venv/bin/python -m scripts.replay_reviewer` 离线回归；
+也支持只读核验并逐字回放本机归档，见[Reviewer 离线回放](docs/reviewer-replay.md)。
 
 ## 配置
 
