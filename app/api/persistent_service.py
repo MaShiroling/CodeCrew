@@ -4,13 +4,28 @@ import asyncio
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from app.api.details import ArtifactDetail, PlanPage, RoomMessagePage, RoomMessageView, TaskRoomView
-from app.api.models import CancelTaskRequest, CreateTaskRequest, TaskPage, TaskView
+from app.api.details import (
+    ArtifactDetail,
+    HumanMessageReceipt,
+    PlanPage,
+    RoomMessagePage,
+    TaskRoomView,
+)
+from app.api.human_messages import build_human_message, message_view
+from app.api.models import (
+    CancelTaskRequest,
+    CreateTaskRequest,
+    PostHumanMessageRequest,
+    TaskPage,
+    TaskView,
+)
 from app.api.service import (
     TaskArtifactIntegrityError,
     TaskArtifactNotFound,
     TaskDetailUnavailable,
     TaskInvalidRepository,
+    TaskMessageConflict,
+    TaskMessageInvalid,
     TaskNotFound,
     TaskStateConflict,
 )
@@ -35,12 +50,18 @@ from app.team.models import (
     MessageType,
     RecipientKind,
     RoomMember,
+    RoomStatus,
     StoredChatMessage,
     TeamRoom,
 )
 from app.team.personas import TeamPersonaCatalog, default_team_personas
-from app.team.router import ConversationRouter
-from app.team.store import RoomNotFoundError, TeamRoomStore
+from app.team.router import ConversationRouter, ConversationRoutingError
+from app.team.store import (
+    ChatIdempotencyConflictError,
+    RoomConflictError,
+    RoomNotFoundError,
+    TeamRoomStore,
+)
 from app.trace import TraceActorKind, TraceEvent, TraceEventType
 from app.trace.models import StoredTraceEvent
 from app.verification import VerificationPlan
@@ -237,36 +258,38 @@ class PersistentTaskService:
         _, room = self._task_room(task_id)
         return TaskRoomView(room=room)
 
+    async def post_human_message(
+        self, task_id: UUID, request: PostHumanMessageRequest,
+    ) -> HumanMessageReceipt:
+        # Single worker, no await inside validation/write; no state or budget changes.
+        async with self._lock:
+            task, room = self._task_room(task_id)
+            snapshot = self.tasks.get(task_id)
+            if snapshot.revision != request.expected_revision:
+                raise TaskStateConflict("task revision changed")
+            if task_id in self._runs or task_id in self._cancelling:
+                raise TaskStateConflict("task execution or cancellation is still active")
+            if task.state is not TaskState.NEEDS_HUMAN or room.status is not RoomStatus.ACTIVE:
+                raise TaskStateConflict("human messages require a paused needs_human task and active room")
+            message = build_human_message(task, room, self.rooms, request)
+            try:
+                stored = self.router.route(message, authenticated_sender_id=message.sender_id)
+            except ChatIdempotencyConflictError as exc:
+                raise TaskMessageConflict("idempotency key was used for different human intent") from exc
+            except RoomConflictError as exc:
+                raise TaskMessageConflict("task room changed") from exc
+            except ConversationRoutingError as exc:
+                raise TaskMessageInvalid("human message is not allowed in this room") from exc
+            return HumanMessageReceipt(message=message_view(stored, room), task_revision=snapshot.revision)
+
     async def list_room_messages(
         self, task_id: UUID, *, after_sequence: int, limit: int
     ) -> RoomMessagePage:
         _, room = self._task_room(task_id)
-        members = {member.member_id: member for member in room.members}
         stored = self.rooms.list_messages(
             room.room_id, after_sequence=after_sequence, limit=limit + 1
         )
-        items: list[RoomMessageView] = []
-        for item in stored[:limit]:
-            message = item.message
-            sender = members.get(message.sender_id)
-            if sender is None:
-                raise TaskDetailUnavailable("message sender is not in the task room")
-            items.append(
-                RoomMessageView(
-                    sequence=item.sequence,
-                    message_id=message.message_id,
-                    sender_id=message.sender_id,
-                    sender_name=sender.name,
-                    sender_role=sender.role,
-                    recipient_ids=tuple(delivery.recipient_id for delivery in item.deliveries),
-                    type=message.type,
-                    content=message.content,
-                    artifacts=message.artifacts,
-                    reply_to=message.reply_to,
-                    correlation_id=message.correlation_id,
-                    created_at=message.created_at,
-                )
-            )
+        items = [message_view(item, room) for item in stored[:limit]]
         return RoomMessagePage(
             items=tuple(items),
             limit=limit,

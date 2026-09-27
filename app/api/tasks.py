@@ -3,12 +3,19 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
 
-from app.api.details import ArtifactDetail, PlanPage, RoomMessagePage, TaskRoomView
+from app.api.details import (
+    ArtifactDetail,
+    HumanMessageReceipt,
+    PlanPage,
+    RoomMessagePage,
+    TaskRoomView,
+)
 from app.api.events import EventStreamResponse, stream_task_events
 from app.api.models import (
     ApiErrorResponse,
     CancelTaskRequest,
     CreateTaskRequest,
+    PostHumanMessageRequest,
     TaskPage,
     TaskView,
 )
@@ -86,6 +93,14 @@ async def list_task_messages(
     return await service.list_room_messages(
         task_id, after_sequence=after_sequence, limit=limit
     )
+
+
+@router.post("/{task_id}/messages", response_model=HumanMessageReceipt,
+             status_code=status.HTTP_201_CREATED, responses=ERROR_RESPONSES)
+async def post_human_message(
+    task_id: UUID, request: PostHumanMessageRequest, service: TaskServiceDependency,
+) -> HumanMessageReceipt:
+    return await service.post_human_message(task_id, request)
 
 
 @router.get("/{task_id}/plans", response_model=PlanPage, responses=ERROR_RESPONSES)

@@ -1,5 +1,6 @@
 """Read-only, task-scoped views for the future task detail interface."""
 
+from typing import Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
@@ -32,6 +33,14 @@ class RoomMessagePage(BaseModel):
     limit: int = Field(ge=1, le=100)
     after_sequence: int = Field(ge=0)
     next_after_sequence: int | None = Field(default=None, ge=1)
+
+
+class HumanMessageReceipt(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    message: RoomMessageView
+    task_revision: int = Field(ge=1)
+    agent_dispatched: Literal[False] = False
 
 
 class TaskRoomView(BaseModel):

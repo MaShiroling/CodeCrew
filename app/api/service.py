@@ -1,8 +1,20 @@
 from typing import Protocol
 from uuid import UUID
 
-from app.api.details import ArtifactDetail, PlanPage, RoomMessagePage, TaskRoomView
-from app.api.models import CancelTaskRequest, CreateTaskRequest, TaskPage, TaskView
+from app.api.details import (
+    ArtifactDetail,
+    HumanMessageReceipt,
+    PlanPage,
+    RoomMessagePage,
+    TaskRoomView,
+)
+from app.api.models import (
+    CancelTaskRequest,
+    CreateTaskRequest,
+    PostHumanMessageRequest,
+    TaskPage,
+    TaskView,
+)
 from app.orchestration.models import TaskState
 from app.trace import StoredTraceEvent
 
@@ -47,6 +59,21 @@ class TaskArtifactIntegrityError(TaskApiServiceError):
     status_code = 500
 
 
+class TaskMessageNotFound(TaskApiServiceError):
+    code = "task_message_not_found"
+    status_code = 404
+
+
+class TaskMessageInvalid(TaskApiServiceError):
+    code = "invalid_human_message"
+    status_code = 422
+
+
+class TaskMessageConflict(TaskApiServiceError):
+    code = "task_message_conflict"
+    status_code = 409
+
+
 class TaskService(Protocol):
     """Boundary between HTTP transport and durable task workflow operations."""
 
@@ -71,6 +98,10 @@ class TaskService(Protocol):
     async def list_room_messages(
         self, task_id: UUID, *, after_sequence: int, limit: int
     ) -> RoomMessagePage: ...
+
+    async def post_human_message(
+        self, task_id: UUID, request: PostHumanMessageRequest,
+    ) -> HumanMessageReceipt: ...
 
     async def list_plans(self, task_id: UUID) -> PlanPage: ...
 

@@ -334,8 +334,10 @@ Reviewer 已统一提示词、CLI 原生参数与本地 Draft-07 校验契约：
 也支持只读核验并逐字回放本机归档，见[Reviewer 离线回放](docs/reviewer-replay.md)。
 现提供[仅 Reviewer 的原生聊天室验收](docs/reviewer-chat-smoke.md)：单回合批准与两回合
 拒绝/再批准分开运行，不启动 Planner/Implementer；两个在线用例与归档核验均已通过。
-下一项为[两轮返工耗尽转人工验收](docs/rework-exhaustion.md)：强化人工交接证据检查，
-完整三 Agent 九回合在线结果仍待取得，不将受控故障注入计作自然质量评测。
+[两轮返工耗尽转人工验收](docs/rework-exhaustion.md)已通过真实九回合及归档核验；
+不将受控故障注入计作自然质量评测。新增[受控人工消息 API](docs/human-message-api.md)：
+可向暂停任务补充要求或回复澄清，持久化且幂等，但不自动派发 Agent 或恢复任务。
+后续第 6 项开发显式继续，第 7 项接 UI 输入框。
 
 ## 配置
 

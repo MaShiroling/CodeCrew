@@ -1,8 +1,10 @@
+from typing import Literal
 from uuid import UUID
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from app.orchestration.models import TaskState
+from app.team.models import MemberRole
 
 
 class CreateTaskRequest(BaseModel):
@@ -21,6 +23,26 @@ class CancelTaskRequest(BaseModel):
 
     expected_revision: int = Field(ge=1)
     reason: str | None = Field(default=None, min_length=1, max_length=1_000)
+
+
+class PostHumanMessageRequest(BaseModel):
+    """Local human intent, never an arbitrary ChatMessage or workflow directive."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    expected_revision: int = Field(ge=1, strict=True)
+    idempotency_key: UUID
+    content: str = Field(min_length=1, max_length=16_000)
+    recipient_role: Literal[
+        MemberRole.PLANNER, MemberRole.IMPLEMENTER, MemberRole.REVIEWER, MemberRole.ORCHESTRATOR,
+    ] | None = None
+    reply_to: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_destination(self) -> "PostHumanMessageRequest":
+        if (self.recipient_role is None) == (self.reply_to is None):
+            raise ValueError("provide either recipient_role or reply_to, not both")
+        return self
 
 
 class TaskView(BaseModel):
