@@ -16,6 +16,7 @@ from app.api.details import (
 )
 from app.api.human_messages import build_human_message, message_view
 from app.api.models import (
+    AuthorizeContinuationRequest,
     CancelContinuationRequest,
     CancelTaskRequest,
     ContinueTaskPreflightRequest,
@@ -50,14 +51,17 @@ from app.storage import (
     TaskRepositoryIntegrityError,
     TaskSnapshot,
 )
+from app.storage.continuation_authorizations import ContinuationAuthorizationRepository
 from app.storage.continuation_cancellations import ContinuationCancellationRepository
 from app.storage.continuations import (
     ContinuationConflictError,
     ContinuationIntegrityError,
+    ContinuationIntent,
     ContinuationNotFoundError,
     ContinuationQuarantineReceipt,
     ContinuationRepository,
     ContinuationStatus,
+    human_message_digest,
 )
 from app.team.execution import WorkflowEventLoop, WorkflowRuntime
 from app.team.models import (
@@ -136,6 +140,8 @@ class PersistentTaskService:
         self.continuations.initialize()
         self.continuation_cancellations = ContinuationCancellationRepository(self.continuations)
         self.continuation_cancellations.initialize()
+        self.continuation_authorizations = ContinuationAuthorizationRepository(self.continuations)
+        self.continuation_authorizations.initialize()
         self._continuation_runs = {}
         self.continuation_cancellation_timeout_seconds = 5.0
 
@@ -334,6 +340,63 @@ class PersistentTaskService:
             raise TaskContinuationNotFound("continuation not found for this task") from exc
         except (ContinuationIntegrityError, sqlite3.Error) as exc:
             raise TaskServiceUnavailable("cancellation ledger is unavailable") from exc
+
+    async def get_continuation_authorization(self, task_id: UUID, authorization_id: UUID):
+        try:
+            return self.continuation_authorizations.get(task_id=task_id, authorization_id=authorization_id)
+        except ContinuationNotFoundError as exc:
+            raise TaskContinuationNotFound("authorization not found for this task") from exc
+        except (ContinuationIntegrityError, sqlite3.Error) as exc:
+            raise TaskServiceUnavailable("authorization ledger is unavailable") from exc
+
+    async def authorize_continuation(self, task_id: UUID, request_id: UUID,
+                                     request: AuthorizeContinuationRequest):
+        from app.api.continuation_runtime import HumanContinuationKernel
+
+        async with self._lock:
+            try:
+                self.continuations.get_scoped(task_id=task_id, request_id=request_id)
+                _, room = self._task_room(task_id)
+                humans = [member for member in room.members if member.role is MemberRole.HUMAN]
+                if len(humans) != 1 or humans[0].kind is not MemberKind.HUMAN:
+                    raise TaskDetailUnavailable("task room must have exactly one Human identity")
+                repository = self.continuation_authorizations
+                replay = repository.replay(task_id=task_id, previous_request_id=request_id,
+                                           command=request, human_member_id=humans[0].member_id)
+                if replay is not None:
+                    return replay  # Historical receipt, not renewed execution authority.
+                prepared = await HumanContinuationKernel(self)._prepare(task_id, ContinueTaskPreflightRequest(
+                    expected_revision=request.expected_revision, message_id=request.message_id,
+                    target_role=request.target_role.value,
+                ))
+                checkpoint = prepared.checkpoint
+                if checkpoint.runtime_revision != request.expected_runtime_revision:
+                    raise TaskStateConflict("authorization runtime revision changed")
+                guard = self.event_loop.executor.budget_guard
+                if checkpoint.budget_usage.room_messages + 1 >= guard.policy.max_room_messages:
+                    raise TaskStateConflict("continuation handoff would exhaust the message budget")
+                intent = ContinuationIntent(
+                    idempotency_key=request.idempotency_key, task_id=task_id,
+                    trace_id=checkpoint.trace_id, room_id=room.room_id, message_id=request.message_id,
+                    source_sha256=human_message_digest(prepared.source.message.model_dump(mode="json")),
+                    correlation_id=checkpoint.correlation_id, target_role=request.target_role,
+                    target_member_id=checkpoint.target_member_id,
+                    source_recipient_id=prepared.source.deliveries[0].recipient_id,
+                    agent_name=prepared.runtime.agent_names[request.target_role],
+                    expected_revision=checkpoint.task_revision, runtime_revision=checkpoint.runtime_revision,
+                )
+                return repository.authorize(
+                    previous_request_id=request_id, human_member_id=humans[0].member_id,
+                    command=request, intent=intent, artifacts=prepared.references,
+                    runtime_sha256=human_message_digest(self.contexts.get(task_id).context.model_dump(mode="json")),
+                )
+            except ContinuationNotFoundError as exc:
+                raise TaskContinuationNotFound("continuation not found for this task") from exc
+            except ContinuationConflictError as exc:
+                raise TaskStateConflict(str(exc)) from exc
+            except (ContinuationIntegrityError, TaskRepositoryIntegrityError,
+                    RuntimeContextRepositoryError, sqlite3.Error) as exc:
+                raise TaskServiceUnavailable("authorization ledger is unavailable") from exc
 
     async def cancel_continuation(self, task_id: UUID, request_id: UUID, request: CancelContinuationRequest):
         # No long workflow lock and no await between durable intent and cancel.

@@ -4,6 +4,15 @@
 
 ## 最新验收与当前阻塞
 
+- 后续路线第一部分第 1 步：显式新意图授权记录增量已完成离线验收。
+  仅接受最新成功提交回合后的新 Human 意图；记录目标、修订号、Runtime/消息哈希、
+  Artifact 引用和同事务 Human Trace。Migration 13、幂等重放、独立连接唯一约束；
+  不派发、不 ACK、不放宽预算，不释放失败/取消/未知 Claim。
+  即使取消已有匹配终态也不解锁；授权 `execution_ready=false`，不是可执行许可证。
+  新增 39 项离线用例，187 项定向回归及最终全量 `scripts/check_offline.py` pytest / Ruff
+  通过，九个在线开关关闭，未调用模型。context7-mcp 用于核对 Pydantic 严格字段及
+  `model_copy` 不执行校验的边界，持久化/重放前统一重新验证领域命令；保留既有依赖弃用警告。
+  受控状态回归、授权再次核验/消费和 HTTP 继续接口待后续，详见[授权记录](continuation-authorization.md)。
 - 第 6 项第 4 子步骤 C：服务级取消与停止观察证据已完成离线验收。
   新增 POST cancel（202）/GET cancellation，绕开长回合锁，只取消本服务/事件循环
   实际持有的继续回合；Migration 12 持久化 Human 意图、owner 绑定和确定性观察。

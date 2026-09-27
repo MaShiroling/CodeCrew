@@ -348,7 +348,9 @@ Reviewer 已统一提示词、CLI 原生参数与本地 Draft-07 校验契约：
 [人工隔离 Claim 查询与处置](docs/continuation-quarantine.md)：记录 Human 决定并挡住迟到
 提交，但不释放占用或证明旧 CLI 已停止。第 4 子步骤 C 增加
 [服务级取消与停止观察证据](docs/continuation-cancellation.md)：只取消本服务实际持有的
-继续回合；202 是接受意图，不是 OS 停止认证。真正的继续执行接口、人工解锁/重新授权、
+继续回合；202 是接受意图，不是 OS 停止认证。新增
+[显式新意图授权记录](docs/continuation-authorization.md)：已成功提交回合后，绑定新人工
+消息、目标和证据快照；不派发、不解锁未知 Claim。真正的继续执行接口、故障解锁、
 受控状态恢复与完整进程树停止证据仍未完成，第 7 项再接 UI 输入框。
 
 ## 配置

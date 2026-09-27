@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from app.orchestration.models import TaskState
+from app.storage.continuation_authorizations import AuthorizeContinuationCommand
 from app.storage.continuation_cancellations import CancelContinuationCommand
 from app.storage.continuations import QuarantineContinuationCommand
 from app.team.models import MemberRole
@@ -77,6 +78,10 @@ class QuarantineContinuationRequest(QuarantineContinuationCommand):
 
 class CancelContinuationRequest(CancelContinuationCommand):
     """Request cancellation of a locally owned turn, never release its claim."""
+
+
+class AuthorizeContinuationRequest(AuthorizeContinuationCommand):
+    """Audit a new intent after a committed turn, without dispatching it."""
 
 
 class TaskPage(BaseModel):

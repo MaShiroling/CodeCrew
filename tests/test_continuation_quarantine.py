@@ -92,7 +92,7 @@ async def test_human_quarantine_is_durable_idempotent_without_releasing_or_dispa
     assert service.continuations.active_for_task(view.task_id) == claim
     reopened = ContinuationRepository(SQLiteDatabase(service.tasks.database.path))
     reopened.initialize()
-    assert reopened.database.schema_version == 12
+    assert reopened.database.schema_version == 13
     assert reopened.status(task_id=view.task_id, request_id=claim.receipt.request.request_id).quarantine.model_dump(mode="json") == receipt
     replay = await kernel.run_single(view.task_id, request)
     assert replay.replayed and replay.receipt == claim.receipt

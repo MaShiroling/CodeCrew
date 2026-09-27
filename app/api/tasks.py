@@ -14,6 +14,7 @@ from app.api.details import (
 from app.api.events import EventStreamResponse, stream_task_events
 from app.api.models import (
     ApiErrorResponse,
+    AuthorizeContinuationRequest,
     CancelContinuationRequest,
     CancelTaskRequest,
     ContinueTaskPreflightRequest,
@@ -25,6 +26,7 @@ from app.api.models import (
 )
 from app.api.service import TaskService, TaskServiceUnavailable
 from app.orchestration.models import TaskState
+from app.storage.continuation_authorizations import ContinuationAuthorizationReceipt
 from app.storage.continuation_cancellations import ContinuationCancellationReceipt
 from app.storage.continuations import ContinuationQuarantineReceipt, ContinuationStatus
 
@@ -143,6 +145,25 @@ async def quarantine_continuation(
     if not callable(method):
         raise TaskServiceUnavailable("continuation quarantine is not configured")
     return await method(task_id, request_id, request)
+
+
+@router.post("/{task_id}/continuations/{request_id}/authorize",
+             response_model=ContinuationAuthorizationReceipt, responses=ERROR_RESPONSES)
+async def authorize_continuation(task_id: UUID, request_id: UUID,
+                                 request: AuthorizeContinuationRequest, service: TaskServiceDependency):
+    method = getattr(service, "authorize_continuation", None)
+    if not callable(method):
+        raise TaskServiceUnavailable("continuation authorization is not configured")
+    return await method(task_id, request_id, request)
+
+
+@router.get("/{task_id}/continuation-authorizations/{authorization_id}",
+            response_model=ContinuationAuthorizationReceipt, responses=ERROR_RESPONSES)
+async def get_continuation_authorization(task_id: UUID, authorization_id: UUID, service: TaskServiceDependency):
+    method = getattr(service, "get_continuation_authorization", None)
+    if not callable(method):
+        raise TaskServiceUnavailable("continuation authorization is not configured")
+    return await method(task_id, authorization_id)
 
 
 @router.post("/{task_id}/continuations/{request_id}/cancel",
