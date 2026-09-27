@@ -1,6 +1,7 @@
 """Durable task bootstrap and in-process TeamRoom execution for the HTTP API."""
 
 import asyncio
+import sqlite3
 from pathlib import Path
 from uuid import UUID, uuid4
 
@@ -19,17 +20,20 @@ from app.api.models import (
     ContinueTaskPreflightRequest,
     CreateTaskRequest,
     PostHumanMessageRequest,
+    QuarantineContinuationRequest,
     TaskPage,
     TaskView,
 )
 from app.api.service import (
     TaskArtifactIntegrityError,
     TaskArtifactNotFound,
+    TaskContinuationNotFound,
     TaskDetailUnavailable,
     TaskInvalidRepository,
     TaskMessageConflict,
     TaskMessageInvalid,
     TaskNotFound,
+    TaskServiceUnavailable,
     TaskStateConflict,
 )
 from app.orchestration.models import InvalidTaskTransition, Task, TaskState
@@ -42,9 +46,17 @@ from app.storage import (
     StaleTaskRevisionError,
     TaskNotFoundError,
     TaskRepository,
+    TaskRepositoryIntegrityError,
     TaskSnapshot,
 )
-from app.storage.continuations import ContinuationRepository
+from app.storage.continuations import (
+    ContinuationConflictError,
+    ContinuationIntegrityError,
+    ContinuationNotFoundError,
+    ContinuationQuarantineReceipt,
+    ContinuationRepository,
+    ContinuationStatus,
+)
 from app.team.execution import WorkflowEventLoop, WorkflowRuntime
 from app.team.models import (
     ChatMessage,
@@ -293,6 +305,50 @@ class PersistentTaskService:
     ) -> ContinueTaskPreflight:
         async with self._lock:
             return preflight_continuation(self, task_id, request)
+
+    async def get_continuation(self, task_id: UUID, request_id: UUID) -> ContinuationStatus:
+        try:
+            await self.get_task(task_id)
+            return self.continuations.status(task_id=task_id, request_id=request_id)
+        except ContinuationNotFoundError as exc:
+            raise TaskContinuationNotFound("continuation not found for this task") from exc
+        except ContinuationConflictError as exc:
+            raise TaskDetailUnavailable(str(exc)) from exc
+        except (ContinuationIntegrityError, TaskRepositoryIntegrityError,
+                RuntimeContextRepositoryError, sqlite3.Error) as exc:
+            raise TaskServiceUnavailable("continuation ledger is unavailable") from exc
+
+    async def quarantine_continuation(
+        self, task_id: UUID, request_id: UUID, request: QuarantineContinuationRequest,
+    ) -> ContinuationQuarantineReceipt:
+        async with self._lock:
+            try:
+                # Resolve scope before room setup, never disclose a request
+                # attached to a different task (including incomplete tasks).
+                self.continuations.get_scoped(task_id=task_id, request_id=request_id)
+                _, room = self._task_room(task_id)
+            except ContinuationNotFoundError as exc:
+                raise TaskContinuationNotFound("continuation not found for this task") from exc
+            except (ContinuationIntegrityError, TaskRepositoryIntegrityError, ValueError,
+                    sqlite3.Error) as exc:
+                raise TaskServiceUnavailable("quarantine task room is unavailable") from exc
+            if task_id in self._runs or task_id in self._cancelling:
+                raise TaskStateConflict("local execution/cancellation is active; quarantine is not cancellation")
+            humans = [member for member in room.members if member.role is MemberRole.HUMAN]
+            if len(humans) != 1 or humans[0].kind is not MemberKind.HUMAN:
+                raise TaskDetailUnavailable("task room must have exactly one Human identity")
+            try:
+                return self.continuations.quarantine(
+                    task_id=task_id, request_id=request_id,
+                    human_member_id=humans[0].member_id, command=request,
+                )
+            except ContinuationNotFoundError as exc:
+                raise TaskContinuationNotFound("continuation not found for this task") from exc
+            except ContinuationConflictError as exc:
+                raise TaskStateConflict(str(exc)) from exc
+            except (ContinuationIntegrityError, TaskRepositoryIntegrityError,
+                    RuntimeContextRepositoryError, sqlite3.Error) as exc:
+                raise TaskServiceUnavailable("continuation ledger is unavailable") from exc
 
     async def list_room_messages(
         self, task_id: UUID, *, after_sequence: int, limit: int

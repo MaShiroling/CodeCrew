@@ -26,6 +26,10 @@ class ContinuationIntegrityError(RuntimeError):
     pass
 
 
+class ContinuationNotFoundError(ContinuationConflictError):
+    pass
+
+
 class ContinuationState(str, Enum):
     PENDING = "pending"
     CLAIMED = "claimed"
@@ -124,6 +128,51 @@ class ContinuationRecord(BaseModel):
         return self
 
 
+class QuarantineContinuationCommand(BaseModel):
+    """Human containment decision, not a stop confirmation or retry permit."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", str_strip_whitespace=True)
+
+    idempotency_key: UUID
+    expected_revision: int = Field(ge=1, strict=True)
+    expected_runtime_revision: int = Field(ge=1, strict=True)
+    expected_claim_updated_at: AwareDatetime
+    disposition: Literal["quarantine"] = "quarantine"
+    reason: str = Field(min_length=1, max_length=1_000)
+
+
+class ContinuationQuarantineReceipt(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    resolution_id: UUID = Field(default_factory=uuid4)
+    command: QuarantineContinuationCommand
+    task_id: UUID
+    trace_id: UUID
+    room_id: UUID
+    request_id: UUID
+    human_member_id: UUID
+    observed_state: Literal[ContinuationState.CLAIMED, ContinuationState.NEEDS_HUMAN]
+    claim_record_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
+    task_state_at_resolution: Literal[TaskState.NEEDS_HUMAN] = TaskState.NEEDS_HUMAN
+    claim_released: Literal[False] = False
+    external_process_stopped_confirmed: Literal[False] = False
+    agent_dispatched: Literal[False] = False
+    budget_reset: Literal[False] = False
+    task_completion_evaluated: Literal[False] = False
+    created_at: AwareDatetime = Field(default_factory=utc_now)
+
+
+class ContinuationStatus(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    receipt: ContinuationReceipt
+    updated_at: AwareDatetime
+    task_revision: int = Field(ge=1, strict=True)
+    runtime_revision: int = Field(ge=1, strict=True)
+    task_state: TaskState
+    quarantine: ContinuationQuarantineReceipt | None = None
+
+
 CONTINUATION_MIGRATIONS = (
     Migration(
         version=10,
@@ -143,6 +192,22 @@ CONTINUATION_MIGRATIONS = (
         )""",
             """CREATE UNIQUE INDEX continuation_task_busy_idx ON continuation_requests(task_id)
         WHERE state IN ('pending','claimed','needs_human')""",
+        ),
+    ),
+    Migration(
+        version=11,
+        name="create_continuation_quarantines",
+        statements=(
+            """CREATE TABLE continuation_quarantines (
+            request_id TEXT PRIMARY KEY REFERENCES continuation_requests(request_id),
+            task_id TEXT NOT NULL REFERENCES tasks(task_id),
+            trace_id TEXT NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            human_member_id TEXT NOT NULL REFERENCES room_members(member_id),
+            receipt_json TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            UNIQUE(task_id, idempotency_key)
+        )""",
         ),
     ),
 )
@@ -168,6 +233,114 @@ class ContinuationRepository:
     def get(self, request_id: UUID) -> ContinuationRecord:
         with self.database.connect() as connection:
             return self._get(connection, request_id)
+
+    def get_scoped(self, *, task_id: UUID, request_id: UUID) -> ContinuationRecord:
+        with self.database.connect() as connection:
+            return self._get_scoped(connection, task_id, request_id)
+
+    def status(self, *, task_id: UUID, request_id: UUID) -> ContinuationStatus:
+        with self.database.transaction(immediate=False) as connection:
+            record = self._get_scoped(connection, task_id, request_id)
+            task_row = connection.execute(
+                "SELECT * FROM tasks WHERE task_id=?", (str(task_id),),
+            ).fetchone()
+            context_row = connection.execute(
+                "SELECT * FROM workflow_runtime_contexts WHERE task_id=?", (str(task_id),),
+            ).fetchone()
+            if task_row is None or context_row is None:
+                raise ContinuationConflictError("continuation task/runtime unavailable")
+            task = TaskRepository._snapshot_from_row(task_row)
+            context = RuntimeContextRepository._snapshot_from_row(context_row)
+            intent = record.receipt.request
+            if (task.task.trace_id != intent.trace_id or context.context.trace_id != intent.trace_id
+                    or context.context.room_id != intent.room_id):
+                raise ContinuationIntegrityError("continuation task/runtime scope is inconsistent")
+            quarantine = self._quarantine_for(connection, request_id)
+            if quarantine is not None:
+                self._validate_quarantine_binding(record, quarantine)
+            return ContinuationStatus(
+                receipt=record.receipt, updated_at=record.updated_at, quarantine=quarantine,
+                task_revision=task.revision, runtime_revision=context.revision,
+                task_state=task.task.state,
+            )
+
+    def quarantine(
+        self, *, task_id: UUID, request_id: UUID, human_member_id: UUID,
+        command: QuarantineContinuationCommand,
+    ) -> ContinuationQuarantineReceipt:
+        """Atomically fence commits and audit Human intent; never free the task slot."""
+        command = QuarantineContinuationCommand.model_validate_json(command.model_dump_json())
+        with self.database.transaction() as connection:
+            record = self._get_scoped(connection, task_id, request_id)
+            existing = connection.execute(
+                "SELECT * FROM continuation_quarantines WHERE task_id=? AND idempotency_key=?",
+                (str(task_id), str(command.idempotency_key)),
+            ).fetchone()
+            if existing is not None:
+                receipt = self._decode_quarantine(existing)
+                if (receipt.request_id != request_id or receipt.human_member_id != human_member_id
+                        or receipt.command != command):
+                    raise ContinuationConflictError("quarantine idempotency key conflicts")
+                self._validate_quarantine_binding(record, receipt)
+                return receipt
+            if self._quarantine_for(connection, request_id) is not None:
+                raise ContinuationConflictError("continuation is already quarantined")
+            if (record.receipt.state not in {ContinuationState.CLAIMED, ContinuationState.NEEDS_HUMAN}
+                    or record.updated_at != command.expected_claim_updated_at):
+                raise ContinuationConflictError("continuation state or timestamp changed")
+            intent = record.receipt.request
+            task_row = connection.execute(
+                "SELECT * FROM tasks WHERE task_id=?", (str(task_id),),
+            ).fetchone()
+            context_row = connection.execute(
+                "SELECT * FROM workflow_runtime_contexts WHERE task_id=?", (str(task_id),),
+            ).fetchone()
+            if task_row is None or context_row is None:
+                raise ContinuationConflictError("quarantine task/runtime unavailable")
+            task = TaskRepository._snapshot_from_row(task_row)
+            context = RuntimeContextRepository._snapshot_from_row(context_row)
+            if (task.revision != command.expected_revision
+                    or context.revision != command.expected_runtime_revision
+                    or task.task.state is not TaskState.NEEDS_HUMAN
+                    or task.task.trace_id != intent.trace_id
+                    or context.context.trace_id != intent.trace_id
+                    or context.context.room_id != intent.room_id):
+                raise ContinuationConflictError("quarantine task/runtime scope or revision changed")
+            room = connection.execute(
+                "SELECT * FROM team_rooms WHERE room_id=?", (str(intent.room_id),),
+            ).fetchone()
+            humans = connection.execute(
+                "SELECT * FROM room_members WHERE room_id=? AND role='human'",
+                (str(intent.room_id),),
+            ).fetchall()
+            if (room is None or (room["task_id"], room["trace_id"], room["status"]) != (
+                str(task_id), str(intent.trace_id), "active",
+            ) or len(humans) != 1 or humans[0]["kind"] != "human"
+                    or humans[0]["member_id"] != str(human_member_id)):
+                raise ContinuationConflictError("quarantine requires the room's unique Human identity")
+            receipt = ContinuationQuarantineReceipt(
+                command=command, task_id=task_id, trace_id=intent.trace_id,
+                room_id=intent.room_id, request_id=request_id, human_member_id=human_member_id,
+                observed_state=record.receipt.state,
+                claim_record_sha256=self._record_digest(record),
+            )
+            connection.execute(
+                "INSERT INTO continuation_quarantines VALUES (?, ?, ?, ?, ?, ?, ?)",
+                self._quarantine_columns(receipt),
+            )
+            self.traces.append_in_transaction(connection, TraceEvent(
+                task_id=task_id, trace_id=intent.trace_id,
+                type=TraceEventType.CONTINUATION_QUARANTINED,
+                actor_kind=TraceActorKind.HUMAN, actor_id=str(human_member_id),
+                correlation_id=intent.correlation_id, causation_id=intent.message_id,
+                idempotency_key=f"continuation-quarantine:{request_id}",
+                payload={"resolution_id": str(receipt.resolution_id),
+                         "request_id": str(request_id), "observed_state": receipt.observed_state.value,
+                         "reason": command.reason, "claim_released": False,
+                         "external_process_stopped_confirmed": False,
+                         "claim_record_sha256": receipt.claim_record_sha256},
+            ))
+            return receipt
 
     def active_for_task(self, task_id: UUID) -> ContinuationRecord | None:
         with self.database.connect() as connection:
@@ -441,6 +614,10 @@ class ContinuationRepository:
 
     def _owned(self, connection, claim):
         record = self._get(connection, claim.receipt.request.request_id)
+        quarantine = self._quarantine_for(connection, record.receipt.request.request_id)
+        if quarantine is not None:
+            self._validate_quarantine_binding(record, quarantine)
+            raise ContinuationConflictError("continuation is quarantined; late commit is forbidden")
         if (
             record.receipt.state is not ContinuationState.CLAIMED
             or claim.claim_token is None
@@ -454,8 +631,52 @@ class ContinuationRepository:
             "SELECT * FROM continuation_requests WHERE request_id=?", (str(request_id),)
         ).fetchone()
         if row is None:
-            raise ContinuationConflictError("continuation request not found")
+            raise ContinuationNotFoundError("continuation request not found")
         return self._decode(row)
+
+    def _get_scoped(self, connection, task_id, request_id):
+        record = self._get(connection, request_id)
+        if record.receipt.request.task_id != task_id:
+            raise ContinuationNotFoundError("continuation request not found for this task")
+        return record
+
+    def _quarantine_for(self, connection, request_id):
+        row = connection.execute(
+            "SELECT * FROM continuation_quarantines WHERE request_id=?", (str(request_id),),
+        ).fetchone()
+        return self._decode_quarantine(row) if row is not None else None
+
+    @staticmethod
+    def _record_digest(record):
+        return hashlib.sha256(record.model_dump_json().encode()).hexdigest()
+
+    def _validate_quarantine_binding(self, record, receipt):
+        intent = record.receipt.request
+        if (receipt.request_id != intent.request_id or receipt.task_id != intent.task_id
+                or receipt.trace_id != intent.trace_id or receipt.room_id != intent.room_id
+                or receipt.observed_state != record.receipt.state
+                or receipt.command.expected_claim_updated_at != record.updated_at
+                or receipt.claim_record_sha256 != self._record_digest(record)):
+            raise ContinuationIntegrityError("quarantine disagrees with its continuation snapshot")
+
+    @staticmethod
+    def _quarantine_columns(receipt):
+        return (str(receipt.request_id), str(receipt.task_id), str(receipt.trace_id),
+                str(receipt.command.idempotency_key), str(receipt.human_member_id),
+                receipt.model_dump_json(), receipt.created_at.isoformat())
+
+    def _decode_quarantine(self, row):
+        try:
+            receipt = ContinuationQuarantineReceipt.model_validate_json(row["receipt_json"])
+            columns = tuple(row[key] for key in (
+                "request_id", "task_id", "trace_id", "idempotency_key", "human_member_id",
+                "receipt_json", "created_at",
+            ))
+            if columns != self._quarantine_columns(receipt):
+                raise ValueError("quarantine indexed columns disagree with receipt")
+            return receipt
+        except (ValueError, TypeError) as exc:
+            raise ContinuationIntegrityError("persisted quarantine receipt is corrupt") from exc
 
     @staticmethod
     def _columns(record):

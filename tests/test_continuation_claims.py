@@ -56,7 +56,7 @@ async def test_migration_registration_trace_and_reopen_are_idempotent(paused):
     first = repository.register(intent)
     reopened = ContinuationRepository(SQLiteDatabase(repository.database.path))
     reopened.initialize()
-    assert reopened.database.schema_version == 10
+    assert reopened.database.schema_version == 11
     assert reopened.register(intent.model_copy(update={"request_id": uuid4()})) == first
     assert reopened.get_by_key(view.task_id, intent.idempotency_key) == first
     events = service.router.trace_store.list(trace_id=view.trace_id, type=TraceEventType.CONTINUATION_REQUESTED)

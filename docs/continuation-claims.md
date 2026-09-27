@@ -5,6 +5,8 @@
 
 后续第 4 子步骤 A 已接入[失败与取消尝试记账](attempt-accounting.md)，
 替代本页开发时的失败成本待实现状态；人工解除占用和状态回归仍未完成。
+第 4 子步骤 B 另提供[人工隔离处置](continuation-quarantine.md)及查询，Migration 11
+不改本步原记录；隔离后旧执行者不能再 finish/pause，但原占用不释放、不自动重试。
 
 ## 请求与回执
 

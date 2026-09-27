@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from app.orchestration.models import TaskState
+from app.storage.continuations import QuarantineContinuationCommand
 from app.team.models import MemberRole
 
 
@@ -67,6 +68,10 @@ class ContinueTaskPreflightRequest(BaseModel):
     expected_revision: int = Field(ge=1, strict=True)
     message_id: UUID
     target_role: Literal[MemberRole.PLANNER, MemberRole.IMPLEMENTER, MemberRole.REVIEWER]
+
+
+class QuarantineContinuationRequest(QuarantineContinuationCommand):
+    """Contain a persisted claim without asserting external-process termination."""
 
 
 class TaskPage(BaseModel):

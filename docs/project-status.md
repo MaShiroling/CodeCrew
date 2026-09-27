@@ -4,6 +4,16 @@
 
 ## 最新验收与当前阻塞
 
+- 第 6 项第 4 子步骤 B：不确定 Claim 的人工隔离入口已完成离线验收。
+  新增 scoped GET 和 POST quarantine；服务端绑定 Human 身份，Migration 11 与
+  Human Trace 原子持久化不可覆盖的处置回执；旧 token 不能绕过隔离围栏迟到提交。
+  保留原 Claim/Task、Runtime、ACK、预算与返工次数，不释放占用、不重跑原意图。
+  明确 `external_process_stopped_confirmed=false`；这是提交围栏，不是 OS 隔离或
+  进程取消。人工解锁/重新授权、服务级取消及受控状态回归仍待实现。
+  新增 44 个离线用例，173 项定向及全量 `scripts/check_offline.py` pytest / Ruff
+  通过，九个在线开关关闭。context7-mcp 用于核对 FastAPI 请求/响应模型的校验与
+  字段过滤。本轮未调用模型，保留既有依赖弃用警告。
+  详见[人工隔离契约](continuation-quarantine.md)，HTTP 继续执行/UI 按钮仍未开放。
 - 第 6 项第 4 子步骤 A：失败与取消成本记账已完成离线验收。
   派发前持久化一次尝试，结束时更新匹配结果的已报告 Token 与耗时；启动失败、
   非零退出、超时、格式/审计拒绝和取消均占用回合。账本写入失败则不派发；

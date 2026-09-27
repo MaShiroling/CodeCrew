@@ -344,7 +344,9 @@ Reviewer 已统一提示词、CLI 原生参数与本地 Draft-07 校验契约：
 第 3 子步骤已接入[SQLite 持久化认领与幂等回执](docs/continuation-claims.md)：重复请求不
 重跑，Runtime/选定 ACK/成功回执原子提交；重启后的不确定 Claim 保留占用，不自动重试。
 第 4 子步骤 A 已接入[失败与取消尝试记账](docs/attempt-accounting.md)：派发前持久化，
-失败/取消占用回合，未知 Token 不记作零费用。真正的继续执行接口、人工故障处置、
+失败/取消占用回合，未知 Token 不记作零费用。第 4 子步骤 B 新增
+[人工隔离 Claim 查询与处置](docs/continuation-quarantine.md)：记录 Human 决定并挡住迟到
+提交，但不释放占用或证明旧 CLI 已停止。真正的继续执行接口、人工解锁/重新授权、
 服务级取消与受控状态恢复仍未完成，第 7 项再接 UI 输入框。
 
 ## 配置

@@ -18,11 +18,13 @@ from app.api.models import (
     ContinueTaskPreflightRequest,
     CreateTaskRequest,
     PostHumanMessageRequest,
+    QuarantineContinuationRequest,
     TaskPage,
     TaskView,
 )
 from app.api.service import TaskService, TaskServiceUnavailable
 from app.orchestration.models import TaskState
+from app.storage.continuations import ContinuationQuarantineReceipt, ContinuationStatus
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
 
@@ -116,6 +118,29 @@ async def preflight_continue_task(
     task_id: UUID, request: ContinueTaskPreflightRequest, service: TaskServiceDependency,
 ) -> ContinueTaskPreflight:
     return await service.preflight_continue_task(task_id, request)
+
+
+@router.get("/{task_id}/continuations/{request_id}", response_model=ContinuationStatus,
+            responses=ERROR_RESPONSES)
+async def get_continuation(
+    task_id: UUID, request_id: UUID, service: TaskServiceDependency,
+) -> ContinuationStatus:
+    method = getattr(service, "get_continuation", None)
+    if not callable(method):
+        raise TaskServiceUnavailable("continuation inspection is not configured")
+    return await method(task_id, request_id)
+
+
+@router.post("/{task_id}/continuations/{request_id}/quarantine",
+             response_model=ContinuationQuarantineReceipt, responses=ERROR_RESPONSES)
+async def quarantine_continuation(
+    task_id: UUID, request_id: UUID, request: QuarantineContinuationRequest,
+    service: TaskServiceDependency,
+) -> ContinuationQuarantineReceipt:
+    method = getattr(service, "quarantine_continuation", None)
+    if not callable(method):
+        raise TaskServiceUnavailable("continuation quarantine is not configured")
+    return await method(task_id, request_id, request)
 
 
 @router.get(

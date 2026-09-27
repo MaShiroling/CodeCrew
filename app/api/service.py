@@ -14,10 +14,12 @@ from app.api.models import (
     ContinueTaskPreflightRequest,
     CreateTaskRequest,
     PostHumanMessageRequest,
+    QuarantineContinuationRequest,
     TaskPage,
     TaskView,
 )
 from app.orchestration.models import TaskState
+from app.storage.continuations import ContinuationQuarantineReceipt, ContinuationStatus
 from app.trace import StoredTraceEvent
 
 
@@ -76,6 +78,11 @@ class TaskMessageConflict(TaskApiServiceError):
     status_code = 409
 
 
+class TaskContinuationNotFound(TaskApiServiceError):
+    code = "task_continuation_not_found"
+    status_code = 404
+
+
 class TaskService(Protocol):
     """Boundary between HTTP transport and durable task workflow operations."""
 
@@ -108,6 +115,12 @@ class TaskService(Protocol):
     async def preflight_continue_task(
         self, task_id: UUID, request: ContinueTaskPreflightRequest,
     ) -> ContinueTaskPreflight: ...
+
+    async def get_continuation(self, task_id: UUID, request_id: UUID) -> ContinuationStatus: ...
+
+    async def quarantine_continuation(
+        self, task_id: UUID, request_id: UUID, request: QuarantineContinuationRequest,
+    ) -> ContinuationQuarantineReceipt: ...
 
     async def list_plans(self, task_id: UUID) -> PlanPage: ...
 
