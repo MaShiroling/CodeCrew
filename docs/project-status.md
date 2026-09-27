@@ -4,6 +4,14 @@
 
 ## 最新验收与当前阻塞
 
+- 第 6 项第 1 子步骤：继续任务契约与只读预检已实现。
+  `POST .../continue/preflight` 验证暂停状态、revision、已有 Human 意图及待处理投递、
+  目标 Agent/持久化 binding 和当前服务的真实预算账本；没有 Guard 则失败，不默认补齐。
+  响应显式 `execution_ready=false`、`agent_dispatched=false`，不改状态、不 ACK、
+  不运行 Agent、不预留继续请求。Runtime/证据恢复与实际继续接口仍待下一子步骤。
+  新增 51 项预检用例，112 项定向及全量离线 pytest / Ruff 均通过；九个在线开关
+  关闭，未调用模型。context7-mcp 用于核对 FastAPI 请求/响应契约。
+  详见[继续任务预检](continuation-preflight.md)。
 - 第 4 项真实两轮耗尽已验收：Trace `1af3642a-9ddf-4552-ba02-1ef93873497b`，
   9 回合、3 个独立 Reviewer 会话均拒绝，2 轮返工后 `needs_human`。
   人工请求关联最后拒绝与当前证据；无完成判定或假成功。数据库与 83 个 Artifact

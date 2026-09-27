@@ -87,5 +87,6 @@ causation_id，不接受客户端伪造。仅允许回复发给此 Human 且仍�
 .venv/bin/python scripts/check_offline.py
 ```
 
-下一项（第 6 项）实现显式继续/唤醒、幂等消费和预算边界；第 7 项再接 UI 聊天输入框。
+第 6 项第 1 子步骤已实现[只读继续预检](continuation-preflight.md)，尚不消费消息或派发。
+后续实现显式继续/唤醒、幂等消费和预算边界；第 7 项再接 UI 聊天输入框。
 当前状态模型仍将 `needs_human` 视为终止等待态，本项没有放开它的出边转换。

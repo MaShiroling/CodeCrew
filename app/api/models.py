@@ -59,6 +59,16 @@ class TaskView(BaseModel):
     updated_at: AwareDatetime
 
 
+class ContinueTaskPreflightRequest(BaseModel):
+    """Select an existing human intent, not new content or execution authority."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    expected_revision: int = Field(ge=1, strict=True)
+    message_id: UUID
+    target_role: Literal[MemberRole.PLANNER, MemberRole.IMPLEMENTER, MemberRole.REVIEWER]
+
+
 class TaskPage(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 

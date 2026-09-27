@@ -4,8 +4,10 @@ import asyncio
 from pathlib import Path
 from uuid import UUID, uuid4
 
+from app.api.continuation import preflight_continuation
 from app.api.details import (
     ArtifactDetail,
+    ContinueTaskPreflight,
     HumanMessageReceipt,
     PlanPage,
     RoomMessagePage,
@@ -14,6 +16,7 @@ from app.api.details import (
 from app.api.human_messages import build_human_message, message_view
 from app.api.models import (
     CancelTaskRequest,
+    ContinueTaskPreflightRequest,
     CreateTaskRequest,
     PostHumanMessageRequest,
     TaskPage,
@@ -281,6 +284,12 @@ class PersistentTaskService:
             except ConversationRoutingError as exc:
                 raise TaskMessageInvalid("human message is not allowed in this room") from exc
             return HumanMessageReceipt(message=message_view(stored, room), task_revision=snapshot.revision)
+
+    async def preflight_continue_task(
+        self, task_id: UUID, request: ContinueTaskPreflightRequest,
+    ) -> ContinueTaskPreflight:
+        async with self._lock:
+            return preflight_continuation(self, task_id, request)
 
     async def list_room_messages(
         self, task_id: UUID, *, after_sequence: int, limit: int

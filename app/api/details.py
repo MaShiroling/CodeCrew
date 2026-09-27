@@ -7,6 +7,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field
 
 from app.storage import ArtifactMetadata, ArtifactReference
 from app.team import MemberRole, MessageType, PlanRevision, TeamRoom
+from app.team.budgets import ConversationBudgetUsage
 
 
 class RoomMessageView(BaseModel):
@@ -40,6 +41,26 @@ class HumanMessageReceipt(BaseModel):
 
     message: RoomMessageView
     task_revision: int = Field(ge=1)
+    agent_dispatched: Literal[False] = False
+
+
+class ContinueTaskPreflight(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: Literal["continuation-preflight"] = "continuation-preflight"
+    task_id: UUID
+    trace_id: UUID
+    task_revision: int = Field(ge=1)
+    runtime_revision: int = Field(ge=1)
+    message_id: UUID
+    correlation_id: UUID
+    target_role: MemberRole
+    target_member_id: UUID
+    rework_rounds: int = Field(ge=0)
+    max_rework_rounds: int = Field(ge=0)
+    budget_usage: ConversationBudgetUsage
+    checks_passed: Literal[True] = True
+    execution_ready: Literal[False] = False
     agent_dispatched: Literal[False] = False
 
 

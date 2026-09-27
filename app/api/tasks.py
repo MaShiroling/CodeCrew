@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, Header, Query, Request, status
 
 from app.api.details import (
     ArtifactDetail,
+    ContinueTaskPreflight,
     HumanMessageReceipt,
     PlanPage,
     RoomMessagePage,
@@ -14,6 +15,7 @@ from app.api.events import EventStreamResponse, stream_task_events
 from app.api.models import (
     ApiErrorResponse,
     CancelTaskRequest,
+    ContinueTaskPreflightRequest,
     CreateTaskRequest,
     PostHumanMessageRequest,
     TaskPage,
@@ -106,6 +108,14 @@ async def post_human_message(
 @router.get("/{task_id}/plans", response_model=PlanPage, responses=ERROR_RESPONSES)
 async def list_task_plans(task_id: UUID, service: TaskServiceDependency) -> PlanPage:
     return await service.list_plans(task_id)
+
+
+@router.post("/{task_id}/continue/preflight", response_model=ContinueTaskPreflight,
+             responses=ERROR_RESPONSES)
+async def preflight_continue_task(
+    task_id: UUID, request: ContinueTaskPreflightRequest, service: TaskServiceDependency,
+) -> ContinueTaskPreflight:
+    return await service.preflight_continue_task(task_id, request)
 
 
 @router.get(
