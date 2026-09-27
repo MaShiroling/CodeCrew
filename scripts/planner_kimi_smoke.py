@@ -87,7 +87,7 @@ class HandoffFixture:
     agent_names: dict[MemberRole, str]
     turns: list[AgentTurnResult] = field(default_factory=list)
 
-    async def turn(self, role: MemberRole) -> AgentTurnResult:
+    async def turn(self, role: MemberRole, *, validate_before_routing=None) -> AgentTurnResult:
         member = self.members[role]
         attempt_id = uuid4()
         self.router.trace_store.append(
@@ -116,6 +116,7 @@ class HandoffFixture:
                     if role is MemberRole.PLANNER
                     else self.handle.worktree_path
                 ),
+                validate_before_routing=validate_before_routing,
             )
         except Exception as exc:
             self.router.trace_store.append(

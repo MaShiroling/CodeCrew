@@ -38,8 +38,10 @@ def check_reviewer_evidence(
             if not candidate.is_absolute():
                 candidate = working_directory / candidate
             paths.add(candidate.resolve())
-    if not required_paths or not {path.resolve() for path in required_paths} <= paths:
+    missing = {path.resolve() for path in required_paths} - paths
+    if not required_paths or missing:
         raise WorkflowExecutionError(
-            "Reviewer did not visibly read every supplied evidence Artifact"
+            "Reviewer did not visibly read every supplied evidence Artifact "
+            f"(missing unique paths: {len(missing)})"
         )
     native_sessions.add(native_id)

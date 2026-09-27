@@ -309,6 +309,7 @@ async def test_exhaustion_acceptance_rejects_incomplete_handoff(tmp_path, monkey
 @pytest.mark.parametrize("mode,error", [
     ("extra_tool", "unapproved tool"), ("wrong_formatter", "unapproved tool"),
     ("missing_reads", "visibly read"),
+    ("missing_public_audit", "visibly read"),
 ])
 async def test_native_formatter_does_not_relax_evidence_or_tool_checks(tmp_path, mode, error):
     class UnsafeNativeReviewer(ReworkReviewerRunner):
@@ -319,6 +320,14 @@ async def test_native_formatter_does_not_relax_evidence_or_tool_checks(tmp_path,
                 formatter["message"]["content"][0]["name"] = "Bash"
             elif mode == "wrong_formatter":
                 formatter["message"]["content"][0]["input"] = {"different": True}
+            elif mode == "missing_public_audit":
+                refs = [ref for item in messages(argv[-1]) for ref in item["artifacts"]]
+                path = next(ref["path"] for ref in refs if ref["type"] == "command_audit"
+                            and "tests/test_pricing.py" in json.loads(Path(ref["path"]).read_text())["argv"])
+                process.events = [event for event in process.events if not any(
+                    call.get("name") == "Read" and call.get("input", {}).get("file_path") == path
+                    for call in event.get("message", {}).get("content", [])
+                )]
             else:
                 process.events = [process.events[0], formatter, process.events[-1]]
             return process
@@ -329,9 +338,20 @@ async def test_native_formatter_does_not_relax_evidence_or_tool_checks(tmp_path,
         reviewer=reviewer_adapter(reviewer),
     ) as fixture:
         with pytest.raises(WorkflowExecutionError, match=error):
-            await run_three_agent(fixture, reviewer_structured_output=True)
+            await run_three_agent(
+                fixture, reviewer_structured_output=True,
+                scenario="rework_exhaustion" if mode == "missing_public_audit" else "success",
+            )
         assert fixture.task.state is TaskState.REVIEWING
         assert len(reviewer.calls) == 1
+        assert fixture.task.rework_rounds == 0
+        assert fixture.runner.rooms.pending_for(fixture.members[MemberRole.REVIEWER].member_id)
+        assert not any(item.message.type in {MessageType.REVIEW_APPROVED, MessageType.REWORK_REQUEST}
+                       for item in fixture.runner.rooms.list_messages(fixture.room.room_id))
+        with fixture.store.database.connect() as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM artifacts WHERE artifact_type='review_report'"
+            ).fetchone()[0] == 0
         assert not fixture.router.trace_store.list(
             trace_id=fixture.task.trace_id, type=TraceEventType.COMPLETION_DECIDED,
         )

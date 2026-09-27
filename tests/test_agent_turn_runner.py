@@ -1,7 +1,7 @@
 import asyncio
 import json
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
@@ -107,6 +107,50 @@ def send_trigger(router, room, sender, recipient, **updates):
     }
     values.update(updates)
     return router.route(ChatMessage(**values), authenticated_sender_id=sender.member_id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reject", [True, False])
+async def test_trusted_pre_route_audit_runs_after_recording_before_outputs_or_ack(tmp_path, reject):
+    scenario = FakeAgentScenario(output={"actions": [
+        {"action": "request_review", "recipient": {"kind": "role", "role": "orchestrator"},
+         "content": "Ready for verification"},
+        {"action": "finish_turn"},
+    ]})
+    runner, router, rooms, artifacts, adapter, task, room, members = make_context(tmp_path, scenario)
+    member = members[MemberRole.IMPLEMENTER]
+    trigger = send_trigger(router, room, members[MemberRole.ORCHESTRATOR], member)
+    observed = []
+
+    def audit(candidate, parsed):
+        observed.append(candidate)
+        assert not candidate.routed_messages and not candidate.consumed_message_ids
+        assert parsed.actions[0].action.value == "request_review"
+        assert rooms.pending_for(member.member_id) == (trigger,)
+        assert len(rooms.list_messages(room.room_id)) == 1
+        raw = router.trace_store.list(trace_id=task.trace_id, type=TraceEventType.AGENT_OUTPUT_RECORDED)
+        assert len(raw) == 1
+        assert artifacts.read_json(UUID(raw[0].event.payload["artifact_id"]))["output"] == scenario.output
+        if reject:
+            raise AgentTurnError("trusted audit rejected")
+
+    async def execute():
+        return await runner.run(
+            task, room_id=room.room_id, member_id=member.member_id, agent_name=adapter.name,
+            working_directory=tmp_path, validate_before_routing=audit,
+        )
+
+    if reject:
+        with pytest.raises(AgentTurnError, match="trusted audit rejected"):
+            await execute()
+        assert rooms.pending_for(member.member_id) == (trigger,)
+        assert len(rooms.list_messages(room.room_id)) == 1
+    else:
+        result = await execute()
+        assert result.consumed_message_ids == (trigger.message.message_id,)
+        assert len(result.routed_messages) == 1
+        assert not rooms.pending_for(member.member_id)
+    assert len(observed) == len(adapter.requests) == 1
 
 
 @pytest.mark.asyncio

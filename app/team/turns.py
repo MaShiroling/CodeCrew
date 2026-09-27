@@ -2,6 +2,7 @@ import asyncio
 import hashlib
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 from uuid import UUID
 
@@ -138,6 +139,7 @@ class AgentTurnRunner:
         working_directory: Path,
         resume_native_session_id: str | None = None,
         clarification_only: bool = False,
+        validate_before_routing: Callable[[AgentTurnResult, AgentChatTurn], None] | None = None,
     ) -> AgentTurnResult:
         room = self.rooms.get_room(room_id)
         if room.task_id != task.id or room.trace_id != task.trace_id:
@@ -285,6 +287,14 @@ class AgentTurnRunner:
             )
             if len(turn.actions) != 2 or turn.actions[0].action is not ChatActionType.ASK_QUESTION or not to_planner:
                 raise AgentTurnError("clarification-only turn requires ask_question to planner then finish_turn")
+        if validate_before_routing is not None:
+            # Trusted caller audit: raw output/stream are already preserved, but
+            # no output report, room action or input ACK exists yet. No retry.
+            validate_before_routing(AgentTurnResult(
+                session=session, agent_result=result, events=events,
+                consumed_message_ids=(), routed_messages=(),
+                finish_summary=turn.actions[-1].content,
+            ), turn)
         routed = self._route_actions(task, member_id, incoming, turn)
         for item in incoming:
             self.rooms.acknowledge(item.message.message_id, recipient_id=member_id)
@@ -661,7 +671,12 @@ class AgentTurnRunner:
             MemberRole.REVIEWER: (
                 "This is the chat action protocol, not the standalone review verdict protocol. "
                 "Use Read to inspect every supplied evidence Artifact, including the latest "
-                "Plan, Git Diff, change manifest, verification report and test logs. "
+                "Plan, Git Diff, change manifest, verification report, permission reports, "
+                "EVERY command_audit execution record and test logs. "
+                "Reading stdout/stderr does NOT replace reading its command_audit record "
+                "(command, exit code and execution status). Before returning your decision, "
+                "check every unique path in the required Read checklist below; do not stop "
+                "after the first failing test. Duplicate paths require only one Read. "
                 "Compare these with the original Issue; do not trust an Agent summary. "
                 "Send approve_review or request_rework to orchestrator with artifact_content "
                 "containing issues, and OMIT artifact_ids when creating this new report. "
@@ -747,6 +762,19 @@ class AgentTurnRunner:
             # The exact same wire schema is sent to the native formatter and
             # validated locally, including the explicit report-source rule.
             schema = reviewer_turn_schema(members)
+        read_checklist = ""
+        if own_role is MemberRole.REVIEWER:
+            by_path = {}
+            for message in messages:
+                for artifact in message["artifacts"]:
+                    entry = by_path.setdefault(artifact["path"], {
+                        "path": artifact["path"], "type": artifact["type"], "artifact_ids": [],
+                    })
+                    entry["artifact_ids"].append(artifact["artifact_id"])
+            read_checklist = (
+                "Required Read checklist (all unique paths; logs do not replace command audits):\n"
+                f"{json.dumps(list(by_path.values()), ensure_ascii=False)}\n\n"
+            )
         return (
             "You are participating in a controlled CodeCrew task room. "
             "The original Issue, role permissions, verification plan, and CompletionGuard "
@@ -759,6 +787,7 @@ class AgentTurnRunner:
             "Omit unused optional fields. finish_turn has no recipient or artifact fields; "
             'example: {"action":"finish_turn","content":"Turn ended; not task success"}.\n'
             f"Role action contract: {role_protocol}\n\n"
+            f"{read_checklist}"
             f"Your team identity: {profile.display_name} ({own_role.value}).\n"
             f"Your role: {profile.role_description}\n"
             f"Behavior calibration: {profile.l0_self_description}\n"

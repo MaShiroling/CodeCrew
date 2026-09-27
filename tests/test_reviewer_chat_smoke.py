@@ -47,6 +47,12 @@ class NativeReviewerProcess:
         assert {"plan", "diff", "verification_report", "test_log", "command_audit"} <= {
             ref["type"] for ref in refs.values()
         }
+        checklist = json.loads(argv[-1].split("Required Read checklist", 1)[1].split(
+            ":\n", 1
+        )[1].split("\n\n", 1)[0])
+        assert {entry["path"] for entry in checklist} == {ref["path"] for ref in refs.values()}
+        assert len(checklist) == len({ref["path"] for ref in refs.values()})
+        assert "Reading stdout/stderr does NOT replace" in argv[-1]
         for ref in refs.values():
             Path(ref["path"]).read_bytes()
         verification = json.loads(
@@ -112,6 +118,12 @@ class NativeReviewerProcess:
         reads = list(refs.values())
         if self.mode == "missing_reads":
             reads = reads[:-1]
+        elif self.mode == "missing_public_audit":
+            # Reconstruct observed 4d6a635f failure, not a byte-exact archived response.
+            omitted = next(ref["path"] for ref in refs.values() if ref["type"] == "command_audit"
+                           and "tests/test_pricing.py" in json.loads(Path(ref["path"]).read_text())["argv"])
+            reads = [ref for ref in reads if ref["path"] != omitted]
+            assert any(ref["type"] == "test_log" for ref in reads)
         events = [{"type": "system", "subtype": "init", "session_id": native_id}]
         events.extend(
             {
@@ -212,6 +224,7 @@ async def test_reviewer_only_native_cases_use_real_evidence_and_fresh_sessions(
         ("invalid_native", ChatActionError, "structured_output"),
         ("nonzero", AgentTurnError, "failed"),
         ("missing_reads", WorkflowExecutionError, "visibly read"),
+        ("missing_public_audit", WorkflowExecutionError, "visibly read"),
         ("extra_tool", WorkflowExecutionError, "unapproved tool"),
         ("wrong_formatter", WorkflowExecutionError, "unapproved tool"),
         ("write", WorkflowExecutionError, "changed the workspace"),
@@ -230,8 +243,13 @@ async def test_reviewer_smoke_failures_do_not_retry_or_declare_success(
         assert not fixture.router.trace_store.list(
             trace_id=fixture.task.trace_id, type=TraceEventType.COMPLETION_DECIDED
         )
-        if mode in {"missing_report", "invalid_native", "nonzero"}:
-            assert fixture.runner.rooms.pending_for(fixture.members[MemberRole.REVIEWER].member_id)
+        assert fixture.runner.rooms.pending_for(fixture.members[MemberRole.REVIEWER].member_id)
+        assert not any(item.message.type.value in {"review_approved", "rework_request"}
+                       for item in fixture.runner.rooms.list_messages(fixture.room.room_id))
+        with fixture.store.database.connect() as connection:
+            assert connection.execute(
+                "SELECT COUNT(*) FROM artifacts WHERE artifact_type='review_report'"
+            ).fetchone()[0] == 0
         recorded = fixture.router.trace_store.list(
             trace_id=fixture.task.trace_id, type=TraceEventType.AGENT_OUTPUT_RECORDED
         )

@@ -27,6 +27,7 @@ from app.team import (
     WorkflowRunResult,
     WorkflowRuntime,
 )
+from app.team.actions import ChatActionType
 from app.trace import TraceActorKind, TraceEvent, TraceEventType
 from app.verification import CompletionGuard, VerificationCheckKind, VerificationStatus
 from scripts.planner_kimi_smoke import HandoffFixture, _assert_plan_read, _source_hashes
@@ -99,6 +100,31 @@ class _EvidenceTurnRunner(AgentTurnRunner):
                 kwargs["resume_native_session_id"] = None
             else:
                 raise WorkflowExecutionError("Reviewer must use an independent fresh session")
+        if member.role is MemberRole.REVIEWER:
+            required = {
+                self.fixture.store.blob_path_for(ref.artifact_id)
+                for message in pending for ref in message.message.artifacts
+            }
+
+            def validate(candidate, parsed):
+                if _source_hashes(self.fixture.handle.repository_root) != self.original:
+                    raise WorkflowExecutionError("original repository changed during an Agent turn")
+                if _snapshot(self.fixture.handle.worktree_path) != worktree_before:
+                    raise WorkflowExecutionError("read-only or clarification turn changed the workspace")
+                after = _snapshot(self.fixture.store.root)
+                if any(after.get(path) != digest for path, digest in evidence_before.items()):
+                    raise WorkflowExecutionError("Reviewer changed existing evidence")
+                check_reviewer_evidence(
+                    candidate, working_directory=self.fixture.handle.worktree_path,
+                    required_paths=required, native_sessions=self.reviewer_sessions,
+                    native_output=self.reviewer_structured_output,
+                )
+                if self.reviews < self.inject_count and not any(
+                    action.action is ChatActionType.REQUEST_REWORK for action in parsed.actions
+                ):
+                    raise WorkflowExecutionError("Reviewer did not reject the injected defect")
+
+            kwargs["validate_before_routing"] = validate
         turn = await super().run(task, **kwargs)
         if _source_hashes(self.fixture.handle.repository_root) != self.original:
             raise WorkflowExecutionError("original repository changed during an Agent turn")
@@ -118,23 +144,6 @@ class _EvidenceTurnRunner(AgentTurnRunner):
             )
         if member.role is MemberRole.REVIEWER:
             self.reviews += 1
-            after = _snapshot(self.fixture.store.root)
-            if any(after.get(path) != digest for path, digest in evidence_before.items()):
-                raise WorkflowExecutionError("Reviewer changed existing evidence")
-            required = {
-                self.fixture.store.blob_path_for(ref.artifact_id)
-                for message in pending
-                for ref in message.message.artifacts
-            }
-            check_reviewer_evidence(
-                turn, working_directory=self.fixture.handle.worktree_path,
-                required_paths=required, native_sessions=self.reviewer_sessions,
-                native_output=self.reviewer_structured_output,
-            )
-            if self.reviews <= self.inject_count and not any(
-                item.message.type is MessageType.REWORK_REQUEST for item in turn.routed_messages
-            ):
-                raise WorkflowExecutionError("Reviewer did not reject the injected defect")
         self.fixture.store.put_json(
             turn.model_dump(mode="json"),
             task_id=task.id,

@@ -28,6 +28,7 @@ from app.team import (
     WorkflowExecutionError,
     WorkflowRuntime,
 )
+from app.team.actions import ChatActionType
 from app.verification import CompletionGuard, VerificationCheckKind, VerificationStatus
 from scripts.planner_kimi_smoke import FIXED_SOURCE, HandoffFixture, handoff_fixture
 from scripts.reviewer_evidence import check_reviewer_evidence
@@ -188,22 +189,31 @@ async def run_reviewer_chat(fixture: HandoffFixture, *, scenario: str):
         worktree_before = _snapshot(fixture.handle.worktree_path)
         repository_before = _snapshot(fixture.handle.repository_root)
         evidence_before = _snapshot(fixture.store.root)
-        turn = await fixture.turn(MemberRole.REVIEWER)
-        if (
-            _snapshot(fixture.handle.worktree_path) != worktree_before
-            or _snapshot(fixture.handle.repository_root) != repository_before
+        def validate(
+            candidate, parsed, *, worktree_before=worktree_before,
+            repository_before=repository_before, evidence_before=evidence_before,
+            required=required, fixed=fixed,
         ):
-            raise WorkflowExecutionError("Reviewer changed the workspace or original repository")
-        after = _snapshot(fixture.store.root)
-        if any(after.get(path) != digest for path, digest in evidence_before.items()):
-            raise WorkflowExecutionError("Reviewer changed existing evidence")
-        check_reviewer_evidence(
-            turn,
-            working_directory=fixture.handle.worktree_path,
-            required_paths=required,
-            native_sessions=sessions,
-            native_output=True,
-        )
+            if (
+                _snapshot(fixture.handle.worktree_path) != worktree_before
+                or _snapshot(fixture.handle.repository_root) != repository_before
+            ):
+                raise WorkflowExecutionError("Reviewer changed the workspace or original repository")
+            after = _snapshot(fixture.store.root)
+            if any(after.get(path) != digest for path, digest in evidence_before.items()):
+                raise WorkflowExecutionError("Reviewer changed existing evidence")
+            check_reviewer_evidence(
+                candidate, working_directory=fixture.handle.worktree_path,
+                required_paths=required, native_sessions=sessions, native_output=True,
+            )
+            expected = ChatActionType.APPROVE_REVIEW if fixed else ChatActionType.REQUEST_REWORK
+            actions = [action for action in parsed.actions if action.action in {
+                ChatActionType.APPROVE_REVIEW, ChatActionType.REQUEST_REWORK,
+            }]
+            if len(actions) != 1 or actions[0].action is not expected:
+                raise WorkflowExecutionError("Reviewer decision contradicts the controlled evidence")
+
+        turn = await fixture.turn(MemberRole.REVIEWER, validate_before_routing=validate)
         expected_kind = MessageType.REVIEW_APPROVED if fixed else MessageType.REWORK_REQUEST
         decisions = [
             item
