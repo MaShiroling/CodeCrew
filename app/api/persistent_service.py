@@ -16,6 +16,7 @@ from app.api.details import (
 )
 from app.api.human_messages import build_human_message, message_view
 from app.api.models import (
+    CancelContinuationRequest,
     CancelTaskRequest,
     ContinueTaskPreflightRequest,
     CreateTaskRequest,
@@ -49,6 +50,7 @@ from app.storage import (
     TaskRepositoryIntegrityError,
     TaskSnapshot,
 )
+from app.storage.continuation_cancellations import ContinuationCancellationRepository
 from app.storage.continuations import (
     ContinuationConflictError,
     ContinuationIntegrityError,
@@ -132,6 +134,10 @@ class PersistentTaskService:
         self.event_loop.controller.initialize()
         self.continuations = ContinuationRepository(self.tasks.database)
         self.continuations.initialize()
+        self.continuation_cancellations = ContinuationCancellationRepository(self.continuations)
+        self.continuation_cancellations.initialize()
+        self._continuation_runs = {}
+        self.continuation_cancellation_timeout_seconds = 5.0
 
     async def create_task(self, request: CreateTaskRequest) -> TaskView:
         task = Task(issue=request.issue, repository_path=request.repository_path)
@@ -318,6 +324,45 @@ class PersistentTaskService:
                 RuntimeContextRepositoryError, sqlite3.Error) as exc:
             raise TaskServiceUnavailable("continuation ledger is unavailable") from exc
 
+    async def get_continuation_cancellation(self, task_id: UUID, request_id: UUID):
+        try:
+            receipt = self.continuation_cancellations.get(task_id=task_id, request_id=request_id)
+            if receipt is None:
+                raise TaskContinuationNotFound("cancellation not found for this continuation")
+            return receipt
+        except ContinuationNotFoundError as exc:
+            raise TaskContinuationNotFound("continuation not found for this task") from exc
+        except (ContinuationIntegrityError, sqlite3.Error) as exc:
+            raise TaskServiceUnavailable("cancellation ledger is unavailable") from exc
+
+    async def cancel_continuation(self, task_id: UUID, request_id: UUID, request: CancelContinuationRequest):
+        # No long workflow lock and no await between durable intent and cancel.
+        # Product use requires the same service/event loop that owns the turn.
+        try:
+            self.continuations.get_scoped(task_id=task_id, request_id=request_id)
+            _, room = self._task_room(task_id)
+            humans = [member for member in room.members if member.role is MemberRole.HUMAN]
+            if len(humans) != 1 or humans[0].kind is not MemberKind.HUMAN:
+                raise TaskDetailUnavailable("task room must have exactly one Human identity")
+            owned = self._continuation_runs.get(request_id)
+            if owned is not None and (owned[0].receipt.request.task_id != task_id
+                                      or owned[1].done() or owned[1].get_loop() != asyncio.get_running_loop()):
+                owned = None
+            receipt, created = self.continuation_cancellations.request(
+                task_id=task_id, request_id=request_id, human_member_id=humans[0].member_id,
+                command=request, local_claim=owned[0] if owned else None,
+            )
+            if created:
+                owned[1].cancel()
+            return receipt
+        except ContinuationNotFoundError as exc:
+            raise TaskContinuationNotFound("continuation not found for this task") from exc
+        except ContinuationConflictError as exc:
+            raise TaskStateConflict(str(exc)) from exc
+        except (ContinuationIntegrityError, TaskRepositoryIntegrityError,
+                RuntimeContextRepositoryError, ValueError, sqlite3.Error) as exc:
+            raise TaskServiceUnavailable("cancellation ledger is unavailable") from exc
+
     async def quarantine_continuation(
         self, task_id: UUID, request_id: UUID, request: QuarantineContinuationRequest,
     ) -> ContinuationQuarantineReceipt:
@@ -485,6 +530,12 @@ class PersistentTaskService:
 
     async def shutdown(self) -> None:
         """Stop local executions without declaring persisted tasks cancelled."""
+        continuations = tuple(run for _, run in self._continuation_runs.values())
+        for run in continuations:
+            if not run.cancelling():
+                run.cancel()
+        if continuations:
+            await asyncio.gather(*continuations, return_exceptions=True)
         async with self._lock:
             runs = tuple(self._runs.values())
             for run in runs:

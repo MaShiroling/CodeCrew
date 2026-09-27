@@ -4,6 +4,17 @@
 
 ## 最新验收与当前阻塞
 
+- 第 6 项第 4 子步骤 C：服务级取消与停止观察证据已完成离线验收。
+  新增 POST cancel（202）/GET cancellation，绕开长回合锁，只取消本服务/事件循环
+  实际持有的继续回合；Migration 12 持久化 Human 意图、owner 绑定和确定性观察。
+  限时 cancel+wait，匹配终态保存 Artifact；未知/超时/错配不宣称停止。持久化取消
+  阻止吞掉取消的适配器提交成功；预算、Claim 占用和完成守卫不放宽。
+  `external_process_stopped_confirmed=false`，不等于 OS 子进程树/远端请求停止认证。
+  新增 26 个离线用例，165 项定向测试及全量 `scripts/check_offline.py` pytest / Ruff
+  通过，九个在线开关关闭。context7-mcp 用于核对 FastAPI 异步 HTTP 测试方式，
+  让取消请求与运行回合处于同一事件循环。本轮未调用模型，保留既有依赖弃用警告。
+  下一步仍是显式新意图重新授权与受控状态回归，HTTP 继续执行/UI 按钮未开放。
+  详见[服务级取消](continuation-cancellation.md)。
 - 第 6 项第 4 子步骤 B：不确定 Claim 的人工隔离入口已完成离线验收。
   新增 scoped GET 和 POST quarantine；服务端绑定 Human 身份，Migration 11 与
   Human Trace 原子持久化不可覆盖的处置回执；旧 token 不能绕过隔离围栏迟到提交。

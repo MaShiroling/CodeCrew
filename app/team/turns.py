@@ -67,6 +67,13 @@ class AgentAttemptUsage:
     result: AgentResult | None = None
 
 
+@dataclass(frozen=True)
+class AgentCancellationObservation:
+    outcome: str
+    session: AgentSession | None
+    result: AgentResult | None = None
+
+
 class AgentTurnResult(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -166,7 +173,11 @@ class AgentTurnRunner:
         input_message_ids: tuple[UUID, ...] | None = None,
         acknowledge_inputs: bool = True,
         record_attempt: Callable[[AgentAttemptUsage], None] | None = None,
+        observe_cancellation: Callable[[AgentCancellationObservation], None] | None = None,
+        cancellation_timeout_seconds: float = 5.0,
     ) -> AgentTurnResult:
+        if cancellation_timeout_seconds <= 0:
+            raise ValueError("cancellation cleanup timeout must be positive")
         room = self.rooms.get_room(room_id)
         if room.task_id != task.id or room.trace_id != task.trace_id:
             raise AgentTurnError("task does not match the requested team room")
@@ -254,11 +265,30 @@ class AgentTurnRunner:
             except asyncio.CancelledError as cancellation:
                 lifecycle_error = cancellation
                 stream_outcome = "cancelled"
+                outcome = "no_session"
                 try:
                     if session is not None:
-                        await adapter.cancel(session.session_id)
+                        outcome = "cleanup_failed"
+                        async with asyncio.timeout(cancellation_timeout_seconds):
+                            await adapter.cancel(session.session_id)
+                            terminal = await adapter.wait(session.session_id)
+                        if (terminal.session_id != session.session_id or terminal.trace_id != task.trace_id):
+                            outcome = "invalid_result"
+                        else:
+                            result = terminal
+                            outcome = "adapter_terminal_result"
+                except TimeoutError:
+                    outcome = "cleanup_timed_out"
+                    cancellation.add_note("Agent cancellation cleanup timed out; stop remains unknown")
                 except Exception as cancel_error:  # noqa: BLE001 - cancellation remains authoritative.
                     cancellation.add_note(f"Agent cancellation failed: {type(cancel_error).__name__}")
+                if observe_cancellation is not None:
+                    try:
+                        observe_cancellation(AgentCancellationObservation(outcome, session, result))
+                    except Exception as observation_error:  # noqa: BLE001 - preserve cancellation.
+                        cancellation.add_note(
+                            f"Cancellation observation recording failed: {type(observation_error).__name__}"
+                        )
                 raise
             except Exception as stream_error:
                 lifecycle_error = stream_error

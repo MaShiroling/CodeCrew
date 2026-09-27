@@ -10,6 +10,7 @@ from app.api.details import (
     TaskRoomView,
 )
 from app.api.models import (
+    CancelContinuationRequest,
     CancelTaskRequest,
     ContinueTaskPreflightRequest,
     CreateTaskRequest,
@@ -19,6 +20,7 @@ from app.api.models import (
     TaskView,
 )
 from app.orchestration.models import TaskState
+from app.storage.continuation_cancellations import ContinuationCancellationReceipt
 from app.storage.continuations import ContinuationQuarantineReceipt, ContinuationStatus
 from app.trace import StoredTraceEvent
 
@@ -117,6 +119,11 @@ class TaskService(Protocol):
     ) -> ContinueTaskPreflight: ...
 
     async def get_continuation(self, task_id: UUID, request_id: UUID) -> ContinuationStatus: ...
+
+    async def cancel_continuation(self, task_id: UUID, request_id: UUID,
+                                  request: CancelContinuationRequest) -> ContinuationCancellationReceipt: ...
+
+    async def get_continuation_cancellation(self, task_id: UUID, request_id: UUID) -> ContinuationCancellationReceipt: ...
 
     async def quarantine_continuation(
         self, task_id: UUID, request_id: UUID, request: QuarantineContinuationRequest,

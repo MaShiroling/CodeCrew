@@ -40,7 +40,7 @@ from app.team.models import (
     StoredChatMessage,
 )
 from app.team.router import ConversationRouter
-from app.team.turns import AgentTurnResult, AgentTurnRunner
+from app.team.turns import AgentCancellationObservation, AgentTurnResult, AgentTurnRunner
 from app.trace import TraceActorKind, TraceEvent, TraceEventType
 from app.verification import (
     CompletionDecision,
@@ -240,6 +240,8 @@ class WorkflowDirectiveExecutor:
         target: RoomMember, input_message_ids: tuple[UUID, ...],
         validate_before_routing: Callable[[AgentTurnResult, AgentChatTurn], None] | None = None,
         acknowledge_inputs: bool = True,
+        observe_cancellation: Callable[[AgentCancellationObservation], None] | None = None,
+        cancellation_timeout_seconds: float = 5.0,
     ) -> DirectiveExecutionResult:
         """Internal bounded dispatch; never consume follow-on workflow events.
 
@@ -254,6 +256,8 @@ class WorkflowDirectiveExecutor:
             (target,), runtime, source, input_message_ids=input_message_ids,
             validate_before_routing=validate_before_routing,
             acknowledge_inputs=acknowledge_inputs,
+            observe_cancellation=observe_cancellation,
+            cancellation_timeout_seconds=cancellation_timeout_seconds,
         )
 
     async def _run_members(
@@ -265,6 +269,8 @@ class WorkflowDirectiveExecutor:
         input_message_ids: tuple[UUID, ...] | None = None,
         validate_before_routing: Callable[[AgentTurnResult, AgentChatTurn], None] | None = None,
         acknowledge_inputs: bool = True,
+        observe_cancellation: Callable[[AgentCancellationObservation], None] | None = None,
+        cancellation_timeout_seconds: float = 5.0,
     ) -> DirectiveExecutionResult:
         turns: list[AgentTurnResult] = []
         events: list[StoredChatMessage] = []
@@ -304,6 +310,8 @@ class WorkflowDirectiveExecutor:
                     input_message_ids=input_message_ids,
                     validate_before_routing=validate_before_routing,
                     acknowledge_inputs=acknowledge_inputs,
+                    observe_cancellation=observe_cancellation,
+                    cancellation_timeout_seconds=cancellation_timeout_seconds,
                     record_attempt=partial(
                         self.budget_guard.record_attempt, runtime.task, room_id=runtime.room_id,
                         member_id=member.member_id, agent_name=agent_name,

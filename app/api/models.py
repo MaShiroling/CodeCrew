@@ -4,6 +4,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from app.orchestration.models import TaskState
+from app.storage.continuation_cancellations import CancelContinuationCommand
 from app.storage.continuations import QuarantineContinuationCommand
 from app.team.models import MemberRole
 
@@ -72,6 +73,10 @@ class ContinueTaskPreflightRequest(BaseModel):
 
 class QuarantineContinuationRequest(QuarantineContinuationCommand):
     """Contain a persisted claim without asserting external-process termination."""
+
+
+class CancelContinuationRequest(CancelContinuationCommand):
+    """Request cancellation of a locally owned turn, never release its claim."""
 
 
 class TaskPage(BaseModel):

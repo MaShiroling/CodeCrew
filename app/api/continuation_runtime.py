@@ -15,6 +15,7 @@ from app.api.models import ContinueTaskPreflightRequest
 from app.api.service import TaskDetailUnavailable, TaskServiceUnavailable, TaskStateConflict
 from app.recovery import EvidenceRecoveryService, RecoveredEvidence
 from app.storage import ArtifactReference, ArtifactType
+from app.storage.continuation_cancellations import CancellationObservation
 from app.storage.continuations import (
     ContinuationConflictError,
     ContinuationIntent,
@@ -253,14 +254,32 @@ class HumanContinuationKernel:
             claim = repository.claim(registered.receipt.request.request_id)
             if claim is None:
                 return self._replay(repository.get(registered.receipt.request.request_id).receipt)
+            operation_id = claim.receipt.request.request_id
+            service._continuation_runs[operation_id] = (claim, asyncio.current_task())
+            primary_error = None
             try:
                 return await self._run_claimed(prepared, claim)
             except asyncio.CancelledError as exc:
+                primary_error = exc
                 self._pause_after_error(claim, "cancelled", exc)
                 raise
             except Exception as exc:
+                primary_error = exc
                 self._pause_after_error(claim, "execution_failed", exc)
                 raise
+            finally:
+                service._continuation_runs.pop(operation_id, None)
+                try:
+                    # Cancellation can arrive while waiting for registry/inputs,
+                    # before an adapter session exists or its observer is entered.
+                    service.continuation_cancellations.observe(
+                        claim, CancellationObservation(outcome="no_observation"),
+                    )
+                except Exception as diagnostic_error:
+                    if primary_error is not None:
+                        primary_error.add_note(f"Cancellation finalization failed: {type(diagnostic_error).__name__}")
+                    else:
+                        raise
 
     async def _run_claimed(self, prepared, claim) -> ContinuationTurn:
         service = self.service
@@ -301,7 +320,11 @@ class HumanContinuationKernel:
             input_message_ids=input_ids,
             validate_before_routing=self._historical_evidence_only,
             acknowledge_inputs=False,
+            observe_cancellation=lambda observation: self._record_cancellation(claim, observation),
+            cancellation_timeout_seconds=service.continuation_cancellation_timeout_seconds,
         )
+        if service.continuation_cancellations.get(task_id=task_id, request_id=claim.receipt.request.request_id) is not None:
+            raise asyncio.CancelledError("persisted continuation cancellation forbids final commit")
         if result.agent_turns:
             turn = result.agent_turns[0]
             receipt = service.continuations.finish(
@@ -328,6 +351,33 @@ class HumanContinuationKernel:
             error.add_note(
                 f"continuation pause recording failed: {type(diagnostic_error).__name__}"
             )
+
+    def _record_cancellation(self, claim, observation):
+        service = self.service
+        intent = claim.receipt.request
+        if service.continuation_cancellations.get(task_id=intent.task_id, request_id=intent.request_id) is None:
+            return
+        reference = None
+        if observation.result is not None:
+            result = observation.result
+            session = observation.session
+            if (session is None or session.task_id != intent.task_id or session.trace_id != intent.trace_id
+                    or session.agent_name != intent.agent_name or session.role != intent.target_role
+                    or result.session_id != session.session_id or result.trace_id != intent.trace_id):
+                raise AgentTurnError("cancellation result does not match owned session")
+            artifact = service.router.artifacts.put_json(
+                result.model_dump(mode="json"), task_id=intent.task_id, trace_id=intent.trace_id,
+                type=ArtifactType.GENERIC, created_by="cancellation-observer",
+                filename=f"cancellation-result-{intent.request_id}.json",
+            )
+            reference = ArtifactReference.from_metadata(artifact, summary="Adapter terminal result after cancellation; not OS tree-stop proof")
+        service.continuation_cancellations.observe(claim, CancellationObservation(
+            outcome=observation.outcome,
+            session_id=observation.session.session_id if observation.session else None,
+            result_artifact=reference,
+            exit_reason=observation.result.reason if observation.result else None,
+            exit_code=observation.result.exit_code if observation.result else None,
+        ))
 
     @staticmethod
     def _historical_evidence_only(candidate, turn) -> None:

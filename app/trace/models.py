@@ -27,6 +27,8 @@ class TraceEventType(str, Enum):
     CONTINUATION_SUCCEEDED = "continuation_succeeded"
     CONTINUATION_PAUSED = "continuation_paused"
     CONTINUATION_QUARANTINED = "continuation_quarantined"
+    CONTINUATION_CANCEL_REQUESTED = "continuation_cancel_requested"
+    CONTINUATION_CANCEL_OBSERVED = "continuation_cancel_observed"
     SYSTEM_ERROR = "system_error"
 
 

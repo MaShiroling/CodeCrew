@@ -424,6 +424,14 @@ class ContinuationRepository:
         """
         with self.database.transaction() as connection:
             record = self._owned(connection, claim)
+            # Migration 12 is installed by the service; older standalone
+            # repositories remain usable. A durable cancel fences success even
+            # if an adapter swallowed coroutine cancellation.
+            if connection.execute("SELECT name FROM sqlite_master WHERE name='continuation_cancellations'").fetchone() is not None and connection.execute(
+                "SELECT request_id FROM continuation_cancellations WHERE request_id=?",
+                (str(record.receipt.request.request_id),),
+            ).fetchone() is not None:
+                raise ContinuationConflictError("continuation cancellation requested; successful commit forbidden")
             intent = record.receipt.request
             persisted = self._validate_current(connection, intent)
             RuntimeContextRepository._validate_immutable_fields(persisted, context)
