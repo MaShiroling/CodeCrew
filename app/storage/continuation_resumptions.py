@@ -100,7 +100,8 @@ class ContinuationResumptionRepository:
             return self._bound(connection, grant, row) if row is not None else None
 
     def consume(self, *, task_id: UUID, authorization_id: UUID,
-                references: tuple[ArtifactReference, ...], validate_budget: Callable[[], None]) -> ClaimedResumption:
+                references: tuple[ArtifactReference, ...], validate_budget: Callable[[], None],
+                http_command_sha256: str | None = None) -> ClaimedResumption:
         """CAS grant + Task/Runtime + fresh claim + trace in one transaction.
 
         References and budget checks are supplied by the trusted preparation
@@ -184,6 +185,8 @@ class ContinuationResumptionRepository:
             pending = ContinuationRecord(receipt=ContinuationReceipt(request=restored_intent, state=ContinuationState.PENDING))
             self.claims._trace(connection, pending, TraceEventType.CONTINUATION_REQUESTED)
             self.claims._trace(connection, claim, TraceEventType.CONTINUATION_CLAIMED)
+            if http_command_sha256 is not None:
+                self.claims.traces.append_in_transaction(connection, self.claims._http_event(claim, http_command_sha256))
             self.claims.traces.append_in_transaction(connection, TraceEvent(
                 task_id=task_id, trace_id=intent.trace_id, type=TraceEventType.CONTINUATION_RESUMED,
                 actor_kind=TraceActorKind.DETERMINISTIC, actor_id="controlled_resumption",

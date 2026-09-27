@@ -247,7 +247,7 @@ async def test_handoff_message_budget_is_checked_before_writes(paused):
 
 
 @pytest.mark.asyncio
-async def test_local_parallel_attempts_only_start_one_turn_and_http_stays_absent(paused):
+async def test_local_parallel_attempts_only_start_one_turn_and_http_requires_explicit_key(paused):
     service, view, agents = paused
     kernel, request = await intent(paused)
     outcomes = await asyncio.gather(*(kernel.run_single(view.task_id, request) for _ in range(2)), return_exceptions=True)
@@ -255,7 +255,9 @@ async def test_local_parallel_attempts_only_start_one_turn_and_http_stays_absent
     assert outcomes[0].receipt == outcomes[1].receipt
     assert [len(a.requests) for a in agents] == [2, 1, 1]
     client = TestClient(create_app(task_service=service))
-    assert client.post(f"/api/v1/tasks/{view.task_id}/continue", json=request.model_dump(mode="json")).status_code == 404
+    # The HTTP contract now exists, but preflight alone is not executable:
+    # an explicit idempotency key is required.
+    assert client.post(f"/api/v1/tasks/{view.task_id}/continue", json=request.model_dump(mode="json")).status_code == 422
 
 
 @pytest.mark.asyncio

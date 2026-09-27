@@ -18,6 +18,7 @@ from app.api.models import (
     CancelContinuationRequest,
     CancelTaskRequest,
     ContinueTaskPreflightRequest,
+    ContinueTaskRequest,
     CreateTaskRequest,
     PostHumanMessageRequest,
     QuarantineContinuationRequest,
@@ -122,6 +123,17 @@ async def preflight_continue_task(
     task_id: UUID, request: ContinueTaskPreflightRequest, service: TaskServiceDependency,
 ) -> ContinueTaskPreflight:
     return await service.preflight_continue_task(task_id, request)
+
+
+@router.post("/{task_id}/continue", response_model=ContinuationStatus,
+             status_code=status.HTTP_202_ACCEPTED, responses=ERROR_RESPONSES)
+async def continue_task(
+    task_id: UUID, request: ContinueTaskRequest, service: TaskServiceDependency,
+) -> ContinuationStatus:
+    method = getattr(service, "continue_task", None)
+    if not callable(method):
+        raise TaskServiceUnavailable("continuation execution is not configured")
+    return await method(task_id, request)
 
 
 @router.get("/{task_id}/continuations/{request_id}", response_model=ContinuationStatus,

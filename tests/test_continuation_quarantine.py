@@ -429,7 +429,7 @@ async def test_different_decisions_racing_cannot_both_be_accepted(paused):
     assert sum(isinstance(outcome, ContinuationConflictError) for outcome in outcomes) == 2
 
 
-def test_openapi_exposes_only_containment_not_execution_authority():
+def test_openapi_keeps_containment_separate_from_execution_authority():
     schema = create_app().openapi()
     schemas = schema["components"]["schemas"]
     properties = schemas["QuarantineContinuationRequest"]["properties"]
@@ -439,7 +439,7 @@ def test_openapi_exposes_only_containment_not_execution_authority():
     path = "/api/v1/tasks/{task_id}/continuations/{request_id}"
     assert "get" in schema["paths"][path]
     assert schema["paths"][path + "/quarantine"]["post"]["responses"]["200"]
-    assert "/api/v1/tasks/{task_id}/continue" not in schema["paths"]
+    assert "202" in schema["paths"]["/api/v1/tasks/{task_id}/continue"]["post"]["responses"]
 
 
 def test_unconfigured_quarantine_is_unavailable():

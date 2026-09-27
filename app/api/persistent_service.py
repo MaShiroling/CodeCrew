@@ -20,6 +20,7 @@ from app.api.models import (
     CancelContinuationRequest,
     CancelTaskRequest,
     ContinueTaskPreflightRequest,
+    ContinueTaskRequest,
     CreateTaskRequest,
     PostHumanMessageRequest,
     QuarantineContinuationRequest,
@@ -146,6 +147,7 @@ class PersistentTaskService:
         self.continuation_resumptions = ContinuationResumptionRepository(self.continuation_authorizations)
         self.continuation_resumptions.initialize()
         self._continuation_runs = {}
+        self._continuation_accepting = True
         self.continuation_cancellation_timeout_seconds = 5.0
 
     async def create_task(self, request: CreateTaskRequest) -> TaskView:
@@ -221,7 +223,17 @@ class PersistentTaskService:
 
     async def _run(self, runtime: WorkflowRuntime, issue: StoredChatMessage) -> None:
         try:
-            await self.event_loop.run(runtime, (issue,))
+            result = await self.event_loop.run(runtime, (issue,))
+            if getattr(result, "paused", False) and not runtime.task.is_terminal:
+                previous = runtime.task.state
+                runtime.task.transition_to(TaskState.NEEDS_HUMAN)
+                self.router.trace_store.append(TraceEvent(
+                    task_id=runtime.task.id, trace_id=runtime.task.trace_id,
+                    type=TraceEventType.TASK_STATE_CHANGED,
+                    actor_kind=TraceActorKind.DETERMINISTIC, actor_id="task_service",
+                    idempotency_key=f"task-human-wait:{runtime.task.id}",
+                    payload={"from": previous.value, "to": "needs_human", "reason": "workflow_paused"},
+                ))
             snapshot = self.tasks.get(runtime.task.id)
             if runtime.task != snapshot.task:
                 self.tasks.save(runtime.task, expected_revision=snapshot.revision)
@@ -300,7 +312,9 @@ class PersistentTaskService:
             snapshot = self.tasks.get(task_id)
             if snapshot.revision != request.expected_revision:
                 raise TaskStateConflict("task revision changed")
-            if task_id in self._runs or task_id in self._cancelling:
+            if (task_id in self._runs or task_id in self._cancelling
+                    or any(claim.receipt.request.task_id == task_id and not worker.done()
+                           for claim, worker in self._continuation_runs.values())):
                 raise TaskStateConflict("task execution or cancellation is still active")
             if task.state is not TaskState.NEEDS_HUMAN or room.status is not RoomStatus.ACTIVE:
                 raise TaskStateConflict("human messages require a paused needs_human task and active room")
@@ -320,6 +334,25 @@ class PersistentTaskService:
     ) -> ContinueTaskPreflight:
         async with self._lock:
             return preflight_continuation(self, task_id, request)
+
+    async def continue_task(self, task_id: UUID, request: ContinueTaskRequest) -> ContinuationStatus:
+        from app.agents.registry import AgentRegistryError
+        from app.api.continuation_execution import ContinuationExecutionCoordinator
+        from app.recovery import EvidenceRecoveryError
+
+        try:
+            await self.get_task(task_id)
+            return await ContinuationExecutionCoordinator(self).accept(task_id, request)
+        except ContinuationNotFoundError as exc:
+            raise TaskContinuationNotFound("authorization not found for this task") from exc
+        except ContinuationConflictError as exc:
+            raise TaskStateConflict(str(exc)) from exc
+        except (ContinuationIntegrityError, TaskRepositoryIntegrityError, RuntimeContextRepositoryError,
+                sqlite3.Error) as exc:
+            raise TaskServiceUnavailable("continuation ledger is unavailable") from exc
+        except (ArtifactIntegrityError, ArtifactNotFoundError, WorktreeError,
+                AgentRegistryError, EvidenceRecoveryError) as exc:
+            raise TaskDetailUnavailable("continuation workspace, binding or evidence is unavailable") from exc
 
     async def get_continuation(self, task_id: UUID, request_id: UUID) -> ContinuationStatus:
         try:
@@ -513,6 +546,9 @@ class PersistentTaskService:
         self, task_id: UUID, request: CancelTaskRequest
     ) -> TaskView:
         async with self._lock:
+            if any(claim.receipt.request.task_id == task_id and not worker.done()
+                   for claim, worker in self._continuation_runs.values()):
+                raise TaskStateConflict("use scoped continuation cancellation for the active owned turn")
             try:
                 snapshot = self.tasks.get(task_id)
             except TaskNotFoundError as exc:
@@ -567,6 +603,7 @@ class PersistentTaskService:
 
     async def startup(self, recovery: WorkflowRecoveryCoordinator) -> None:
         """Classify persisted tasks and dispatch only unambiguous pending events."""
+        self._continuation_accepting = True
         entries = await recovery.scan()
         async with self._lock:
             for entry in entries:
@@ -596,6 +633,7 @@ class PersistentTaskService:
 
     async def shutdown(self) -> None:
         """Stop local executions without declaring persisted tasks cancelled."""
+        self._continuation_accepting = False
         continuations = tuple(run for _, run in self._continuation_runs.values())
         for run in continuations:
             if not run.cancelling():

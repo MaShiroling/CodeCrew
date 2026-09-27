@@ -305,7 +305,7 @@ def test_unconfigured_api_and_openapi_contract():
     properties = schema["components"]["schemas"]["AuthorizeContinuationRequest"]
     assert properties["additionalProperties"] is False
     assert "pid" not in properties["properties"]
-    assert "/api/v1/tasks/{task_id}/continue" not in schema["paths"]
+    assert "202" in schema["paths"]["/api/v1/tasks/{task_id}/continue"]["post"]["responses"]
     from fastapi.testclient import TestClient
     response = TestClient(app).post(f"/api/v1/tasks/{uuid4()}/continuations/{uuid4()}/authorize", json={
         "idempotency_key": str(uuid4()), "message_id": str(uuid4()), "target_role": "planner",

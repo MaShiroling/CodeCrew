@@ -1,5 +1,8 @@
 # 第 2 步：受控状态恢复与授权消费
 
+当前更新：第 3 步已通过[HTTP 执行协调器](continuation-execution.md)接线；本页描述
+恢复内核本身的无派发契约，历史消费回执仍不表示模型已启动。完整继续闭环待第 4 步。
+
 本步提供内部 `ControlledResumptionKernel.resume(task_id, authorization_id)`，不新增 HTTP
 执行路由，不启动 CLI，不自动推进聊天室工作流。它把第 1 步的授权快照重新核验并消费，
 原子恢复 Task/Runtime 和创建一次新的 Claim，供第 3 步执行协调器接线。

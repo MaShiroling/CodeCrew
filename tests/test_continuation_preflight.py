@@ -175,7 +175,7 @@ def test_preflight_openapi_and_missing_service():
     client = TestClient(create_app())
     schema = client.get("/openapi.json").json()
     assert "post" in schema["paths"]["/api/v1/tasks/{task_id}/continue/preflight"]
-    assert "/api/v1/tasks/{task_id}/continue" not in schema["paths"]
+    assert "202" in schema["paths"]["/api/v1/tasks/{task_id}/continue"]["post"]["responses"]
     assert client.post(f"/api/v1/tasks/{uuid4()}/continue/preflight", json={}).status_code == 503
 
 

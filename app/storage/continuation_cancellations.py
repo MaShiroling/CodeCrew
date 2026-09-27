@@ -131,9 +131,12 @@ class ContinuationCancellationRepository:
                 "SELECT * FROM room_members WHERE room_id=? AND role='human'", (str(intent.room_id),),
             ).fetchall()
             room = connection.execute("SELECT * FROM team_rooms WHERE room_id=?", (str(intent.room_id),)).fetchone()
+            expected_state = TaskState.NEEDS_HUMAN
+            if task.task.state is not TaskState.NEEDS_HUMAN:
+                expected_state = self.claims._execution_state(connection, intent, park_resumed=True)
             if (task.revision != command.expected_revision
                     or runtime.revision != command.expected_runtime_revision
-                    or task.task.state is not TaskState.NEEDS_HUMAN or task.task.trace_id != intent.trace_id
+                    or task.task.state is not expected_state or task.task.trace_id != intent.trace_id
                     or runtime.context.trace_id != intent.trace_id or runtime.context.room_id != intent.room_id
                     or room is None or (room["task_id"], room["trace_id"], room["status"]) != (
                         str(task_id), str(intent.trace_id), "active")

@@ -14,6 +14,7 @@ from app.api.models import (
     CancelContinuationRequest,
     CancelTaskRequest,
     ContinueTaskPreflightRequest,
+    ContinueTaskRequest,
     CreateTaskRequest,
     PostHumanMessageRequest,
     QuarantineContinuationRequest,
@@ -121,6 +122,8 @@ class TaskService(Protocol):
     ) -> ContinueTaskPreflight: ...
 
     async def get_continuation(self, task_id: UUID, request_id: UUID) -> ContinuationStatus: ...
+
+    async def continue_task(self, task_id: UUID, request: ContinueTaskRequest) -> ContinuationStatus: ...
 
     async def authorize_continuation(self, task_id: UUID, request_id: UUID,
                                      request: AuthorizeContinuationRequest) -> ContinuationAuthorizationReceipt: ...

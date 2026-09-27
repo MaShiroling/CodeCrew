@@ -15,7 +15,7 @@ from app.storage.runtime import RuntimeContextRepository, WorkflowRuntimeContext
 from app.storage.sqlite import Migration, SQLiteDatabase
 from app.storage.tasks import TaskRepository
 from app.trace.models import TraceActorKind, TraceEvent, TraceEventType
-from app.trace.store import TraceStore
+from app.trace.store import TraceStore, _fingerprint
 
 
 class ContinuationConflictError(RuntimeError):
@@ -388,6 +388,63 @@ class ContinuationRepository:
             self._trace(connection, record, TraceEventType.CONTINUATION_REQUESTED)
             return record
 
+    def http_replay(self, record: ContinuationRecord, command_sha256: str) -> bool:
+        """Only replay HTTP admissions, never adopt an internal/unknown owner."""
+        with self.database.connect() as connection:
+            intent = record.receipt.request
+            row = connection.execute(
+                "SELECT * FROM trace_events WHERE trace_id=? AND idempotency_key=?",
+                (str(intent.trace_id), f"continuation-http:{intent.request_id}"),
+            ).fetchone()
+            if row is None:
+                raise ContinuationConflictError("continuation was not admitted through HTTP; owner cannot be adopted")
+            try:
+                event = TraceEvent.model_validate_json(row["event_json"])
+                expected = self._http_event(record, command_sha256)
+                if event.model_dump(exclude={"event_id", "occurred_at"}) != expected.model_dump(exclude={"event_id", "occurred_at"}):
+                    raise ContinuationConflictError("HTTP continuation command conflicts with admission")
+                if (row["event_fingerprint"] != _fingerprint(event)
+                        or row["task_id"] != str(intent.task_id)
+                        or row["trace_id"] != str(intent.trace_id)
+                        or row["event_type"] != event.type.value
+                        or row["event_id"] != str(event.event_id)):
+                    raise ValueError("HTTP admission index is corrupt")
+            except (ValueError, TypeError) as exc:
+                raise ContinuationIntegrityError("HTTP admission is corrupt") from exc
+            return True
+
+    @staticmethod
+    def _http_event(record, command_sha256):
+        intent = record.receipt.request
+        return TraceEvent(
+            task_id=intent.task_id, trace_id=intent.trace_id,
+            type=TraceEventType.CONTINUATION_EXECUTION_ACCEPTED,
+            actor_kind=TraceActorKind.DETERMINISTIC, actor_id="continuation_http",
+            correlation_id=intent.correlation_id, causation_id=intent.message_id,
+            idempotency_key=f"continuation-http:{intent.request_id}",
+            payload={"request_id": str(intent.request_id), "command_sha256": command_sha256,
+                     "scope": "single-agent-continuation", "task_completion_evaluated": False},
+        )
+
+    def admit_first(self, intent: ContinuationIntent, *, command_sha256: str) -> ContinuationRecord:
+        """First Human follow-up: atomic admission/claim/trace, no bootstrap turn."""
+        intent = ContinuationIntent.model_validate_json(intent.model_dump_json())
+        with self.database.transaction() as connection:
+            if connection.execute("SELECT request_id FROM continuation_requests WHERE task_id=?",
+                                  (str(intent.task_id),)).fetchone() is not None:
+                raise ContinuationConflictError("subsequent continuation requires a new intent authorization")
+            self._validate_current(connection, intent)
+            claim = ContinuationRecord(
+                receipt=ContinuationReceipt(request=intent, state=ContinuationState.CLAIMED),
+                claim_token=uuid4(),
+            )
+            connection.execute("INSERT INTO continuation_requests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", self._columns(claim))
+            pending = ContinuationRecord(receipt=ContinuationReceipt(request=intent, state=ContinuationState.PENDING))
+            self._trace(connection, pending, TraceEventType.CONTINUATION_REQUESTED)
+            self._trace(connection, claim, TraceEventType.CONTINUATION_CLAIMED)
+            self.traces.append_in_transaction(connection, self._http_event(claim, command_sha256))
+            return claim
+
     def claim(self, request_id: UUID) -> ContinuationRecord | None:
         """CAS once; claimed/terminal requests are NEVER re-leased on timeout."""
         with self.database.transaction() as connection:
@@ -416,6 +473,7 @@ class ContinuationRepository:
         session: AgentSession,
         input_ids: tuple[UUID, ...],
         output_ids: tuple[UUID, ...],
+        park_resumed: bool = False,
     ) -> ContinuationReceipt:
         """Commit Runtime CAS + selected ACKs + receipt + trace atomically.
 
@@ -433,7 +491,8 @@ class ContinuationRepository:
             ).fetchone() is not None:
                 raise ContinuationConflictError("continuation cancellation requested; successful commit forbidden")
             intent = record.receipt.request
-            persisted = self._validate_current(connection, intent)
+            expected_state = self._execution_state(connection, intent, park_resumed=park_resumed)
+            persisted = self._validate_current(connection, intent, expected_state=expected_state)
             RuntimeContextRepository._validate_immutable_fields(persisted, context)
             if (
                 session.task_id != intent.task_id
@@ -511,11 +570,16 @@ class ContinuationRepository:
             done = record.model_copy(update={"receipt": receipt, "updated_at": utc_now()})
             self._update(connection, done, expected=record)
             self._trace(connection, done, TraceEventType.CONTINUATION_SUCCEEDED)
+            if park_resumed:
+                self._park_resumed_task(connection, intent, expected_state)
             return receipt
 
-    def pause(self, claim: ContinuationRecord, *, code: str) -> ContinuationReceipt:
+    def pause(self, claim: ContinuationRecord, *, code: str, park_resumed: bool = False) -> ContinuationReceipt:
         with self.database.transaction() as connection:
             record = self._owned(connection, claim)
+            if park_resumed:
+                expected_state = self._execution_state(connection, record.receipt.request, park_resumed=True)
+                self._park_resumed_task(connection, record.receipt.request, expected_state)
             receipt = ContinuationReceipt(
                 request=record.receipt.request,
                 state=ContinuationState.NEEDS_HUMAN,
@@ -527,7 +591,47 @@ class ContinuationRepository:
             self._trace(connection, paused, TraceEventType.CONTINUATION_PAUSED)
             return receipt
 
-    def _validate_current(self, connection, intent) -> WorkflowRuntimeContext:
+    def _execution_state(self, connection, intent, *, park_resumed):
+        if not park_resumed:
+            return TaskState.NEEDS_HUMAN
+        # Active-state commits are restricted to a bound, consumed grant; do
+        # not relax legacy pause-only claims or permit arbitrary active tasks.
+        from app.storage.continuation_authorizations import ContinuationAuthorizationRepository
+        from app.storage.continuation_resumptions import ContinuationResumptionRepository
+
+        row = connection.execute("SELECT * FROM continuation_resumptions WHERE request_id=?",
+                                 (str(intent.request_id),)).fetchone()
+        if row is None:
+            raise ContinuationConflictError("active continuation requires a consumed authorization")
+        repository = ContinuationResumptionRepository(ContinuationAuthorizationRepository(self))
+        grant = repository._grant(connection, intent.task_id, UUID(row["authorization_id"]))
+        receipt = repository._bound(connection, grant, row)
+        return receipt.resumed_state
+
+    def _park_resumed_task(self, connection, intent, expected_state):
+        snapshot = TaskRepository._snapshot_from_row(connection.execute(
+            "SELECT * FROM tasks WHERE task_id=?", (str(intent.task_id),),
+        ).fetchone())
+        if (snapshot.revision != intent.expected_revision or snapshot.task.state is not expected_state
+                or snapshot.task.trace_id != intent.trace_id):
+            raise ContinuationConflictError("resumed task changed before parking")
+        task = snapshot.task.model_copy(deep=True)
+        task.transition_to(TaskState.NEEDS_HUMAN)
+        cursor = connection.execute(
+            "UPDATE tasks SET state=?,task_json=?,revision=revision+1,updated_at=? WHERE task_id=? AND revision=?",
+            (task.state.value, task.model_dump_json(), task.updated_at.isoformat(), str(task.id), snapshot.revision),
+        )
+        if cursor.rowcount != 1:
+            raise ContinuationConflictError("resumed task parking revision changed")
+        self.traces.append_in_transaction(connection, TraceEvent(
+            task_id=task.id, trace_id=task.trace_id, type=TraceEventType.TASK_STATE_CHANGED,
+            actor_kind=TraceActorKind.DETERMINISTIC, actor_id="continuation_http",
+            correlation_id=intent.correlation_id, causation_id=intent.message_id,
+            idempotency_key=f"continuation-parked:{intent.request_id}",
+            payload={"from": expected_state.value, "to": task.state.value, "task_completion_evaluated": False},
+        ))
+
+    def _validate_current(self, connection, intent, *, expected_state=TaskState.NEEDS_HUMAN) -> WorkflowRuntimeContext:
         task_row = connection.execute(
             "SELECT * FROM tasks WHERE task_id=?", (str(intent.task_id),)
         ).fetchone()
@@ -541,7 +645,7 @@ class ContinuationRepository:
         context = RuntimeContextRepository._snapshot_from_row(context_row)
         if (
             task.revision != intent.expected_revision
-            or task.task.state is not TaskState.NEEDS_HUMAN
+            or task.task.state is not expected_state
             or task.task.trace_id != intent.trace_id
             or context.revision != intent.runtime_revision
             or context.context.trace_id != intent.trace_id

@@ -6,6 +6,16 @@
 
 ## 最新验收与当前阻塞
 
+- 统一 15 步路线第 3 步：HTTP 单回合继续 API 与服务级异步执行协调器离线已验收。
+  正常流程人工等待持久化 needs_human，首次继续不要求内部手动回合；后续消费授权。
+  请求返回 202，可查询及 scoped 取消；命令哈希/认领/授权消费同事务，重放不再次派发。
+  授权活动回合提交或失败后停回人工；不重置预算，不自动唤醒队友，不复用历史审批。
+  新增 62 项离线用例，333 项定向回归、关闭竞态专项及最终全量
+  `scripts/check_offline.py` pytest / Ruff 通过；九个在线开关关闭，未调用真实模型。
+  Seatbelt 用例经授权在沙箱外验收；保留既有依赖弃用警告，UI 人工操作尚未开放。
+  context7-mcp 用于核对 FastAPI 响应模型和同事件循环异步 HTTP 测试。
+  下一步固定为第 4 步，验收继续→新验证→独立评审→完成守卫完整 Fake 闭环。
+  详见[继续执行](continuation-execution.md)。下列旧条目的“待实现”描述为当时阶段边界。
 - 统一 15 步路线第 2 步：内部受控恢复、授权再次核验与原子消费已完成离线验收。
   Migration 14 将授权消费、Task/Runtime 修订、新 Claim 和 Trace 同事务提交；
   Planner→planning、Implementer→implementing、Reviewer→verifying，不放开通用终态回归。

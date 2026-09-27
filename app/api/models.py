@@ -72,6 +72,15 @@ class ContinueTaskPreflightRequest(BaseModel):
     target_role: Literal[MemberRole.PLANNER, MemberRole.IMPLEMENTER, MemberRole.REVIEWER]
 
 
+class ContinueTaskRequest(ContinueTaskPreflightRequest):
+    """Execute one selected turn; subsequent intents require a recorded grant."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    idempotency_key: UUID
+    authorization_id: UUID | None = None
+
+
 class QuarantineContinuationRequest(QuarantineContinuationCommand):
     """Contain a persisted claim without asserting external-process termination."""
 

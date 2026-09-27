@@ -31,6 +31,7 @@ class TraceEventType(str, Enum):
     CONTINUATION_CANCEL_OBSERVED = "continuation_cancel_observed"
     CONTINUATION_AUTHORIZED = "continuation_authorized"
     CONTINUATION_RESUMED = "continuation_resumed"
+    CONTINUATION_EXECUTION_ACCEPTED = "continuation_execution_accepted"
     SYSTEM_ERROR = "system_error"
 
 

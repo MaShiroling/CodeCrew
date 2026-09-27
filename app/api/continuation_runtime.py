@@ -1,7 +1,7 @@
 """Internal preparation/single-turn kernel; intentionally not an HTTP handler.
 
 SQLite claims prevent repeated dispatch across repository/service instances.
-Claimed attempts are never auto-retried; HTTP execution is still not exposed.
+Claimed attempts are never auto-retried; HTTP dispatch uses a separate coordinator.
 """
 
 import asyncio
@@ -281,7 +281,7 @@ class HumanContinuationKernel:
                     else:
                         raise
 
-    async def _run_claimed(self, prepared, claim) -> ContinuationTurn:
+    async def _run_claimed(self, prepared, claim, *, park_resumed=False) -> ContinuationTurn:
         service = self.service
         runtime, source = prepared.runtime, prepared.source
         task_id = runtime.task.id
@@ -333,9 +333,10 @@ class HumanContinuationKernel:
                 session=turn.session,
                 input_ids=turn.consumed_message_ids,
                 output_ids=tuple(message.message.message_id for message in turn.routed_messages),
+                park_resumed=park_resumed,
             )
         else:
-            receipt = service.continuations.pause(claim, code="budget_blocked")
+            receipt = service.continuations.pause(claim, code="budget_blocked", park_resumed=park_resumed)
         return ContinuationTurn(prepared, result, receipt.runtime_revision, receipt)
 
     @staticmethod
