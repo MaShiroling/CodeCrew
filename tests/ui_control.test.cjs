@@ -76,7 +76,8 @@ const fetch = async (url, options = {}) => {
     const cursor = Number(new URL(url, 'http://local').searchParams.get('after_sequence'));
     return response(200, { items: messages.filter((item) => item.sequence > cursor), next_after_sequence: null });
   }
-  if (url.endsWith('/control')) return response(200, control);
+  if (url.endsWith('/control')) return mode === 'control-error'
+    ? response(503, { error: { code: 'unavailable', message: 'control offline' } }) : response(200, control);
   if (url.endsWith('/continue/preflight')) {
     const body = JSON.parse(options.body);
     preflights.push(body);
@@ -131,6 +132,11 @@ const inlineStatus = (index = 0) => findClass(get('message-list').children[index
 (async () => {
   await tick();
   assert.match(get('control-budget').children[0].textContent, /回合 1\/30/);
+  assert.equal(get('overview-phase').textContent, '待人工处理');
+  assert.equal(get('overview-agent').textContent, '等待人工');
+  assert.match(get('overview-agent-note').textContent, /不证明 Agent 正在运行/);
+  assert.match(get('overview-blocking').textContent, /等待人工显式预检并继续/);
+  assert.match(get('overview-recent').textContent, /任务已创建/);
   assert.equal(get('continue-workflow').disabled, false);
   assert.equal(inlineButton().disabled, false);
   assert.equal(get('control-message').value, 'human-1');
@@ -147,13 +153,31 @@ const inlineStatus = (index = 0) => findClass(get('message-list').children[index
   vm.runInContext('state.control = null; renderMessages("task-a")', context);
   assert.equal(inlineButton().disabled, true);
   assert.match(inlineStatus().textContent, /尚未就绪/);
+  assert.match(get('overview-blocking').textContent, /正在读取控制状态/);
   await vm.runInContext('loadControl("task-a")', context);
+  control.task_revision = 2;
+  vm.runInContext('renderControl()', context);
+  assert.match(get('overview-blocking').textContent, /修订不一致/);
+  control.task_revision = 3;
+  vm.runInContext('renderControl()', context);
+  mode = 'control-error';
+  await vm.runInContext('loadControl("task-a")', context);
+  assert.match(get('overview-blocking').textContent, /旧快照不可用于判断或继续/);
+  assert.match(get('overview-recent').textContent, /上次快照/);
+  assert.equal(get('continue-workflow').disabled, true);
+  assert.equal(inlineButton().disabled, true);
+  assert.equal(get('human-composer').hidden, false);
+  mode = 'normal';
+  await vm.runInContext('loadControl("task-a")', context);
+  assert.equal(get('control-error').hidden, true);
+  assert.equal(get('human-composer').hidden, false);
   control.budget_violation = { code: 'agent_turns', actual: 30, limit: 30, detail: 'blocked' };
   await vm.runInContext('loadControl("task-a")', context);
   assert.equal(get('continue-workflow').disabled, true);
   assert.equal(inlineButton().disabled, true);
   assert.match(inlineStatus().textContent, /预算阻塞/);
   assert.match(get('control-blocker').textContent, /预算阻塞/);
+  assert.match(get('overview-blocking').textContent, /预算阻塞/);
   control.budget_violation = null;
   await vm.runInContext('loadControl("task-a")', context);
 
@@ -187,6 +211,10 @@ const inlineStatus = (index = 0) => findClass(get('message-list').children[index
   assert.equal(authorizations.length, 0);
   assert.equal(get('continue-workflow').disabled, true);
   assert.equal(get('cancel-continuation').hidden, false);
+  assert.match(get('overview-agent-note').textContent, /本次继续入口目标：白金 · Planner/);
+  assert.match(get('overview-agent-note').textContent, /不含实时执行者/);
+  assert.match(get('overview-recent').textContent, /继续请求.*已受理/);
+  assert.match(get('overview-blocking').textContent, /执行占用尚未解除/);
 
   get('control-reason').value = '用户请求取消';
   await vm.runInContext('cancelContinuation()', context);
@@ -196,6 +224,7 @@ const inlineStatus = (index = 0) => findClass(get('message-list').children[index
   assert.equal(cancellations[0].expected_claim_updated_at, '2026-09-28T01:00:00Z');
   assert.equal(get('cancel-continuation').hidden, true);
   assert.match(get('control-summary').textContent, /不证明全部外部进程停止/);
+  assert.match(get('overview-recent').textContent, /取消请求.*不证明外部进程已停止/);
 
   messages[0].pending_for_continuation = false;
   messages.push(human('human-2', 2));
@@ -222,4 +251,19 @@ const inlineStatus = (index = 0) => findClass(get('message-list').children[index
   assert.equal(authorizations[0].idempotency_key, admissions[1].idempotency_key);
   assert.equal(admissions[1].authorization_id, 'authorization-1');
   assert.equal(get('continue-workflow').disabled, true);
+  control.latest_continuation.receipt.state = 'succeeded';
+  control.latest_workflow_outcome = { request_id: 'continuation-2', success: true, reason: null };
+  task.state = 'completed';
+  control.task_state = 'completed';
+  vm.runInContext('renderControl()', context);
+  assert.equal(get('overview-phase').textContent, '已完成');
+  assert.equal(get('overview-agent').textContent, '—');
+  assert.match(get('overview-recent').textContent, /完成守卫通过/);
+  task.state = 'reviewing';
+  control.task_state = 'reviewing';
+  control.latest_continuation = null;
+  control.latest_workflow_outcome = null;
+  vm.runInContext('renderControl()', context);
+  assert.equal(get('overview-agent').textContent, '鲸鲸 · Reviewer');
+  assert.match(get('overview-blocking').textContent, /快照未报告已知阻塞/);
 })().catch((error) => { console.error(error); process.exitCode = 1; });

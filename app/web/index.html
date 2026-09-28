@@ -79,11 +79,21 @@
           <aside class="inspector-column" aria-label="任务状态与证据">
             <section id="inspector-workflow" class="panel workflow-panel" aria-labelledby="inspector-title" hidden>
               <div class="panel-head"><div><div class="section-kicker">03 / STATUS</div><h2 id="inspector-title">任务状态</h2></div></div>
+              <div class="workflow-overview" aria-label="只读工作流概览">
+                <div class="workflow-overview-grid">
+                  <div><small>当前阶段</small><strong id="overview-phase">正在读取任务…</strong></div>
+                  <div><small>阶段角色（非实时）</small><strong id="overview-agent">—</strong></div>
+                </div>
+                <p id="overview-agent-note" class="workflow-overview-note">任务状态不证明 Agent 正在运行。</p>
+                <div class="workflow-overview-row"><small>当前阻塞 / 下一动作</small><p id="overview-blocking">正在读取控制状态…</p></div>
+                <div class="workflow-overview-row"><small>最近操作</small><p id="overview-recent">暂无继续请求</p></div>
+              </div>
               <div class="meta-strip"><div><small>TRACE ID</small><code id="detail-trace"></code></div><div><small>返工轮次</small><strong id="detail-reworks"></strong></div><div><small>创建时间</small><strong id="detail-created"></strong></div></div>
               <section id="control-panel" class="control-panel" aria-labelledby="control-title">
                 <div class="control-head"><h3 id="control-title">受控工作流</h3><button id="control-refresh" type="button">刷新状态</button></div>
                 <p id="control-summary" class="control-summary">正在读取控制状态…</p>
-                <div id="control-budget" class="control-budget"></div>
+                <div class="control-budget-heading">预算用量 <span>服务端只读快照</span></div>
+                <div id="control-budget" class="control-budget" aria-label="预算用量"></div>
                 <p id="control-blocker" class="control-blocker" role="status"></p>
                 <div class="control-fields">
                   <label for="control-message">待继续的人工消息<select id="control-message"></select></label>

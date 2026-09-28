@@ -20,6 +20,10 @@ def test_task_ui_serves_local_assets_without_task_runtime() -> None:
         assert 'id="human-form"' in page.text
         assert 'id="human-reply"' in page.text
         assert 'id="control-panel"' in page.text
+        assert 'id="overview-phase"' in page.text
+        assert 'id="overview-agent"' in page.text
+        assert 'id="overview-blocking"' in page.text
+        assert 'id="overview-recent"' in page.text
         assert 'id="continue-workflow"' in page.text
         assert 'id="cancel-continuation"' in page.text
         assert 'class="topbar-left"' in page.text
