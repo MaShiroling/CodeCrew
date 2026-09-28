@@ -57,6 +57,19 @@
               <h2 id="detail-title" class="detail-title"></h2>
               <p id="detail-issue" class="detail-issue"></p>
               <div class="meta-strip"><div><small>TRACE ID</small><code id="detail-trace"></code></div><div><small>返工轮次</small><strong id="detail-reworks"></strong></div><div><small>创建时间</small><strong id="detail-created"></strong></div></div>
+              <section id="control-panel" class="control-panel" aria-labelledby="control-title">
+                <div class="control-head"><h3 id="control-title">受控工作流</h3><button id="control-refresh" type="button">刷新状态</button></div>
+                <p id="control-summary" class="control-summary">正在读取控制状态…</p>
+                <div id="control-budget" class="control-budget"></div>
+                <p id="control-blocker" class="control-blocker" role="status"></p>
+                <div class="control-fields">
+                  <label for="control-message">待继续的人工消息<select id="control-message"></select></label>
+                  <label for="control-role">目标 Agent<select id="control-role"><option value="planner">白金 · Planner</option><option value="implementer">月见 · Implementer</option></select></label>
+                  <label for="control-reason">操作原因（再次授权或取消时必填）<textarea id="control-reason" rows="2" maxlength="1000" placeholder="说明为何再次继续或取消当前回合"></textarea></label>
+                </div>
+                <div class="control-buttons"><button id="continue-workflow" type="button" disabled>预检并继续工作流</button><button id="cancel-continuation" type="button" hidden>请求取消当前回合</button></div>
+                <p id="control-error" class="control-error" role="alert" hidden></p>
+              </section>
               <div class="tabbar" role="tablist" aria-label="任务详情"><button id="tab-room" type="button" class="tab active" role="tab" aria-selected="true" data-tab="room">团队对话</button><button id="tab-plans" type="button" class="tab" role="tab" aria-selected="false" data-tab="plans">方案版本</button></div>
               <div id="room-pane" class="tab-pane">
                 <div id="room-members" class="member-row"></div>
@@ -64,7 +77,7 @@
                 <button type="button" id="load-messages" class="load-more" hidden>加载后续对话 ↓</button>
                 <section id="human-composer" class="human-composer" aria-labelledby="human-composer-title" hidden>
                   <div class="human-composer-head"><div class="section-kicker">HUMAN INPUT</div><h3 id="human-composer-title">参与团队对话</h3></div>
-                  <p class="human-composer-hint">只在待人工处理时可发送。发送消息不会自动唤醒 Agent；继续执行将在下一步接入。</p>
+                  <p class="human-composer-hint">只在待人工处理且无未解决继续占用时可发送；发送本身不会唤醒 Agent。请在上方明确预检并继续。</p>
                   <form id="human-form" novalidate>
                     <div id="human-reply" class="human-reply" hidden><span id="human-reply-summary"></span><button id="human-reply-clear" type="button" aria-label="取消关联回复">取消回复</button></div>
                     <label id="human-recipient-row" class="human-field" for="human-recipient">发送给

@@ -239,6 +239,14 @@ class ContinuationRepository:
         with self.database.connect() as connection:
             return self._get_scoped(connection, task_id, request_id)
 
+    def latest_for_task(self, task_id: UUID) -> ContinuationStatus | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT request_id FROM continuation_requests WHERE task_id=? ORDER BY rowid DESC LIMIT 1",
+                (str(task_id),),
+            ).fetchone()
+        return self.status(task_id=task_id, request_id=UUID(row["request_id"])) if row else None
+
     def status(self, *, task_id: UUID, request_id: UUID) -> ContinuationStatus:
         with self.database.transaction(immediate=False) as connection:
             record = self._get_scoped(connection, task_id, request_id)

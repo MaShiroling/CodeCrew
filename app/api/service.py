@@ -7,6 +7,7 @@ from app.api.details import (
     HumanMessageReceipt,
     PlanPage,
     RoomMessagePage,
+    TaskControlView,
     TaskRoomView,
 )
 from app.api.models import (
@@ -120,6 +121,8 @@ class TaskService(Protocol):
     async def preflight_continue_task(
         self, task_id: UUID, request: ContinueTaskPreflightRequest,
     ) -> ContinueTaskPreflight: ...
+
+    async def get_task_control(self, task_id: UUID) -> TaskControlView: ...
 
     async def get_continuation(self, task_id: UUID, request_id: UUID) -> ContinuationStatus: ...
 

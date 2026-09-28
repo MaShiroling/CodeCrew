@@ -15,7 +15,8 @@ Planner、Implementer、Reviewer 或 Orchestrator 发送补充信息；对仍投
 消息列表新增只读 `pending_for_human` 字段，由服务端真实投递状态计算；UI 仅对尚待 Human
 处理的问题显示回复入口。此字段只辅助展示，服务端仍检查任务状态、目标消息、投递状态、
 修订号和角色权限。成功发送仅表示消息已持久化，**不会启动 Agent、恢复 Task 或判成功**。
-继续/取消受控回合、预算和阻塞原因展示属于第 6 步。
+继续/取消受控回合、预算和阻塞原因展示现已在[第 6 步](ui-controlled-workflow.md)接入，
+但仍必须由用户单独明确操作。
 
 离线验证包括 `tests/ui_human.test.cjs` 的表单/关联回复、发送限制、幂等重试、冲突和
 切换任务竞态，以及 `tests/test_human_message_api.py` 的真实 SQLite 投递状态测试。

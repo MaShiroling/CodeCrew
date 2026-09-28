@@ -83,5 +83,11 @@ def message_view(stored: StoredChatMessage, room: TeamRoom) -> RoomMessageView:
             for member in room.members if member.role is MemberRole.HUMAN
             for delivery in stored.deliveries
         ),
+        pending_for_continuation=(
+            sender.role is MemberRole.HUMAN
+            and message.idempotency_key.startswith("human-api:")
+            and message.type in {MessageType.MESSAGE, MessageType.ANSWER}
+            and any(delivery.status is MessageDeliveryStatus.PENDING for delivery in stored.deliveries)
+        ),
         correlation_id=message.correlation_id, created_at=message.created_at,
     )

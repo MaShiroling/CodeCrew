@@ -9,6 +9,7 @@ from app.api.details import (
     HumanMessageReceipt,
     PlanPage,
     RoomMessagePage,
+    TaskControlView,
     TaskRoomView,
 )
 from app.api.events import EventStreamResponse, stream_task_events
@@ -124,6 +125,14 @@ async def preflight_continue_task(
     task_id: UUID, request: ContinueTaskPreflightRequest, service: TaskServiceDependency,
 ) -> ContinueTaskPreflight:
     return await service.preflight_continue_task(task_id, request)
+
+
+@router.get("/{task_id}/control", response_model=TaskControlView, responses=ERROR_RESPONSES)
+async def get_task_control(task_id: UUID, service: TaskServiceDependency) -> TaskControlView:
+    method = getattr(service, "get_task_control", None)
+    if not callable(method):
+        raise TaskServiceUnavailable("task control inspection is not configured")
+    return await method(task_id)
 
 
 @router.post("/{task_id}/continue", response_model=ContinuationStatus,

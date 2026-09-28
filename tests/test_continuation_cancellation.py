@@ -73,6 +73,9 @@ async def test_service_cancel_bypasses_turn_lock_and_preserves_scope_budget_and_
             await asyncio.wait_for(operation, timeout=2)
         observed = (await api.get(endpoint + "/cancellation")).json()
         assert observed["state"] == "observed"
+        control = (await api.get(f"/api/v1/tasks/{view.task_id}/control")).json()
+        assert control["latest_cancellation"] == observed
+        assert control["latest_continuation"]["receipt"]["state"] == "needs_human"
         evidence = observed["observation"]
         assert evidence["outcome"] == ("no_session" if during_start else "adapter_terminal_result")
         if not during_start:

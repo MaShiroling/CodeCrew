@@ -19,6 +19,9 @@ def test_task_ui_serves_local_assets_without_task_runtime() -> None:
         assert 'id="cancel-task"' in page.text
         assert 'id="human-form"' in page.text
         assert 'id="human-reply"' in page.text
+        assert 'id="control-panel"' in page.text
+        assert 'id="continue-workflow"' in page.text
+        assert 'id="cancel-continuation"' in page.text
         assert 'src="/ui/assets/app.js"' in page.text
         assert client.get("/ui").status_code == 200
 
@@ -63,5 +66,13 @@ def test_ui_human_message_and_reply_with_mock_api() -> None:
     if shutil.which("node") is None:
         pytest.skip("Node.js is not installed; browser script harness unavailable")
     script = Path(__file__).with_name("ui_human.test.cjs")
+    subprocess.run(["node", "--check", str(script)], check=True)
+    subprocess.run(["node", str(script)], check=True)
+
+
+def test_ui_controlled_workflow_with_mock_api() -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is not installed; browser script harness unavailable")
+    script = Path(__file__).with_name("ui_control.test.cjs")
     subprocess.run(["node", "--check", str(script)], check=True)
     subprocess.run(["node", str(script)], check=True)

@@ -12,6 +12,7 @@ from app.api.details import (
     HumanMessageReceipt,
     PlanPage,
     RoomMessagePage,
+    TaskControlView,
     TaskRoomView,
 )
 from app.api.human_messages import build_human_message, message_view
@@ -62,6 +63,7 @@ from app.storage.continuations import (
     ContinuationNotFoundError,
     ContinuationQuarantineReceipt,
     ContinuationRepository,
+    ContinuationState,
     ContinuationStatus,
     human_message_digest,
 )
@@ -335,6 +337,35 @@ class PersistentTaskService:
     ) -> ContinueTaskPreflight:
         async with self._lock:
             return preflight_continuation(self, task_id, request)
+
+    async def get_task_control(self, task_id: UUID) -> TaskControlView:
+        """Display evidence only; this snapshot grants no execution authority."""
+        try:
+            task, room = self._task_room(task_id)
+            task_revision = self.tasks.get(task_id).revision
+            runtime_revision = self.contexts.get(task_id).revision
+            guard = self.event_loop.executor.budget_guard
+            latest = self.continuations.latest_for_task(task_id)
+            outcome = (self.continuations.workflow_outcome(
+                task_id=task_id, request_id=latest.receipt.request.request_id,
+            ) if latest is not None and latest.receipt.scope == "controlled-workflow-continuation"
+                 and latest.receipt.state is ContinuationState.SUCCEEDED else None)
+            return TaskControlView(
+                task_id=task_id, task_state=task.state,
+                task_revision=task_revision, runtime_revision=runtime_revision,
+                rework_rounds=task.rework_rounds,
+                max_rework_rounds=self.event_loop.controller.max_rework_rounds,
+                budget_policy=guard.policy,
+                budget_usage=guard.usage(task_id, room_id=room.room_id),
+                budget_violation=guard.evaluate(task_id, room_id=room.room_id),
+                latest_continuation=latest, latest_workflow_outcome=outcome,
+                latest_cancellation=(self.continuation_cancellations.get(
+                    task_id=task_id, request_id=latest.receipt.request.request_id,
+                ) if latest is not None else None),
+            )
+        except (ContinuationIntegrityError, RuntimeContextRepositoryError,
+                TaskRepositoryIntegrityError, sqlite3.Error) as exc:
+            raise TaskServiceUnavailable("task control evidence is unavailable") from exc
 
     async def continue_task(self, task_id: UUID, request: ContinueTaskRequest, *,
                             workflow: bool = False) -> ContinuationStatus:
