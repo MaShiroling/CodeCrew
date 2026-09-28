@@ -23,6 +23,7 @@ class RoomMessageView(BaseModel):
     content: str
     artifacts: tuple[ArtifactReference, ...]
     reply_to: UUID | None
+    pending_for_human: bool
     correlation_id: UUID
     created_at: AwareDatetime
 

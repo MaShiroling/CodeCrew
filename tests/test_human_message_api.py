@@ -99,6 +99,22 @@ async def test_reply_inherits_identity_and_correlation_without_ack(paused, kind,
 
 
 @pytest.mark.asyncio
+async def test_message_view_marks_only_current_human_pending_delivery(paused):
+    service, view, room, _ = paused
+    parent = parent_message(service, view, room)
+    human = next(member for member in room.members if member.role is MemberRole.HUMAN)
+    endpoint = f"/api/v1/tasks/{view.task_id}/messages"
+    with TestClient(create_app(task_service=service)) as client:
+        before = client.get(endpoint).json()["items"]
+        target = next(message for message in before if message["message_id"] == str(parent.message.message_id))
+        assert target["pending_for_human"] is True
+        service.rooms.acknowledge(parent.message.message_id, recipient_id=human.member_id)
+        after = client.get(endpoint).json()["items"]
+        target = next(message for message in after if message["message_id"] == str(parent.message.message_id))
+        assert target["pending_for_human"] is False
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("change", ["content", "recipient", "reply"])
 async def test_changed_intent_with_same_key_conflicts(paused, change):
     service, view, room, _ = paused

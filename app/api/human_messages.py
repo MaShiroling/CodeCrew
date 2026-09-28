@@ -76,5 +76,12 @@ def message_view(stored: StoredChatMessage, room: TeamRoom) -> RoomMessageView:
         sender_id=message.sender_id, sender_name=sender.name, sender_role=sender.role,
         recipient_ids=tuple(delivery.recipient_id for delivery in stored.deliveries),
         type=message.type, content=message.content, artifacts=message.artifacts,
-        reply_to=message.reply_to, correlation_id=message.correlation_id, created_at=message.created_at,
+        reply_to=message.reply_to,
+        pending_for_human=any(
+            delivery.recipient_id == member.member_id
+            and delivery.status is MessageDeliveryStatus.PENDING
+            for member in room.members if member.role is MemberRole.HUMAN
+            for delivery in stored.deliveries
+        ),
+        correlation_id=message.correlation_id, created_at=message.created_at,
     )

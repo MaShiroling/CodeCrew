@@ -1,4 +1,4 @@
-const state = { tasks: [], nextOffset: null, selectedId: null, selectedTask: null, filter: 'all', messageCursor: 0, messageHasMore: false, requestId: 0, eventSource: null, refreshTimer: null, refreshingFor: null, refreshQueuedFor: null, creating: false, cancelling: false };
+const state = { tasks: [], nextOffset: null, selectedId: null, selectedTask: null, filter: 'all', messageCursor: 0, messageHasMore: false, messages: [], roomMembers: [], replyTarget: null, humanAttempts: new Map(), postingHuman: false, requestId: 0, eventSource: null, refreshTimer: null, refreshingFor: null, refreshQueuedFor: null, creating: false, cancelling: false };
 const $ = (id) => document.getElementById(id);
 const api = async (path, options = {}) => {
   const response = await fetch(`/api/v1${path}`, {
@@ -14,10 +14,14 @@ const api = async (path, options = {}) => {
       task_not_found: '任务不存在或已被移除',
       task_detail_unavailable: '任务详情暂不可用',
       task_artifact_not_found: '证据不存在或不属于当前任务',
+      task_message_not_found: '回复目标不在当前任务中',
+      invalid_human_message: '回复目标已失效或消息不符合要求',
+      task_message_conflict: '该消息标识已用于不同内容，请核对对话记录',
+      task_state_conflict: '任务状态或修订号已变化',
       invalid_repository: '仓库路径无效或无法创建独立工作区',
       validation_error: '输入不符合要求，请检查仓库路径和开发需求',
     };
-    throw Object.assign(new Error(knownErrors[data?.error?.code] || data?.error?.message || `HTTP ${response.status}`), { status: response.status });
+    throw Object.assign(new Error(knownErrors[data?.error?.code] || data?.error?.message || `HTTP ${response.status}`), { status: response.status, code: data?.error?.code });
   }
   return data;
 };
@@ -25,6 +29,7 @@ const time = (value) => value ? new Intl.DateTimeFormat('zh-CN', { month: '2-dig
 const short = (value) => value ? value.slice(0, 8) : '—';
 const stateNames = { completed: '已完成', failed: '失败', cancelled: '已取消', needs_human: '待人工处理', created: '已创建', planning: '规划中', implementing: '实现中', verifying: '验证中', reviewing: '评审中', rework: '返工中' };
 const terminal = new Set(['completed', 'failed', 'cancelled', 'needs_human']);
+const finishedStates = new Set(['completed', 'failed', 'cancelled']);
 const statusNode = (taskState) => {
   const span = document.createElement('span');
   span.className = `status status-${taskState}`;
@@ -42,7 +47,8 @@ const notice = (message) => { $('notice').textContent = message; $('notice').hid
 function renderTasks() {
   const list = $('task-list');
   list.replaceChildren();
-  const tasks = state.tasks.filter((task) => state.filter === 'all' || (state.filter === 'terminal') === terminal.has(task.state));
+  const tasks = state.tasks.filter((task) => state.filter === 'all'
+    || (state.filter === 'terminal') === finishedStates.has(task.state));
   $('task-count').textContent = String(state.tasks.length);
   if (!tasks.length) list.append(node('div', 'empty-state', state.tasks.length ? '此筛选下暂无任务' : '暂无任务。点击“新建任务”开始。'));
   for (const task of tasks) {
@@ -62,6 +68,7 @@ function renderTasks() {
 function showTask(task) {
   if (state.selectedTask?.task_id === task.task_id && task.revision < state.selectedTask.revision) return;
   state.selectedTask = task;
+  if (task.state !== 'needs_human') state.replyTarget = null;
   $('detail-short-id').textContent = `#${short(task.task_id).toUpperCase()}`;
   $('detail-status').replaceChildren(statusNode(task.state));
   $('detail-title').textContent = task.issue.split('\n')[0];
@@ -73,6 +80,105 @@ function showTask(task) {
   if (index !== -1) state.tasks[index] = task;
   renderTasks();
   renderCancelAction();
+  renderHumanComposer();
+  if (state.messages.length) renderMessages(task.task_id);
+}
+
+function humanError(message) {
+  $('human-error').textContent = message;
+  $('human-error').hidden = !message;
+}
+
+function humanStatus(message) {
+  $('human-status').textContent = message;
+  $('human-status').hidden = !message;
+}
+
+function renderHumanComposer() {
+  const available = state.selectedTask?.state === 'needs_human'
+    && state.roomMembers.some((member) => member.role === 'human' && member.kind === 'human');
+  $('human-composer').hidden = !available;
+  $('human-submit').disabled = state.postingHuman || !available;
+  $('human-submit').textContent = state.postingHuman ? '发送中…' : '发送人工消息';
+  $('human-reply').hidden = !state.replyTarget;
+  $('human-recipient-row').hidden = !!state.replyTarget;
+  if (state.replyTarget) $('human-reply-summary').textContent = `回复 ${state.replyTarget.sender_name}：${state.replyTarget.content.slice(0, 120)}`;
+}
+
+function selectHumanReply(message) {
+  if (state.postingHuman || state.selectedTask?.state !== 'needs_human'
+      || !message.pending_for_human || !['question', 'human_input_request'].includes(message.type)) return;
+  state.replyTarget = { message_id: message.message_id, sender_name: message.sender_name, content: message.content };
+  humanError('');
+  humanStatus('');
+  renderHumanComposer();
+  $('human-content').focus();
+}
+
+async function postHumanMessage() {
+  const task = state.selectedTask;
+  if (state.postingHuman || !task || task.task_id !== state.selectedId || task.state !== 'needs_human') return;
+  const content = $('human-content').value.trim();
+  if (!content || content.length > 16000) {
+    humanError('请填写 1～16000 字的人工消息。');
+    return;
+  }
+  const role = $('human-recipient').value;
+  if (!state.replyTarget && !['planner', 'implementer', 'reviewer', 'orchestrator'].includes(role)) {
+    humanError('请选择有效的收件角色。');
+    return;
+  }
+  const taskId = task.task_id;
+  const requestId = state.requestId;
+  const destination = state.replyTarget ? { reply_to: state.replyTarget.message_id } : { recipient_role: role };
+  const signature = JSON.stringify({ expected_revision: task.revision, content, ...destination });
+  const prior = state.humanAttempts.get(taskId);
+  const idempotencyKey = prior?.signature === signature ? prior.key : crypto.randomUUID();
+  state.humanAttempts.set(taskId, { signature, key: idempotencyKey });
+  const body = { expected_revision: task.revision, idempotency_key: idempotencyKey, content, ...destination };
+  state.postingHuman = true;
+  renderHumanComposer();
+  humanError('');
+  humanStatus('');
+  try {
+    const receipt = await api(`/tasks/${encodeURIComponent(taskId)}/messages`, {
+      method: 'POST', body: JSON.stringify(body),
+    });
+    if (receipt.agent_dispatched !== false || receipt.task_revision !== task.revision
+        || receipt.message?.sender_role !== 'human' || receipt.message.content !== content
+        || receipt.message.reply_to !== (destination.reply_to || null)) {
+      throw new Error('服务回执与本次人工消息不一致');
+    }
+    state.humanAttempts.delete(taskId);
+    if (state.selectedId !== taskId || state.requestId !== requestId) return;
+    state.messages = [...new Map([...state.messages, receipt.message].map((item) => [item.message_id, item])).values()]
+      .sort((a, b) => a.sequence - b.sequence);
+    state.replyTarget = null;
+    $('human-content').value = '';
+    renderMessages(taskId);
+    humanStatus('人工消息已保存；Agent 尚未启动。继续执行操作将在下一步接入。');
+  } catch (error) {
+    if (state.selectedId !== taskId || state.requestId !== requestId) return;
+    if (error.status === 409 && error.code !== 'task_message_conflict') {
+      try {
+        const latest = await api(`/tasks/${encodeURIComponent(taskId)}`);
+        if (state.selectedId === taskId && state.requestId === requestId) {
+          showTask(latest);
+          await loadMessages(taskId, false, requestId);
+        }
+      } catch { /* Preserve the draft and original idempotency key. */ }
+      if (state.selectedId === taskId && state.requestId === requestId) {
+        humanError('消息未确认：任务或回复目标已变化。已尝试刷新对话；请核对后再提交，不会自动重试。');
+      }
+    } else if (error.status === 404 && error.code === 'task_not_found') {
+      if (clearMissingTask(taskId)) notice('任务不存在，请刷新任务列表。');
+    } else {
+      humanError(`发送结果未确认：${error.message}。草稿已保留；请先核对对话，再决定是否重试。`);
+    }
+  } finally {
+    state.postingHuman = false;
+    renderHumanComposer();
+  }
 }
 
 function renderCancelAction() {
@@ -90,8 +196,12 @@ function clearMissingTask(taskId) {
   state.requestId += 1;
   state.selectedId = null;
   state.selectedTask = null;
+  state.messages = [];
+  state.roomMembers = [];
+  state.replyTarget = null;
   renderTasks();
   renderCancelAction();
+  renderHumanComposer();
   $('task-detail').hidden = true;
   $('empty-detail').hidden = false;
   $('empty-detail').querySelector('h2').textContent = '任务已不存在';
@@ -116,7 +226,8 @@ async function cancelTask() {
       if (terminal.has(updated.state)) {
         state.requestId += 1;
         closeStream();
-        $('live-status').textContent = '任务已结束 · 显示最终记录';
+        $('live-status').textContent = updated.state === 'needs_human'
+          ? '等待人工输入 · 可发送消息' : '任务已结束 · 显示最终记录';
       }
       notice(updated.state === 'cancelled' ? '任务已取消。' : '取消请求已处理，请检查最新任务状态。');
     } else {
@@ -133,7 +244,8 @@ async function cancelTask() {
           if (terminal.has(latest.state)) {
             state.requestId += 1;
             closeStream();
-            $('live-status').textContent = '任务已结束 · 显示最终记录';
+            $('live-status').textContent = latest.state === 'needs_human'
+              ? '等待人工输入 · 可发送消息' : '任务已结束 · 显示最终记录';
           }
           notice('任务状态已变化，已刷新详情；如仍需取消，请确认后重新操作。');
         } else {
@@ -240,7 +352,8 @@ async function refreshSelected(taskId, requestId) {
     if (messagesLoaded) notice('');
     if (terminal.has(task.state)) {
       closeStream();
-      $('live-status').textContent = '任务已结束 · 显示最终记录';
+      $('live-status').textContent = task.state === 'needs_human'
+        ? '等待人工输入 · 可发送消息' : '任务已结束 · 显示最终记录';
     }
   } catch (error) {
     if (requestId === state.requestId) notice(`实时数据刷新失败：${error.message}`);
@@ -305,6 +418,7 @@ function renderMessage(message, taskId) {
   const role = message.sender_role;
   head.append(node('span', `avatar ${['planner', 'implementer', 'reviewer'].includes(role) ? role : 'system'}`, message.sender_name.slice(0, 1)), node('span', 'message-name', message.sender_name), node('span', 'message-role', role), node('time', 'message-time', time(message.created_at)));
   item.append(head, node('span', 'message-type', message.type.replaceAll('_', ' ')), node('p', 'message-content', message.content));
+  if (message.reply_to) item.append(node('p', 'message-reply-link', `↳ 回复 #${short(message.reply_to)}`));
   if (message.artifacts.length) {
     const links = node('div', 'artifact-links');
     for (const artifact of message.artifacts) {
@@ -315,21 +429,40 @@ function renderMessage(message, taskId) {
     }
     item.append(links);
   }
+  if (state.selectedTask?.state === 'needs_human' && message.pending_for_human
+      && !state.messages.some((candidate) => candidate.sender_role === 'human' && candidate.reply_to === message.message_id)
+      && ['question', 'human_input_request'].includes(message.type)) {
+    const reply = node('button', 'reply-action', '回复这条消息');
+    reply.type = 'button';
+    reply.addEventListener('click', () => selectHumanReply(message));
+    item.append(reply);
+  }
   return item;
+}
+
+function renderMessages(taskId) {
+  const selectedParent = state.messages.find((message) => message.message_id === state.replyTarget?.message_id);
+  if (selectedParent && !selectedParent.pending_for_human) {
+    state.replyTarget = null;
+    renderHumanComposer();
+  }
+  const list = $('message-list');
+  list.replaceChildren();
+  if (!state.messages.length) list.append(node('div', 'empty-state', '暂无对话'));
+  for (const message of state.messages) list.append(renderMessage(message, taskId));
 }
 
 async function loadMessages(taskId, more = false, requestId = state.requestId) {
   try {
     const page = await api(`/tasks/${encodeURIComponent(taskId)}/messages?limit=50&after_sequence=${more ? state.messageCursor : 0}`);
     if (requestId !== state.requestId) return;
-    if (!more) $('message-list').replaceChildren();
-    const messages = more ? page.items.filter((message) => message.sequence > state.messageCursor) : page.items;
-    if (messages.length && more && $('message-list').querySelector('.empty-state')) $('message-list').replaceChildren();
-    for (const message of messages) $('message-list').append(renderMessage(message, taskId));
-    if (!page.items.length && !more) $('message-list').append(node('div', 'empty-state', '暂无对话'));
-    if (messages.length) state.messageCursor = messages.at(-1).sequence;
+    state.messages = [...new Map([...(more ? state.messages : []), ...page.items]
+      .map((message) => [message.message_id || `sequence:${message.sequence}`, message])).values()]
+      .sort((a, b) => a.sequence - b.sequence);
+    if (page.items.length) state.messageCursor = page.items.at(-1).sequence;
     state.messageHasMore = page.next_after_sequence !== null;
     $('load-messages').hidden = !state.messageHasMore;
+    renderMessages(taskId);
     return true;
   } catch (error) {
     if (requestId === state.requestId) notice(`对话读取失败：${error.message}`);
@@ -372,9 +505,18 @@ async function loadArtifact(taskId, artifactId) {
 
 async function selectTask(taskId) {
   closeStream();
+  if (state.selectedId !== taskId) {
+    $('human-content').value = '';
+    humanError('');
+    humanStatus('');
+  }
   state.selectedId = taskId;
   state.selectedTask = null;
+  state.messages = [];
+  state.roomMembers = [];
+  state.replyTarget = null;
   renderCancelAction();
+  renderHumanComposer();
   state.requestId += 1;
   const requestId = state.requestId;
   state.messageCursor = 0;
@@ -398,6 +540,8 @@ async function selectTask(taskId) {
     ]);
     if (requestId !== state.requestId) return;
     showTask(task);
+    state.roomMembers = room.room.members;
+    renderHumanComposer();
     $('room-members').replaceChildren(...room.room.members.filter((member) => member.kind === 'agent').map((member) => {
       const chip = node('span', 'member-chip');
       chip.append(node('b', '', member.name), node('span', '', member.role));
@@ -406,7 +550,8 @@ async function selectTask(taskId) {
     renderPlans(plans.items, taskId);
     notice('');
     await loadMessages(taskId, false, requestId);
-    if (terminal.has(task.state)) $('live-status').textContent = '任务已结束 · 显示最终记录';
+    if (terminal.has(task.state)) $('live-status').textContent = task.state === 'needs_human'
+      ? '等待人工输入 · 可发送消息' : '任务已结束 · 显示最终记录';
     else followTask(taskId, requestId);
   } catch (error) {
     if (requestId !== state.requestId) return;
@@ -427,6 +572,8 @@ $('create-toggle').addEventListener('click', () => setCreateOpen($('create-form'
 $('create-close').addEventListener('click', () => setCreateOpen(false));
 $('create-form').addEventListener('submit', (event) => { event.preventDefault(); void createTask(); });
 $('cancel-task').addEventListener('click', () => { void cancelTask(); });
+$('human-form').addEventListener('submit', (event) => { event.preventDefault(); void postHumanMessage(); });
+$('human-reply-clear').addEventListener('click', () => { state.replyTarget = null; humanError(''); renderHumanComposer(); });
 document.querySelectorAll('.tab').forEach((button) => button.addEventListener('click', () => {
   document.querySelectorAll('.tab').forEach((item) => {
     item.classList.toggle('active', item === button);

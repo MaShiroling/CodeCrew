@@ -58,7 +58,27 @@
               <p id="detail-issue" class="detail-issue"></p>
               <div class="meta-strip"><div><small>TRACE ID</small><code id="detail-trace"></code></div><div><small>返工轮次</small><strong id="detail-reworks"></strong></div><div><small>创建时间</small><strong id="detail-created"></strong></div></div>
               <div class="tabbar" role="tablist" aria-label="任务详情"><button id="tab-room" type="button" class="tab active" role="tab" aria-selected="true" data-tab="room">团队对话</button><button id="tab-plans" type="button" class="tab" role="tab" aria-selected="false" data-tab="plans">方案版本</button></div>
-              <div id="room-pane" class="tab-pane"><div id="room-members" class="member-row"></div><div id="message-list" class="message-list"></div><button type="button" id="load-messages" class="load-more" hidden>加载后续对话 ↓</button></div>
+              <div id="room-pane" class="tab-pane">
+                <div id="room-members" class="member-row"></div>
+                <div id="message-list" class="message-list"></div>
+                <button type="button" id="load-messages" class="load-more" hidden>加载后续对话 ↓</button>
+                <section id="human-composer" class="human-composer" aria-labelledby="human-composer-title" hidden>
+                  <div class="human-composer-head"><div class="section-kicker">HUMAN INPUT</div><h3 id="human-composer-title">参与团队对话</h3></div>
+                  <p class="human-composer-hint">只在待人工处理时可发送。发送消息不会自动唤醒 Agent；继续执行将在下一步接入。</p>
+                  <form id="human-form" novalidate>
+                    <div id="human-reply" class="human-reply" hidden><span id="human-reply-summary"></span><button id="human-reply-clear" type="button" aria-label="取消关联回复">取消回复</button></div>
+                    <label id="human-recipient-row" class="human-field" for="human-recipient">发送给
+                      <select id="human-recipient" name="recipient_role"><option value="planner">白金 · Planner</option><option value="implementer">月见 · Implementer</option><option value="reviewer">鲸鲸 · Reviewer</option><option value="orchestrator">调度器 · Orchestrator</option></select>
+                    </label>
+                    <label class="human-field" for="human-content">消息内容
+                      <textarea id="human-content" name="content" rows="4" maxlength="16000" placeholder="补充需求或回答上方的问题；不要填写密钥"></textarea>
+                    </label>
+                    <p id="human-error" class="human-error" role="alert" hidden></p>
+                    <p id="human-status" class="human-status" role="status" hidden></p>
+                    <button id="human-submit" class="human-submit" type="submit">发送人工消息</button>
+                  </form>
+                </section>
+              </div>
               <div id="plans-pane" class="tab-pane" hidden><div id="plan-list" class="plan-list"></div></div>
             </div>
           </section>
@@ -69,7 +89,7 @@
             <div id="artifact-detail" hidden><div class="artifact-meta"><span id="artifact-type" class="artifact-type"></span><span id="artifact-size"></span></div><h3 id="artifact-name"></h3><div class="artifact-hash">SHA-256 <code id="artifact-hash"></code></div><pre id="artifact-preview" class="artifact-preview"></pre><p id="artifact-unavailable" class="artifact-unavailable" hidden></p></div>
           </section>
         </div>
-        <footer class="footer">CODECREW / LOCAL-FIRST AGENT COLLABORATION <span>数据来自本地任务 API · 可创建任务</span></footer>
+        <footer class="footer">CODECREW / LOCAL-FIRST AGENT COLLABORATION <span>数据来自本地任务 API · 可创建任务及发送人工消息</span></footer>
       </div>
     </main>
   </div>
