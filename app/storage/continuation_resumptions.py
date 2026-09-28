@@ -101,7 +101,8 @@ class ContinuationResumptionRepository:
 
     def consume(self, *, task_id: UUID, authorization_id: UUID,
                 references: tuple[ArtifactReference, ...], validate_budget: Callable[[], None],
-                http_command_sha256: str | None = None) -> ClaimedResumption:
+                http_command_sha256: str | None = None,
+                http_scope: str = "single-agent-continuation") -> ClaimedResumption:
         """CAS grant + Task/Runtime + fresh claim + trace in one transaction.
 
         References and budget checks are supplied by the trusted preparation
@@ -151,7 +152,8 @@ class ContinuationResumptionRepository:
                 "runtime_revision": intent.runtime_revision + 1,
             }).model_dump_json())
             claim = ContinuationRecord(
-                receipt=ContinuationReceipt(request=restored_intent, state=ContinuationState.CLAIMED),
+                receipt=ContinuationReceipt(request=restored_intent, state=ContinuationState.CLAIMED,
+                                            scope=http_scope),
                 claim_token=uuid4(),
             )
             receipt = ContinuationResumptionReceipt(
@@ -182,11 +184,15 @@ class ContinuationResumptionRepository:
                 ))
             except sqlite3.IntegrityError as exc:
                 raise ContinuationConflictError("continuation intent or task already reserved") from exc
-            pending = ContinuationRecord(receipt=ContinuationReceipt(request=restored_intent, state=ContinuationState.PENDING))
+            pending = ContinuationRecord(receipt=ContinuationReceipt(
+                request=restored_intent, state=ContinuationState.PENDING, scope=http_scope,
+            ))
             self.claims._trace(connection, pending, TraceEventType.CONTINUATION_REQUESTED)
             self.claims._trace(connection, claim, TraceEventType.CONTINUATION_CLAIMED)
             if http_command_sha256 is not None:
-                self.claims.traces.append_in_transaction(connection, self.claims._http_event(claim, http_command_sha256))
+                self.claims.traces.append_in_transaction(connection, self.claims._http_event(
+                    claim, http_command_sha256, scope=http_scope,
+                ))
             self.claims.traces.append_in_transaction(connection, TraceEvent(
                 task_id=task_id, trace_id=intent.trace_id, type=TraceEventType.CONTINUATION_RESUMED,
                 actor_kind=TraceActorKind.DETERMINISTIC, actor_id="controlled_resumption",

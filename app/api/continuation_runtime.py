@@ -13,9 +13,11 @@ from app.api.continuation import preflight_continuation
 from app.api.details import ContinueTaskPreflight
 from app.api.models import ContinueTaskPreflightRequest
 from app.api.service import TaskDetailUnavailable, TaskServiceUnavailable, TaskStateConflict
+from app.orchestration.models import TaskState
 from app.recovery import EvidenceRecoveryService, RecoveredEvidence
 from app.storage import ArtifactReference, ArtifactType
 from app.storage.continuation_cancellations import CancellationObservation
+from app.storage.continuation_workflows import ContinuationWorkflowOutcome
 from app.storage.continuations import (
     ContinuationConflictError,
     ContinuationIntent,
@@ -282,6 +284,106 @@ class HumanContinuationKernel:
                         raise
 
     async def _run_claimed(self, prepared, claim, *, park_resumed=False) -> ContinuationTurn:
+        result = await self._execute_claimed(prepared, claim)
+        service = self.service
+        runtime = prepared.runtime
+        task_id = runtime.task.id
+        if service.continuation_cancellations.get(task_id=task_id, request_id=claim.receipt.request.request_id) is not None:
+            raise asyncio.CancelledError("persisted continuation cancellation forbids final commit")
+        if result.agent_turns:
+            turn = result.agent_turns[0]
+            receipt = service.continuations.finish(
+                claim,
+                context=runtime.to_context(),
+                session=turn.session,
+                input_ids=turn.consumed_message_ids,
+                output_ids=tuple(message.message.message_id for message in turn.routed_messages),
+                park_resumed=park_resumed,
+            )
+        else:
+            receipt = service.continuations.pause(claim, code="budget_blocked", park_resumed=park_resumed)
+        return ContinuationTurn(prepared, result, receipt.runtime_revision, receipt)
+
+    async def _run_workflow_claimed(self, prepared, claim, *, park_resumed=False) -> ContinuationTurn:
+        """Run a fresh controller chain after one explicitly selected Human reply."""
+        service = self.service
+        runtime = prepared.runtime
+        intent = claim.receipt.request
+        if intent.target_role is MemberRole.REVIEWER:
+            raise ContinuationConflictError("workflow continuation must start with Planner or Implementer")
+        if runtime.task.state is TaskState.NEEDS_HUMAN:
+            runtime.task.resume_for_continuation(
+                TaskState.PLANNING if intent.target_role is MemberRole.PLANNER else TaskState.IMPLEMENTING
+            )
+        expected = TaskState.PLANNING if intent.target_role is MemberRole.PLANNER else TaskState.IMPLEMENTING
+        if runtime.task.state is not expected:
+            raise ContinuationConflictError("resumed Task state differs from selected role")
+        first = await self._execute_claimed(prepared, claim)
+        if not first.agent_turns:
+            receipt = service.continuations.pause(claim, code="budget_blocked", park_resumed=park_resumed)
+            return ContinuationTurn(prepared, first, receipt.runtime_revision, receipt)
+        if first.paused:
+            loop_result = None
+        else:
+            loop_result = await service.event_loop.run(runtime, first.produced_events)
+        if runtime.task.state not in {TaskState.COMPLETED, TaskState.NEEDS_HUMAN}:
+            runtime.task.transition_to(TaskState.NEEDS_HUMAN)
+        recovered = EvidenceRecoveryService(
+            service.router.artifacts, service.router.trace_store,
+        ).recover(task_id=intent.task_id, trace_id=intent.trace_id)
+        with service.tasks.database.connect() as connection:
+            row = connection.execute(
+                "SELECT sequence FROM trace_events WHERE trace_id=? AND idempotency_key=?",
+                (str(intent.trace_id), f"continuation-http:{intent.request_id}"),
+            ).fetchone()
+        if row is None:
+            raise ContinuationConflictError("workflow admission trace is missing")
+        admitted_at = row["sequence"]
+        fresh_verification = recovered.verification if (
+            recovered.verification_sequence is not None
+            and recovered.verification_sequence > admitted_at
+        ) else None
+        fresh_review = recovered.review if (
+            recovered.review_sequence is not None
+            and recovered.review_sequence > admitted_at
+        ) else None
+        fresh_completion = recovered.completion if (
+            recovered.completion_sequence is not None
+            and recovered.completion_sequence > admitted_at
+        ) else None
+        if runtime.task.state is TaskState.COMPLETED and (
+            fresh_verification is None or fresh_review is None or fresh_completion is None
+            or not fresh_completion.passed or runtime.latest_completion is None
+            or runtime.latest_completion.artifact.artifact_id != fresh_completion.artifact.artifact_id
+            or runtime.latest_verification is None
+            or runtime.latest_verification.artifact.artifact_id != fresh_verification.artifact.artifact_id
+        ):
+            raise ContinuationConflictError("completed Task lacks fresh guard evidence")
+        turns = first.agent_turns + (loop_result.agent_turns if loop_result else ())
+        outcome = ContinuationWorkflowOutcome(
+            request_id=intent.request_id, task_id=intent.task_id, trace_id=intent.trace_id,
+            final_state=runtime.task.state, success=runtime.task.state is TaskState.COMPLETED,
+            completion_evaluated=fresh_completion is not None,
+            verification_artifact_id=fresh_verification.artifact.artifact_id if fresh_verification else None,
+            review_artifact_id=fresh_review.artifact.artifact_id if fresh_review else None,
+            completion_artifact_id=fresh_completion.artifact.artifact_id if fresh_completion else None,
+            agent_session_ids=tuple(turn.session.session_id for turn in turns),
+            rework_rounds=runtime.task.rework_rounds,
+            reason=(loop_result.pause_reason if loop_result and loop_result.paused else
+                    first.pause_reason if first.paused else None),
+        )
+        if service.continuation_cancellations.get(task_id=intent.task_id, request_id=intent.request_id) is not None:
+            raise asyncio.CancelledError("persisted continuation cancellation forbids workflow commit")
+        selected = first.agent_turns[0]
+        receipt = service.continuations.finish(
+            claim, context=runtime.to_context(), session=selected.session,
+            input_ids=selected.consumed_message_ids,
+            output_ids=tuple(message.message.message_id for message in selected.routed_messages),
+            park_resumed=park_resumed, workflow_outcome=outcome, final_task=runtime.task,
+        )
+        return ContinuationTurn(prepared, first, receipt.runtime_revision, receipt)
+
+    async def _execute_claimed(self, prepared, claim) -> DirectiveExecutionResult:
         service = self.service
         runtime, source = prepared.runtime, prepared.source
         task_id = runtime.task.id
@@ -323,21 +425,7 @@ class HumanContinuationKernel:
             observe_cancellation=lambda observation: self._record_cancellation(claim, observation),
             cancellation_timeout_seconds=service.continuation_cancellation_timeout_seconds,
         )
-        if service.continuation_cancellations.get(task_id=task_id, request_id=claim.receipt.request.request_id) is not None:
-            raise asyncio.CancelledError("persisted continuation cancellation forbids final commit")
-        if result.agent_turns:
-            turn = result.agent_turns[0]
-            receipt = service.continuations.finish(
-                claim,
-                context=runtime.to_context(),
-                session=turn.session,
-                input_ids=turn.consumed_message_ids,
-                output_ids=tuple(message.message.message_id for message in turn.routed_messages),
-                park_resumed=park_resumed,
-            )
-        else:
-            receipt = service.continuations.pause(claim, code="budget_blocked", park_resumed=park_resumed)
-        return ContinuationTurn(prepared, result, receipt.runtime_revision, receipt)
+        return result
 
     @staticmethod
     def _replay(receipt) -> ContinuationTurn:

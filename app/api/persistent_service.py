@@ -314,7 +314,8 @@ class PersistentTaskService:
                 raise TaskStateConflict("task revision changed")
             if (task_id in self._runs or task_id in self._cancelling
                     or any(claim.receipt.request.task_id == task_id and not worker.done()
-                           for claim, worker in self._continuation_runs.values())):
+                           for claim, worker in self._continuation_runs.values())
+                    or self.continuations.active_for_task(task_id) is not None):
                 raise TaskStateConflict("task execution or cancellation is still active")
             if task.state is not TaskState.NEEDS_HUMAN or room.status is not RoomStatus.ACTIVE:
                 raise TaskStateConflict("human messages require a paused needs_human task and active room")
@@ -335,14 +336,16 @@ class PersistentTaskService:
         async with self._lock:
             return preflight_continuation(self, task_id, request)
 
-    async def continue_task(self, task_id: UUID, request: ContinueTaskRequest) -> ContinuationStatus:
+    async def continue_task(self, task_id: UUID, request: ContinueTaskRequest, *,
+                            workflow: bool = False) -> ContinuationStatus:
         from app.agents.registry import AgentRegistryError
         from app.api.continuation_execution import ContinuationExecutionCoordinator
         from app.recovery import EvidenceRecoveryError
 
         try:
             await self.get_task(task_id)
-            return await ContinuationExecutionCoordinator(self).accept(task_id, request)
+            return await ContinuationExecutionCoordinator(self).accept(task_id, request, workflow=workflow)
+
         except ContinuationNotFoundError as exc:
             raise TaskContinuationNotFound("authorization not found for this task") from exc
         except ContinuationConflictError as exc:
@@ -365,6 +368,18 @@ class PersistentTaskService:
         except (ContinuationIntegrityError, TaskRepositoryIntegrityError,
                 RuntimeContextRepositoryError, sqlite3.Error) as exc:
             raise TaskServiceUnavailable("continuation ledger is unavailable") from exc
+
+    async def get_continuation_workflow(self, task_id: UUID, request_id: UUID):
+        try:
+            await self.get_task(task_id)
+            outcome = self.continuations.workflow_outcome(task_id=task_id, request_id=request_id)
+            if outcome is None:
+                raise TaskContinuationNotFound("workflow result is not committed")
+            return outcome
+        except ContinuationNotFoundError as exc:
+            raise TaskContinuationNotFound("continuation not found for this task") from exc
+        except (ContinuationIntegrityError, TaskRepositoryIntegrityError, sqlite3.Error) as exc:
+            raise TaskServiceUnavailable("workflow result is unavailable") from exc
 
     async def get_continuation_cancellation(self, task_id: UUID, request_id: UUID):
         try:

@@ -33,7 +33,8 @@ class ControlledResumptionKernel:
         async with service._lock:
             return await self._resume(task_id, authorization_id)
 
-    async def _resume(self, task_id, authorization_id, *, http_command_sha256=None):
+    async def _resume(self, task_id, authorization_id, *, http_command_sha256=None,
+                      http_scope="single-agent-continuation"):
         """Caller owns service._lock; HTTP admission shares the consume transaction."""
         service = self.service
         receipt = service.continuation_resumptions.get(task_id=task_id, authorization_id=authorization_id)
@@ -67,6 +68,7 @@ class ControlledResumptionKernel:
             task_id=task_id, authorization_id=authorization_id,
             references=prepared.references, validate_budget=validate_budget,
             http_command_sha256=http_command_sha256,
+            http_scope=http_scope,
         )
         if record.replayed:
             return PreparedResumption(record)

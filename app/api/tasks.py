@@ -29,6 +29,7 @@ from app.api.service import TaskService, TaskServiceUnavailable
 from app.orchestration.models import TaskState
 from app.storage.continuation_authorizations import ContinuationAuthorizationReceipt
 from app.storage.continuation_cancellations import ContinuationCancellationReceipt
+from app.storage.continuation_workflows import ContinuationWorkflowOutcome
 from app.storage.continuations import ContinuationQuarantineReceipt, ContinuationStatus
 
 router = APIRouter(prefix="/api/v1/tasks", tags=["tasks"])
@@ -134,6 +135,28 @@ async def continue_task(
     if not callable(method):
         raise TaskServiceUnavailable("continuation execution is not configured")
     return await method(task_id, request)
+
+
+@router.post("/{task_id}/continue/workflow", response_model=ContinuationStatus,
+             status_code=status.HTTP_202_ACCEPTED, responses=ERROR_RESPONSES)
+async def continue_task_workflow(
+    task_id: UUID, request: ContinueTaskRequest, service: TaskServiceDependency,
+) -> ContinuationStatus:
+    method = getattr(service, "continue_task", None)
+    if not callable(method):
+        raise TaskServiceUnavailable("continuation workflow is not configured")
+    return await method(task_id, request, workflow=True)
+
+
+@router.get("/{task_id}/continuations/{request_id}/workflow",
+            response_model=ContinuationWorkflowOutcome, responses=ERROR_RESPONSES)
+async def get_continuation_workflow(
+    task_id: UUID, request_id: UUID, service: TaskServiceDependency,
+) -> ContinuationWorkflowOutcome:
+    method = getattr(service, "get_continuation_workflow", None)
+    if not callable(method):
+        raise TaskServiceUnavailable("continuation workflow inspection is not configured")
+    return await method(task_id, request_id)
 
 
 @router.get("/{task_id}/continuations/{request_id}", response_model=ContinuationStatus,

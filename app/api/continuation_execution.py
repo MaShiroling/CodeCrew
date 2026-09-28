@@ -17,6 +17,7 @@ from app.storage.continuations import (
     ContinuationState,
     human_message_digest,
 )
+from app.team.models import MemberRole
 
 logger = logging.getLogger(__name__)
 
@@ -26,49 +27,57 @@ class ContinuationExecutionCoordinator:
         self.service = service
         self.kernel = HumanContinuationKernel(service)
 
-    async def accept(self, task_id, request):
+    async def accept(self, task_id, request, *, workflow=False):
         service = self.service
-        digest = human_message_digest(request.model_dump(mode="json"))
+        scope = "controlled-workflow-continuation" if workflow else "single-agent-continuation"
+        if workflow and request.target_role is MemberRole.REVIEWER:
+            raise TaskStateConflict("workflow continuation must begin with Planner or Implementer")
+        digest = human_message_digest(
+            {"scope": scope, "command": request.model_dump(mode="json")}
+            if workflow else request.model_dump(mode="json")
+        )
         async with service._lock:
             existing = service.continuations.get_by_key(task_id, request.idempotency_key)
             if existing is not None:
-                return self._replay(existing, digest)
+                return self._replay(existing, digest, scope=scope)
             if not service._continuation_accepting:
                 raise TaskServiceUnavailable("continuation admission is closed during shutdown")
             try:
-                prepared, claim, resumed = await self._admit(task_id, request, digest)
+                prepared, claim, resumed = await self._admit(task_id, request, digest, scope=scope)
             except (ContinuationConflictError, TaskStateConflict):
                 # Git inspection awaits: another service may atomically admit
                 # the same command meanwhile. It owns dispatch; this is replay.
                 concurrent = service.continuations.get_by_key(task_id, request.idempotency_key)
                 if concurrent is not None:
-                    return self._replay(concurrent, digest)
+                    return self._replay(concurrent, digest, scope=scope)
                 raise
             if claim is None:
                 existing = service.continuations.get_by_key(task_id, request.idempotency_key)
-                return self._replay(existing, digest)
+                return self._replay(existing, digest, scope=scope)
             prepared.runtime.latest_verification = None
             prepared.runtime.latest_completion = None
             prepared.runtime.native_session_ids.clear()
             operation_id = claim.receipt.request.request_id
             # No await between committed admission and registering local owner.
             worker = asyncio.create_task(
-                self.kernel._run_claimed(prepared, claim, park_resumed=resumed),
+                (self.kernel._run_workflow_claimed if workflow else self.kernel._run_claimed)(
+                    prepared, claim, park_resumed=resumed,
+                ),
                 name=f"codecrew-continuation-{operation_id}",
             )
             service._continuation_runs[operation_id] = (claim, worker)
             worker.add_done_callback(lambda run: self._finalize(run, claim, resumed=resumed))
             return service.continuations.status(task_id=task_id, request_id=operation_id)
 
-    def _replay(self, record, digest):
+    def _replay(self, record, digest, *, scope):
         if record is None:
             raise ContinuationConflictError("consumed authorization has no HTTP admission")
         repository = self.service.continuations
-        repository.http_replay(record, digest)
+        repository.http_replay(record, digest, scope=scope)
         intent = record.receipt.request
         return repository.status(task_id=intent.task_id, request_id=intent.request_id)
 
-    async def _admit(self, task_id, request, digest):
+    async def _admit(self, task_id, request, digest, *, scope):
         service = self.service
         if request.authorization_id is not None:
             grant = service.continuation_authorizations.get(task_id=task_id, authorization_id=request.authorization_id)
@@ -78,6 +87,7 @@ class ContinuationExecutionCoordinator:
                 raise ContinuationConflictError("HTTP command does not match its authorization")
             result = await ControlledResumptionKernel(service)._resume(
                 task_id, request.authorization_id, http_command_sha256=digest,
+                http_scope=scope,
             )
             return result.continuation, result.record.claim, True
         prepared = await self.kernel._prepare(task_id, request)
@@ -96,7 +106,7 @@ class ContinuationExecutionCoordinator:
             agent_name=prepared.runtime.agent_names[request.target_role], expected_revision=checkpoint.task_revision,
             runtime_revision=checkpoint.runtime_revision,
         )
-        return prepared, service.continuations.admit_first(intent, command_sha256=digest), False
+        return prepared, service.continuations.admit_first(intent, command_sha256=digest, scope=scope), False
 
     def _finalize(self, worker, claim, *, resumed):
         """Also runs if cancelled before coroutine entry; never release ownership."""

@@ -10,7 +10,8 @@ from uuid import UUID, uuid4
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
 
 from app.agents import AgentRole, AgentSession
-from app.orchestration.models import TaskState, utc_now
+from app.orchestration.models import Task, TaskState, utc_now
+from app.storage.continuation_workflows import ContinuationWorkflowOutcome
 from app.storage.runtime import RuntimeContextRepository, WorkflowRuntimeContext
 from app.storage.sqlite import Migration, SQLiteDatabase
 from app.storage.tasks import TaskRepository
@@ -71,7 +72,7 @@ class ContinuationReceipt(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    scope: Literal["single-agent-continuation"] = "single-agent-continuation"
+    scope: Literal["single-agent-continuation", "controlled-workflow-continuation"] = "single-agent-continuation"
     request: ContinuationIntent
     state: ContinuationState
     task_state_at_request: Literal[TaskState.NEEDS_HUMAN] = TaskState.NEEDS_HUMAN
@@ -388,8 +389,11 @@ class ContinuationRepository:
             self._trace(connection, record, TraceEventType.CONTINUATION_REQUESTED)
             return record
 
-    def http_replay(self, record: ContinuationRecord, command_sha256: str) -> bool:
+    def http_replay(self, record: ContinuationRecord, command_sha256: str, *,
+                    scope: str = "single-agent-continuation") -> bool:
         """Only replay HTTP admissions, never adopt an internal/unknown owner."""
+        if record.receipt.scope != scope:
+            raise ContinuationConflictError("HTTP continuation mode differs from admission")
         with self.database.connect() as connection:
             intent = record.receipt.request
             row = connection.execute(
@@ -400,7 +404,7 @@ class ContinuationRepository:
                 raise ContinuationConflictError("continuation was not admitted through HTTP; owner cannot be adopted")
             try:
                 event = TraceEvent.model_validate_json(row["event_json"])
-                expected = self._http_event(record, command_sha256)
+                expected = self._http_event(record, command_sha256, scope=scope)
                 if event.model_dump(exclude={"event_id", "occurred_at"}) != expected.model_dump(exclude={"event_id", "occurred_at"}):
                     raise ContinuationConflictError("HTTP continuation command conflicts with admission")
                 if (row["event_fingerprint"] != _fingerprint(event)
@@ -414,7 +418,7 @@ class ContinuationRepository:
             return True
 
     @staticmethod
-    def _http_event(record, command_sha256):
+    def _http_event(record, command_sha256, *, scope="single-agent-continuation"):
         intent = record.receipt.request
         return TraceEvent(
             task_id=intent.task_id, trace_id=intent.trace_id,
@@ -423,10 +427,11 @@ class ContinuationRepository:
             correlation_id=intent.correlation_id, causation_id=intent.message_id,
             idempotency_key=f"continuation-http:{intent.request_id}",
             payload={"request_id": str(intent.request_id), "command_sha256": command_sha256,
-                     "scope": "single-agent-continuation", "task_completion_evaluated": False},
+                     "scope": scope, "task_completion_evaluated": False},
         )
 
-    def admit_first(self, intent: ContinuationIntent, *, command_sha256: str) -> ContinuationRecord:
+    def admit_first(self, intent: ContinuationIntent, *, command_sha256: str,
+                    scope: str = "single-agent-continuation") -> ContinuationRecord:
         """First Human follow-up: atomic admission/claim/trace, no bootstrap turn."""
         intent = ContinuationIntent.model_validate_json(intent.model_dump_json())
         with self.database.transaction() as connection:
@@ -435,15 +440,44 @@ class ContinuationRepository:
                 raise ContinuationConflictError("subsequent continuation requires a new intent authorization")
             self._validate_current(connection, intent)
             claim = ContinuationRecord(
-                receipt=ContinuationReceipt(request=intent, state=ContinuationState.CLAIMED),
+                receipt=ContinuationReceipt(request=intent, state=ContinuationState.CLAIMED, scope=scope),
                 claim_token=uuid4(),
             )
             connection.execute("INSERT INTO continuation_requests VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", self._columns(claim))
-            pending = ContinuationRecord(receipt=ContinuationReceipt(request=intent, state=ContinuationState.PENDING))
+            pending = ContinuationRecord(receipt=ContinuationReceipt(request=intent, state=ContinuationState.PENDING, scope=scope))
             self._trace(connection, pending, TraceEventType.CONTINUATION_REQUESTED)
             self._trace(connection, claim, TraceEventType.CONTINUATION_CLAIMED)
-            self.traces.append_in_transaction(connection, self._http_event(claim, command_sha256))
+            self.traces.append_in_transaction(connection, self._http_event(claim, command_sha256, scope=scope))
             return claim
+
+    def workflow_outcome(self, *, task_id: UUID, request_id: UUID) -> ContinuationWorkflowOutcome | None:
+        """Read the atomic, fingerprint-checked workflow result; never infer from prose."""
+        with self.database.connect() as connection:
+            record = self._get_scoped(connection, task_id, request_id)
+            if record.receipt.state is not ContinuationState.SUCCEEDED:
+                return None
+            row = connection.execute(
+                "SELECT * FROM trace_events WHERE trace_id=? AND idempotency_key=?",
+                (str(record.receipt.request.trace_id), f"continuation-workflow:{request_id}"),
+            ).fetchone()
+            if row is None:
+                return None
+            try:
+                event = TraceEvent.model_validate_json(row["event_json"])
+                if (row["event_fingerprint"] != _fingerprint(event)
+                        or row["event_id"] != str(event.event_id)
+                        or row["task_id"] != str(task_id)
+                        or row["trace_id"] != str(event.trace_id)
+                        or row["event_type"] != event.type.value
+                        or event.type is not TraceEventType.CONTINUATION_WORKFLOW_FINISHED):
+                    raise ValueError("workflow result trace index differs")
+                outcome = ContinuationWorkflowOutcome.model_validate(event.payload["outcome"])
+                if (outcome.request_id != request_id or outcome.task_id != task_id
+                        or outcome.trace_id != record.receipt.request.trace_id):
+                    raise ValueError("workflow result belongs to another continuation")
+                return outcome
+            except (KeyError, TypeError, ValueError) as exc:
+                raise ContinuationIntegrityError("workflow result trace is corrupt") from exc
 
     def claim(self, request_id: UUID) -> ContinuationRecord | None:
         """CAS once; claimed/terminal requests are NEVER re-leased on timeout."""
@@ -474,6 +508,8 @@ class ContinuationRepository:
         input_ids: tuple[UUID, ...],
         output_ids: tuple[UUID, ...],
         park_resumed: bool = False,
+        workflow_outcome: ContinuationWorkflowOutcome | None = None,
+        final_task: Task | None = None,
     ) -> ContinuationReceipt:
         """Commit Runtime CAS + selected ACKs + receipt + trace atomically.
 
@@ -493,6 +529,36 @@ class ContinuationRepository:
             intent = record.receipt.request
             expected_state = self._execution_state(connection, intent, park_resumed=park_resumed)
             persisted = self._validate_current(connection, intent, expected_state=expected_state)
+            if (workflow_outcome is None) != (final_task is None):
+                raise ContinuationConflictError("workflow outcome and final Task must be committed together")
+            if workflow_outcome is not None:
+                if record.receipt.scope != "controlled-workflow-continuation":
+                    raise ContinuationConflictError("claim receipt is not a controlled workflow")
+                admission = connection.execute(
+                    "SELECT sequence,event_json,event_fingerprint FROM trace_events WHERE trace_id=? AND idempotency_key=?",
+                    (str(intent.trace_id), f"continuation-http:{intent.request_id}"),
+                ).fetchone()
+                admission_event = TraceEvent.model_validate_json(admission["event_json"]) if admission else None
+                if (admission_event is None
+                        or admission["event_fingerprint"] != _fingerprint(admission_event)
+                        or admission_event.payload.get("scope") != "controlled-workflow-continuation"):
+                    raise ContinuationConflictError("claim was not admitted for a controlled workflow")
+                if (workflow_outcome.request_id != intent.request_id
+                        or workflow_outcome.task_id != intent.task_id
+                        or workflow_outcome.trace_id != intent.trace_id):
+                    raise ContinuationConflictError("workflow result has different scope")
+                snapshot = TaskRepository._snapshot_from_row(connection.execute(
+                    "SELECT * FROM tasks WHERE task_id=?", (str(intent.task_id),),
+                ).fetchone())
+                TaskRepository._validate_immutable_fields(snapshot.task, final_task)
+                if (final_task.state is not workflow_outcome.final_state
+                        or final_task.rework_rounds != workflow_outcome.rework_rounds
+                        or snapshot.revision != intent.expected_revision
+                        or snapshot.task.state is not expected_state):
+                    raise ContinuationConflictError("workflow final Task differs from claimed state")
+                if workflow_outcome.success:
+                    self._validate_workflow_guard_trace(connection, intent, workflow_outcome,
+                                                        after_sequence=admission["sequence"])
             RuntimeContextRepository._validate_immutable_fields(persisted, context)
             if (
                 session.task_id != intent.task_id
@@ -559,6 +625,7 @@ class ContinuationRepository:
                     "runtime revision changed before continuation commit"
                 )
             receipt = ContinuationReceipt(
+                scope=record.receipt.scope,
                 request=intent,
                 state=ContinuationState.SUCCEEDED,
                 runtime_revision=intent.runtime_revision + 1,
@@ -570,9 +637,56 @@ class ContinuationRepository:
             done = record.model_copy(update={"receipt": receipt, "updated_at": utc_now()})
             self._update(connection, done, expected=record)
             self._trace(connection, done, TraceEventType.CONTINUATION_SUCCEEDED)
-            if park_resumed:
+            if workflow_outcome is not None:
+                cursor = connection.execute(
+                    """UPDATE tasks SET state=?,rework_rounds=?,task_json=?,revision=revision+1,updated_at=?
+                    WHERE task_id=? AND revision=?""",
+                    (final_task.state.value, final_task.rework_rounds, final_task.model_dump_json(),
+                     final_task.updated_at.isoformat(), str(intent.task_id), intent.expected_revision),
+                )
+                if cursor.rowcount != 1:
+                    raise ContinuationConflictError("workflow Task revision changed before commit")
+                self.traces.append_in_transaction(connection, TraceEvent(
+                    task_id=intent.task_id, trace_id=intent.trace_id,
+                    type=TraceEventType.CONTINUATION_WORKFLOW_FINISHED,
+                    actor_kind=TraceActorKind.DETERMINISTIC, actor_id="continuation_workflow",
+                    correlation_id=intent.correlation_id, causation_id=intent.message_id,
+                    idempotency_key=f"continuation-workflow:{intent.request_id}",
+                    payload={"outcome": workflow_outcome.model_dump(mode="json")},
+                ))
+            elif park_resumed:
                 self._park_resumed_task(connection, intent, expected_state)
             return receipt
+
+    @staticmethod
+    def _validate_workflow_guard_trace(connection, intent, outcome, *, after_sequence):
+        expected = (
+            (TraceEventType.VERIFICATION_COMPLETED, outcome.verification_artifact_id),
+            (TraceEventType.REVIEW_DECIDED, outcome.review_artifact_id),
+            (TraceEventType.COMPLETION_DECIDED, outcome.completion_artifact_id),
+        )
+        previous = after_sequence
+        for kind, artifact_id in expected:
+            row = connection.execute(
+                """SELECT * FROM trace_events WHERE trace_id=? AND event_type=? AND sequence>?
+                ORDER BY sequence DESC LIMIT 1""",
+                (str(intent.trace_id), kind.value, after_sequence),
+            ).fetchone()
+            if row is None or row["sequence"] <= previous:
+                raise ContinuationConflictError("workflow completion lacks ordered fresh evidence")
+            event = TraceEvent.model_validate_json(row["event_json"])
+            if (row["event_fingerprint"] != _fingerprint(event)
+                    or event.task_id != intent.task_id or event.trace_id != intent.trace_id):
+                raise ContinuationIntegrityError("workflow evidence trace is corrupt")
+            if kind is TraceEventType.REVIEW_DECIDED:
+                valid = (event.payload.get("message_type") == "review_approved"
+                         and str(artifact_id) in event.payload.get("artifact_ids", []))
+            else:
+                valid = (event.payload.get("artifact_id") == str(artifact_id)
+                         and event.payload.get("passed") is True)
+            if not valid:
+                raise ContinuationConflictError("workflow evidence does not prove approval and passing guard")
+            previous = row["sequence"]
 
     def pause(self, claim: ContinuationRecord, *, code: str, park_resumed: bool = False) -> ContinuationReceipt:
         with self.database.transaction() as connection:
@@ -581,6 +695,7 @@ class ContinuationRepository:
                 expected_state = self._execution_state(connection, record.receipt.request, park_resumed=True)
                 self._park_resumed_task(connection, record.receipt.request, expected_state)
             receipt = ContinuationReceipt(
+                scope=record.receipt.scope,
                 request=record.receipt.request,
                 state=ContinuationState.NEEDS_HUMAN,
                 failure_code=code,
