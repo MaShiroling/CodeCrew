@@ -1,4 +1,4 @@
-const state = { tasks: [], nextOffset: null, selectedId: null, selectedTask: null, filter: 'all', messageCursor: 0, messageHasMore: false, messages: [], roomMembers: [], replyTarget: null, humanAttempts: new Map(), postingHuman: false, control: null, controlTimer: null, controlMessageId: null, controlBusy: false, controlAttempts: new Map(), cancelAttempts: new Map(), requestId: 0, eventSource: null, refreshTimer: null, refreshingFor: null, refreshQueuedFor: null, creating: false, cancelling: false };
+const state = { tasks: [], nextOffset: null, selectedId: null, selectedTask: null, filter: 'all', messageCursor: 0, messageHasMore: false, messages: [], roomMembers: [], replyTarget: null, humanAttempts: new Map(), postingHuman: false, control: null, controlTimer: null, controlMessageId: null, controlBusy: false, controlAttempts: new Map(), cancelAttempts: new Map(), inlineRoles: new Map(), inlineReasons: new Map(), inlineFeedback: null, requestId: 0, eventSource: null, refreshTimer: null, refreshingFor: null, refreshQueuedFor: null, creating: false, cancelling: false };
 const $ = (id) => document.getElementById(id);
 const api = async (path, options = {}) => {
   const response = await fetch(`/api/v1${path}`, {
@@ -158,9 +158,11 @@ async function postHumanMessage() {
       .sort((a, b) => a.sequence - b.sequence);
     state.replyTarget = null;
     state.controlMessageId = receipt.message.message_id;
+    state.control = null;
+    state.inlineFeedback = null;
     $('human-content').value = '';
     renderMessages(taskId);
-    humanStatus('人工消息已保存；Agent 尚未启动。请在受控工作流中预检并继续。');
+    humanStatus('人工消息已保存；Agent 尚未启动。请在这条消息旁明确预检并继续。');
     void loadControl(taskId, requestId);
   } catch (error) {
     if (state.selectedId !== taskId || state.requestId !== requestId) return;
@@ -208,6 +210,32 @@ function candidateTargets(message) {
     .map((member) => member.role);
 }
 
+function continuationBlocker(message, role, reason) {
+  const control = state.control?.task_id === state.selectedId ? state.control : null;
+  if (!control || !state.selectedTask) return '控制状态尚未就绪，不能启动回合。';
+  if (control.task_revision !== state.selectedTask.revision || control.task_state !== state.selectedTask.state) return '任务修订已变化，请刷新状态。';
+  if (control.task_state !== 'needs_human') return '当前任务不是待人工状态，不能继续。';
+  const latest = control.latest_continuation;
+  if (controlUnresolved()) return latest.receipt.state === 'claimed'
+    ? (control.latest_cancellation ? '取消请求已记录；等待本地回合停止，未知占用仍保留。'
+      : '当前回合正在执行。取消仅请求本地 owner 停止，不能证明所有外部进程已停止。')
+    : '上次继续请求仍占用任务；失败、取消或未知执行不能从页面重新认领。';
+  if (control.budget_violation) {
+    const violation = control.budget_violation;
+    return `预算阻塞：${budgetLabels[violation.code] || violation.code} ${violation.actual}/${violation.limit}。`;
+  }
+  if (control.rework_rounds >= control.max_rework_rounds) return '返工预算已耗尽，需人工处理。';
+  if (!message || !candidateTargets(message).includes(role)) return '先发送一条待处理的人工消息；发给 Reviewer 的消息不能启动完整工作流。';
+  if (latest?.receipt.state === 'succeeded' && (!reason || reason.length > 1000)) return '再次继续需要填写 1～1000 字授权原因。';
+  return null;
+}
+
+function setInlineFeedback(taskId, messageId, text, kind) {
+  if (taskId !== state.selectedId) return;
+  state.inlineFeedback = { taskId, messageId, text, kind };
+  if (state.messages.length) renderMessages(taskId);
+}
+
 function renderControl() {
   const control = state.control?.task_id === state.selectedId ? state.control : null;
   const messageSelect = $('control-message');
@@ -248,26 +276,9 @@ function renderControl() {
       : outcome ? `最近工作流：${outcome.success ? '完成守卫通过' : '未完成'}${outcome.reason ? ` · ${outcome.reason}` : ''}`
       : latest ? `最近回合 #${short(latest.receipt.request.request_id)} · ${latest.receipt.state}${latest.receipt.failure_code ? ` · ${latest.receipt.failure_code}` : ''}`
         : '尚无继续回合；发送人工消息后可预检并启动。';
-  let blocker = '';
-  if (!control || !state.selectedTask) blocker = '控制状态尚未就绪，不能启动回合。';
-  else if (control.task_revision !== state.selectedTask.revision || control.task_state !== state.selectedTask.state) blocker = '任务修订已变化，请刷新状态。';
-  else if (control.task_state !== 'needs_human') blocker = '当前任务不是待人工状态，不能继续。';
-  else if (controlUnresolved()) blocker = latest.receipt.state === 'claimed'
-    ? (cancellation ? '取消请求已记录；等待本地回合停止，未知占用仍保留。'
-      : '当前回合正在执行。取消仅请求本地 owner 停止，不能证明所有外部进程已停止。')
-    : '上次继续请求仍占用任务；失败、取消或未知执行不能从页面重新认领。';
-  else if (control.budget_violation) {
-    const violation = control.budget_violation;
-    blocker = `预算阻塞：${budgetLabels[violation.code] || violation.code} ${violation.actual}/${violation.limit}。`;
-  } else if (control.rework_rounds >= control.max_rework_rounds) blocker = '返工预算已耗尽，需人工处理。';
-  else if (!selected) blocker = '先发送一条待处理的人工消息；发给 Reviewer 的消息不能启动完整工作流。';
-  else if (latest?.receipt.state === 'succeeded' && !$('control-reason').value.trim()) blocker = '再次继续需要填写授权原因。';
-  else blocker = '可预检并继续；预检通过不代表任务成功，最终仍由 Verifier、Reviewer 和 CompletionGuard 判定。';
-  $('control-blocker').textContent = blocker;
-  $('continue-workflow').disabled = state.controlBusy || !control || !selected || !roles.length
-    || control.task_state !== 'needs_human' || control.task_revision !== state.selectedTask?.revision
-    || controlUnresolved() || !!control.budget_violation || control.rework_rounds >= control.max_rework_rounds
-    || (latest?.receipt.state === 'succeeded' && !$('control-reason').value.trim());
+  const blocker = continuationBlocker(selected, $('control-role').value, ($('control-reason').value || '').trim());
+  $('control-blocker').textContent = blocker || '可预检并继续；预检通过不代表任务成功，最终仍由 Verifier、Reviewer 和 CompletionGuard 判定。';
+  $('continue-workflow').disabled = state.controlBusy || !!blocker;
   $('continue-workflow').textContent = state.controlBusy ? '处理中…' : '预检并继续工作流';
   $('cancel-continuation').hidden = latest?.receipt.state !== 'claimed' || !!cancellation;
   $('cancel-continuation').disabled = state.controlBusy;
@@ -293,6 +304,10 @@ async function loadControl(taskId, requestId = state.requestId) {
     const control = await api(`/tasks/${encodeURIComponent(taskId)}/control`);
     if (taskId !== state.selectedId || requestId !== state.requestId) return;
     state.control = control;
+    if (state.inlineFeedback?.kind === 'progress'
+        && control.latest_continuation?.receipt.request.message_id === state.inlineFeedback.messageId) {
+      state.inlineFeedback = null;
+    }
     renderControl();
     renderHumanComposer();
     if (state.messages.length) renderMessages(taskId);
@@ -313,24 +328,24 @@ async function loadControl(taskId, requestId = state.requestId) {
   }
 }
 
-async function continueWorkflow() {
+async function continueWorkflow(intent = null) {
   const task = state.selectedTask;
-  const control = state.control;
-  const message = state.messages.find((item) => item.message_id === state.controlMessageId);
-  const role = $('control-role').value;
-  const reason = $('control-reason').value.trim();
-  if (state.controlBusy || !task || !control || task.task_id !== state.selectedId
-      || control.task_revision !== task.revision || control.task_state !== 'needs_human'
-      || controlUnresolved() || control.budget_violation || control.rework_rounds >= control.max_rework_rounds
-      || !message || !candidateTargets(message).includes(role)) return;
-  const previous = control.latest_continuation;
-  if (previous?.receipt.state === 'succeeded' && (!reason || reason.length > 1000)) {
-    controlError('再次继续需填写 1～1000 字授权原因。');
+  const control = state.control?.task_id === state.selectedId ? state.control : null;
+  const message = state.messages.find((item) => item.message_id === (intent?.messageId || state.controlMessageId));
+  const role = intent?.targetRole || $('control-role').value;
+  const reason = intent ? intent.reason.trim() : ($('control-reason').value || '').trim();
+  const blocker = continuationBlocker(message, role, reason);
+  if (state.controlBusy || !task || task.task_id !== state.selectedId || blocker) {
+    if (intent && blocker && task) setInlineFeedback(task.task_id, intent.messageId, blocker, 'error');
     return;
   }
+  const previous = control.latest_continuation;
   if (!window.confirm(`确认让 ${role} 处理人工消息 #${short(message.message_id)}，并启动后续验证与评审？`)) return;
   const taskId = task.task_id;
   const requestId = state.requestId;
+  state.controlMessageId = message.message_id;
+  $('control-role').value = role;
+  if (intent) $('control-reason').value = reason;
   const signature = JSON.stringify({ revision: task.revision, runtime: control.runtime_revision,
     message_id: message.message_id, target_role: role, previous: previous?.receipt.request.request_id || null,
     previous_updated_at: previous?.updated_at || null, reason });
@@ -339,6 +354,7 @@ async function continueWorkflow() {
   state.controlAttempts.set(taskId, attempt);
   state.controlBusy = true;
   controlError('');
+  if (intent) setInlineFeedback(taskId, message.message_id, '正在预检；尚未派发 Agent。', 'progress');
   renderControl();
   try {
     const selection = { expected_revision: task.revision, message_id: message.message_id, target_role: role };
@@ -374,16 +390,20 @@ async function continueWorkflow() {
     state.controlAttempts.delete(taskId);
     if (taskId === state.selectedId && requestId === state.requestId) {
       $('control-summary').textContent = `请求 #${short(accepted.receipt.request.request_id)} 已受理；正在读取运行状态。`;
+      if (intent) setInlineFeedback(taskId, message.message_id, '继续请求已受理；正在读取运行状态。', 'progress');
       await loadControl(taskId, requestId);
     }
   } catch (error) {
     if (taskId === state.selectedId && requestId === state.requestId) {
-      controlError(`继续结果未确认：${error.detail || error.message}。不会自动重发；请核对状态后手动处理。`);
+      const errorMessage = `继续结果未确认：${error.detail || error.message}。不会自动重发；请核对状态后手动处理。`;
+      controlError(errorMessage);
+      if (intent) setInlineFeedback(taskId, message.message_id, errorMessage, 'error');
       await loadControl(taskId, requestId);
     }
   } finally {
     state.controlBusy = false;
     renderControl();
+    if (intent && taskId === state.selectedId && requestId === state.requestId) renderMessages(taskId);
   }
 }
 
@@ -452,6 +472,7 @@ function clearMissingTask(taskId) {
   state.replyTarget = null;
   state.control = null;
   state.controlMessageId = null;
+  state.inlineFeedback = null;
   closeControlPoll();
   renderTasks();
   renderCancelAction();
@@ -669,6 +690,75 @@ async function loadTasks(more = false) {
   }
 }
 
+function renderContinuationAction(message, taskId) {
+  const targets = candidateTargets(message);
+  if (!targets.length) return null;
+  const key = `${taskId}:${message.message_id}`;
+  const box = node('div', 'message-continuation');
+  const intro = node('p', 'message-continuation-intro');
+  box.append(intro);
+  const fields = node('div', 'message-continuation-fields');
+  let roleSelect = null;
+  if (targets.length > 1) {
+    const label = node('label', 'message-continuation-label', '目标 Agent');
+    roleSelect = node('select', 'message-continuation-target');
+    for (const role of targets) {
+      const option = node('option', '', role === 'planner' ? '白金 · Planner' : '月见 · Implementer');
+      option.value = role;
+      roleSelect.append(option);
+    }
+    roleSelect.value = targets.includes(state.inlineRoles.get(key)) ? state.inlineRoles.get(key) : targets[0];
+    label.append(roleSelect);
+    fields.append(label);
+  }
+  let reasonInput = null;
+  if (state.control?.latest_continuation?.receipt.state === 'succeeded') {
+    const label = node('label', 'message-continuation-label', '再次继续的授权原因');
+    reasonInput = node('textarea', 'message-continuation-reason');
+    reasonInput.rows = 2;
+    reasonInput.maxLength = 1000;
+    reasonInput.placeholder = '说明为何再次继续当前任务';
+    reasonInput.value = state.inlineReasons.get(key) || '';
+    label.append(reasonInput);
+    fields.append(label);
+  }
+  box.append(fields);
+  const button = node('button', 'message-continue-button', '预检并继续工作流');
+  button.type = 'button';
+  const status = node('p', 'message-continuation-status');
+  status.setAttribute('role', 'status');
+  const update = () => {
+    const role = roleSelect?.value || targets[0];
+    const reason = reasonInput?.value.trim() || '';
+    const blocker = continuationBlocker(message, role, reason);
+    const latest = state.control?.latest_continuation?.receipt;
+    intro.textContent = latest?.request.message_id === message.message_id && latest.state === 'claimed'
+      ? '继续请求已受理；当前回合正在执行。' : '人工消息已保存；Agent 尚未启动。';
+    const feedback = state.inlineFeedback?.taskId === taskId
+      && state.inlineFeedback.messageId === message.message_id ? state.inlineFeedback : null;
+    button.disabled = state.controlBusy || !!blocker;
+    status.textContent = feedback?.text || (state.controlBusy ? '正在处理继续请求…'
+      : blocker || '点击后将请求确认，并由服务端预检；预检通过不代表任务完成。');
+    status.className = `message-continuation-status${feedback?.kind === 'error' || blocker ? ' is-blocked' : ''}`;
+  };
+  roleSelect?.addEventListener('change', () => {
+    state.inlineRoles.set(key, roleSelect.value);
+    update();
+  });
+  reasonInput?.addEventListener('input', () => {
+    state.inlineReasons.set(key, reasonInput.value);
+    if (state.inlineFeedback?.taskId === taskId && state.inlineFeedback.messageId === message.message_id) state.inlineFeedback = null;
+    update();
+  });
+  button.addEventListener('click', () => {
+    void continueWorkflow({ messageId: message.message_id, targetRole: roleSelect?.value || targets[0],
+      reason: reasonInput?.value || '' });
+  });
+  box.append(button, status);
+  update();
+  return box;
+}
+
 function renderMessage(message, taskId) {
   const item = node('article', 'message');
   const head = node('div', 'message-head');
@@ -694,6 +784,8 @@ function renderMessage(message, taskId) {
     reply.addEventListener('click', () => selectHumanReply(message));
     item.append(reply);
   }
+  const continuation = renderContinuationAction(message, taskId);
+  if (continuation) item.append(continuation);
   return item;
 }
 
@@ -778,6 +870,7 @@ async function selectTask(taskId) {
   state.replyTarget = null;
   state.control = null;
   state.controlMessageId = null;
+  state.inlineFeedback = null;
   renderCancelAction();
   renderHumanComposer();
   renderControl();

@@ -8,6 +8,9 @@
 Human 消息列表的 `pending_for_continuation` 来自真实待投递状态。页面只把仍待处理、
 由人工消息 API 保存，且可交给 Planner/Implementer 的消息作为完整工作流候选；
 Reviewer 消息不能直接启动整条工作流。用户选中消息和目标后明确点击“预检并继续”。
+第 7.2 步也在符合条件的 Human 消息旁提供同一操作入口，减少返回右侧面板的滚动；
+它复用既有确认、预检、授权及继续逻辑，而非新的一条执行路径。消息发送本身仍不启动
+Agent；Reviewer 定向消息不显示此入口，阻塞原因会显示在消息旁。
 浏览器先调用 `POST .../continue/preflight`，再调用 `POST .../continue/workflow`；
 先前已有成功继续回合时，要求填写原因，并使用同一幂等键先调用
 `POST .../continuations/{previous_request_id}/authorize`。所有请求仍由服务端检查最新

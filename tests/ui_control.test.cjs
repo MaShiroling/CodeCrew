@@ -54,6 +54,8 @@ const control = { task_id: 'task-a', task_state: 'needs_human', task_revision: 3
 let nextUuid = 1;
 let mode = 'normal';
 let releasePreflight = null;
+let confirmResult = true;
+let confirmations = 0;
 const preflights = [];
 const authorizations = [];
 const admissions = [];
@@ -66,6 +68,8 @@ const fetch = async (url, options = {}) => {
     { member_id: 'human-id', role: 'human', kind: 'human' },
     { member_id: 'planner-id', role: 'planner', kind: 'agent', name: '白金' },
     { member_id: 'implementer-id', role: 'implementer', kind: 'agent', name: '月见' },
+    { member_id: 'reviewer-id', role: 'reviewer', kind: 'agent', name: '鲸鲸' },
+    { member_id: 'orchestrator-id', role: 'orchestrator', kind: 'system' },
   ] } });
   if (url.endsWith('/plans')) return response(200, { items: [] });
   if (url.includes('/messages?')) {
@@ -114,38 +118,69 @@ const fetch = async (url, options = {}) => {
 };
 const context = vm.createContext({ document, fetch, Intl, Date, URL, encodeURIComponent,
   crypto: { randomUUID: () => `uuid-${nextUuid++}` },
-  window: { addEventListener() {}, confirm() { return true; } }, console,
+  window: { addEventListener() {}, confirm() { confirmations++; return confirmResult; } }, console,
   setTimeout() { return 1; }, clearTimeout() {},
 });
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/web/app.js'), 'utf8'), context);
 const tick = async () => { for (let i = 0; i < 8; i++) await new Promise((resolve) => setImmediate(resolve)); };
+const findClass = (element, className) => element?.className.split(' ').includes(className) ? element
+  : element?.children.map((child) => findClass(child, className)).find(Boolean);
+const inlineButton = (index = 0) => findClass(get('message-list').children[index], 'message-continue-button');
+const inlineStatus = (index = 0) => findClass(get('message-list').children[index], 'message-continuation-status');
 
 (async () => {
   await tick();
   assert.match(get('control-budget').children[0].textContent, /回合 1\/30/);
   assert.equal(get('continue-workflow').disabled, false);
+  assert.equal(inlineButton().disabled, false);
   assert.equal(get('control-message').value, 'human-1');
+  messages.push({ ...human('reviewer-only', 2), recipient_ids: ['reviewer-id'] });
+  await vm.runInContext('loadMessages("task-a")', context);
+  assert.equal(inlineButton(1), undefined);
+  messages.pop();
+  messages.push({ ...human('route-both', 2), recipient_ids: ['orchestrator-id'] });
+  await vm.runInContext('loadMessages("task-a")', context);
+  const targetSelect = findClass(get('message-list').children[1], 'message-continuation-target');
+  assert.deepEqual(targetSelect.children.map((option) => option.value), ['planner', 'implementer']);
+  messages.pop();
+  await vm.runInContext('loadMessages("task-a")', context);
+  vm.runInContext('state.control = null; renderMessages("task-a")', context);
+  assert.equal(inlineButton().disabled, true);
+  assert.match(inlineStatus().textContent, /尚未就绪/);
+  await vm.runInContext('loadControl("task-a")', context);
   control.budget_violation = { code: 'agent_turns', actual: 30, limit: 30, detail: 'blocked' };
   await vm.runInContext('loadControl("task-a")', context);
   assert.equal(get('continue-workflow').disabled, true);
+  assert.equal(inlineButton().disabled, true);
+  assert.match(inlineStatus().textContent, /预算阻塞/);
   assert.match(get('control-blocker').textContent, /预算阻塞/);
   control.budget_violation = null;
   await vm.runInContext('loadControl("task-a")', context);
 
+  confirmResult = false;
+  inlineButton().dispatch('click');
+  await tick();
+  assert.equal(confirmations, 1);
+  assert.equal(preflights.length, 0);
+  confirmResult = true;
+
   mode = 'preflight-conflict';
-  await vm.runInContext('continueWorkflow()', context);
+  inlineButton().dispatch('click');
+  await tick();
   assert.equal(preflights.length, 1);
   assert.equal(admissions.length, 0);
   assert.match(get('control-error').textContent, /不会自动重发/);
+  assert.match(inlineStatus().textContent, /不会自动重发/);
   mode = 'preflight-pending';
-  const stale = vm.runInContext('continueWorkflow()', context);
+  inlineButton().dispatch('click');
   await tick();
   await vm.runInContext('selectTask("task-a")', context);
   releasePreflight();
-  await stale;
+  await tick();
   assert.equal(admissions.length, 0);
   mode = 'normal';
-  await vm.runInContext('continueWorkflow()', context);
+  inlineButton().dispatch('click');
+  await tick();
   assert.equal(admissions.length, 1);
   assert.equal(admissions[0].message_id, 'human-1');
   assert.equal(admissions[0].target_role, 'planner');
@@ -174,9 +209,13 @@ const tick = async () => { for (let i = 0; i < 8; i++) await new Promise((resolv
   get('control-reason').value = '';
   vm.runInContext('renderControl()', context);
   assert.equal(get('continue-workflow').disabled, true);
-  get('control-reason').value = '新需求已确认，批准再次继续';
-  vm.runInContext('renderControl()', context);
-  await vm.runInContext('continueWorkflow()', context);
+  assert.equal(inlineButton(1).disabled, true);
+  const inlineReason = findClass(get('message-list').children[1], 'message-continuation-reason');
+  inlineReason.value = '新需求已确认，批准再次继续';
+  inlineReason.dispatch('input');
+  assert.equal(inlineButton(1).disabled, false);
+  inlineButton(1).dispatch('click');
+  await tick();
   assert.equal(authorizations.length, 1);
   assert.equal(admissions.length, 2);
   assert.equal(authorizations[0].message_id, 'human-2');

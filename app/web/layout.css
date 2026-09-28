@@ -146,6 +146,91 @@
   overflow: visible;
 }
 
+.message-continuation {
+  margin: 12px 0 4px 35px;
+  padding: 12px 14px;
+  border: 1px solid #cfe7dc;
+  border-radius: 9px;
+  background: #f6fbf8;
+}
+
+.message-continuation-intro {
+  margin: 0 0 10px;
+  color: #396d5d;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.message-continuation-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.message-continuation-fields:empty {
+  display: none;
+}
+
+.message-continuation-label {
+  display: flex;
+  flex: 1 1 180px;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 10px;
+  color: #58776c;
+  font-size: 10px;
+}
+
+.message-continuation-target,
+.message-continuation-reason {
+  width: 100%;
+  padding: 8px 9px;
+  border: 1px solid #cddfd4;
+  border-radius: 6px;
+  background: #fff;
+  color: #264b40;
+  font: inherit;
+  font-size: 11px;
+}
+
+.message-continuation-reason {
+  min-height: 56px;
+  resize: vertical;
+}
+
+.message-continue-button:focus-visible,
+.message-continuation-target:focus-visible,
+.message-continuation-reason:focus-visible {
+  outline: 2px solid #0d927e;
+  outline-offset: 2px;
+}
+
+.message-continue-button {
+  padding: 8px 12px;
+  border: 1px solid #0b967d;
+  border-radius: 6px;
+  background: #0f9c82;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.message-continue-button:disabled {
+  cursor: not-allowed;
+  opacity: .55;
+}
+
+.message-continuation-status {
+  margin: 8px 0 0;
+  color: #627c70;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.message-continuation-status.is-blocked {
+  color: #91612f;
+}
+
 .inspector-column {
   position: sticky;
   top: 14px;
