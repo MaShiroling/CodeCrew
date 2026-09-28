@@ -46,6 +46,8 @@ const notice = (message) => { $('notice').textContent = message; $('notice').hid
 
 function renderTasks() {
   const list = $('task-list');
+  const focusedCard = document.activeElement?.classList?.contains('task-card');
+  let selectedCard = null;
   list.replaceChildren();
   const tasks = state.tasks.filter((task) => state.filter === 'all'
     || (state.filter === 'terminal') === finishedStates.has(task.state));
@@ -54,6 +56,10 @@ function renderTasks() {
   for (const task of tasks) {
     const card = node('button', `task-card${task.task_id === state.selectedId ? ' selected' : ''}`);
     card.type = 'button';
+    if (task.task_id === state.selectedId) {
+      card.setAttribute('aria-current', 'true');
+      selectedCard = card;
+    }
     const top = node('div', 'task-card-top');
     top.append(node('span', '', `#${short(task.task_id).toUpperCase()}`), node('span', '', time(task.created_at)));
     const bottom = node('div', 'task-card-bottom');
@@ -62,6 +68,7 @@ function renderTasks() {
     card.addEventListener('click', () => selectTask(task.task_id));
     list.append(card);
   }
+  if (focusedCard && selectedCard) selectedCard.focus({ preventScroll: true });
   $('load-more').hidden = state.nextOffset === null;
 }
 
@@ -839,7 +846,7 @@ function renderContinuationAction(message, taskId) {
 }
 
 function renderMessage(message, taskId) {
-  const item = node('article', 'message');
+  const item = node('article', `message message-${message.sender_role === 'human' ? 'human' : 'agent'}`);
   const head = node('div', 'message-head');
   const role = message.sender_role;
   head.append(node('span', `avatar ${['planner', 'implementer', 'reviewer'].includes(role) ? role : 'system'}`, message.sender_name.slice(0, 1)), node('span', 'message-name', message.sender_name), node('span', 'message-role', role), node('time', 'message-time', time(message.created_at)));
@@ -1130,7 +1137,10 @@ async function selectTask(taskId) {
 }
 
 document.querySelectorAll('.filter').forEach((button) => button.addEventListener('click', () => {
-  document.querySelectorAll('.filter').forEach((item) => item.classList.toggle('active', item === button));
+  document.querySelectorAll('.filter').forEach((item) => {
+    item.classList.toggle('active', item === button);
+    item.setAttribute('aria-pressed', String(item === button));
+  });
   state.filter = button.dataset.filter;
   renderTasks();
 }));
@@ -1147,14 +1157,29 @@ $('control-role').addEventListener('change', renderControl);
 $('control-reason').addEventListener('input', renderControl);
 $('continue-workflow').addEventListener('click', () => { void continueWorkflow(); });
 $('cancel-continuation').addEventListener('click', () => { void cancelContinuation(); });
-document.querySelectorAll('.tab').forEach((button) => button.addEventListener('click', () => {
-  document.querySelectorAll('.tab').forEach((item) => {
-    item.classList.toggle('active', item === button);
-    item.setAttribute('aria-selected', String(item === button));
-  });
+const tabs = [...document.querySelectorAll('.tab')];
+function activateTab(button) {
+  for (const item of tabs) {
+    const selected = item === button;
+    item.classList.toggle('active', selected);
+    item.setAttribute('aria-selected', String(selected));
+    item.tabIndex = selected ? 0 : -1;
+  }
   $('room-pane').hidden = button.dataset.tab !== 'room';
   $('plans-pane').hidden = button.dataset.tab !== 'plans';
-}));
+}
+tabs.forEach((button, index) => {
+  button.addEventListener('click', () => activateTab(button));
+  button.addEventListener('keydown', (event) => {
+    const next = event.key === 'ArrowRight' ? (index + 1) % tabs.length
+      : event.key === 'ArrowLeft' ? (index - 1 + tabs.length) % tabs.length
+        : event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1 : null;
+    if (next === null) return;
+    event.preventDefault();
+    activateTab(tabs[next]);
+    tabs[next].focus();
+  });
+});
 $('refresh-button').addEventListener('click', async () => { if (await loadTasks() && state.selectedId) await selectTask(state.selectedId); });
 $('load-more').addEventListener('click', () => loadTasks(true));
 $('load-messages').addEventListener('click', () => loadMessages(state.selectedId, true));

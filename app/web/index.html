@@ -7,11 +7,13 @@
   <title>CodeCrew · 任务工作台</title>
   <link rel="stylesheet" href="/ui/assets/styles.css">
   <link rel="stylesheet" href="/ui/assets/layout.css">
+  <link rel="stylesheet" href="/ui/assets/theme.css">
   <script src="/ui/assets/app.js" defer></script>
 </head>
 <body>
+  <a class="skip-link" href="#workspace-content">跳到任务工作区</a>
   <div class="app-shell">
-    <main class="main">
+    <main id="workspace-content" class="main" tabindex="-1">
       <header class="topbar">
         <div class="topbar-left">
           <a class="brand" href="/ui/" aria-label="CodeCrew 首页"><span class="brand-mark">C·C</span><span class="brand-copy"><strong>CodeCrew</strong><small>CODING TEAM</small></span></a>
@@ -38,7 +40,7 @@
         <div class="workspace-grid">
           <section class="panel task-panel" aria-labelledby="tasks-title">
             <div class="panel-head"><div><div class="section-kicker">01 / OVERVIEW</div><h2 id="tasks-title">任务列表 <span id="task-count" class="count">0</span></h2></div><span class="panel-head-symbol">⌘</span></div>
-            <div class="task-filters" aria-label="任务筛选"><button type="button" class="filter active" data-filter="all">全部</button><button type="button" class="filter" data-filter="active">进行中</button><button type="button" class="filter" data-filter="terminal">已结束</button></div>
+            <div class="task-filters" role="group" aria-label="任务筛选"><button type="button" class="filter active" data-filter="all" aria-pressed="true">全部</button><button type="button" class="filter" data-filter="active" aria-pressed="false">进行中</button><button type="button" class="filter" data-filter="terminal" aria-pressed="false">已结束</button></div>
             <div id="task-list" class="task-list" aria-live="polite"><div class="empty-state">正在加载任务…</div></div>
             <button type="button" id="load-more" class="load-more" hidden>加载更多任务 ↓</button>
           </section>
@@ -50,8 +52,8 @@
               <div id="live-status" class="live-status" role="status">正在读取任务…</div>
               <h2 id="detail-title" class="detail-title"></h2>
               <details id="issue-details" class="issue-details"><summary>查看完整需求</summary><p id="detail-issue" class="detail-issue"></p></details>
-              <div class="tabbar" role="tablist" aria-label="任务详情"><button id="tab-room" type="button" class="tab active" role="tab" aria-selected="true" data-tab="room">团队对话</button><button id="tab-plans" type="button" class="tab" role="tab" aria-selected="false" data-tab="plans">方案版本</button></div>
-              <div id="room-pane" class="tab-pane">
+              <div class="tabbar" role="tablist" aria-label="任务详情"><button id="tab-room" type="button" class="tab active" role="tab" aria-selected="true" aria-controls="room-pane" tabindex="0" data-tab="room">团队对话</button><button id="tab-plans" type="button" class="tab" role="tab" aria-selected="false" aria-controls="plans-pane" tabindex="-1" data-tab="plans">方案版本</button></div>
+              <div id="room-pane" class="tab-pane" role="tabpanel" aria-labelledby="tab-room">
                 <div id="room-members" class="member-row"></div>
                 <div id="message-list" class="message-list"></div>
                 <button type="button" id="load-messages" class="load-more" hidden>加载后续对话 ↓</button>
@@ -72,7 +74,7 @@
                   </form>
                 </section>
               </div>
-              <div id="plans-pane" class="tab-pane" hidden><div id="plan-list" class="plan-list"></div></div>
+              <div id="plans-pane" class="tab-pane" role="tabpanel" aria-labelledby="tab-plans" hidden><div id="plan-list" class="plan-list"></div></div>
             </div>
           </section>
 
@@ -105,7 +107,7 @@
               </section>
             </section>
             <section id="delivery-panel" class="panel delivery-panel" aria-labelledby="delivery-title" hidden>
-              <div class="panel-head"><div><div class="section-kicker">04 / DELIVERY</div><h2 id="delivery-title">交付证据</h2></div><button id="delivery-refresh" type="button" class="delivery-refresh">刷新</button></div>
+              <div class="panel-head"><div><div class="section-kicker">04 / DELIVERY</div><h2 id="delivery-title">交付证据</h2></div><button id="delivery-refresh" type="button" class="delivery-refresh" aria-label="刷新交付证据">刷新</button></div>
               <p id="delivery-status" class="delivery-status" role="status">选择任务后读取证据…</p>
               <div id="delivery-content" hidden>
                 <div class="delivery-group"><h3>Diff 与 Patch</h3><div id="delivery-diff"></div><a id="delivery-patch-download" class="delivery-download" hidden>下载 Patch ↓</a></div>

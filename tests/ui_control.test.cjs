@@ -12,15 +12,26 @@ class Element {
     this.textContent = '';
     this.value = '';
     this.className = '';
+    this.dataset = {};
+    this.attributes = new Map();
     this.listeners = new Map();
   }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   addEventListener(type, callback) { this.listeners.set(type, callback); }
   dispatch(type, event = {}) { return this.listeners.get(type)?.(event); }
-  setAttribute() {}
+  setAttribute(name, value) { this.attributes.set(name, value); }
+  getAttribute(name) { return this.attributes.get(name); }
+  get classList() { return {
+    contains: (value) => this.className.split(' ').includes(value),
+    toggle: (value, force) => {
+      const classes = new Set(this.className.split(' ').filter(Boolean));
+      if (force) classes.add(value); else classes.delete(value);
+      this.className = [...classes].join(' ');
+    },
+  }; }
   querySelector(selector) { return this.children.find((child) => child.className === selector.slice(1)) || null; }
-  focus() {}
+  focus() { document.activeElement = this; }
 }
 
 const elements = new Map();
@@ -31,10 +42,22 @@ const get = (id) => {
 get('empty-detail').append(new Element('h2'), new Element('p'));
 get('human-recipient').value = 'planner';
 get('control-role').value = 'planner';
+const filters = ['all', 'active', 'terminal'].map((value) => {
+  const element = new Element('button');
+  element.className = 'filter';
+  element.dataset.filter = value;
+  return element;
+});
+const tabs = ['room', 'plans'].map((value) => {
+  const element = get(`tab-${value}`);
+  element.className = 'tab';
+  element.dataset.tab = value;
+  return element;
+});
 const document = {
   getElementById: get,
   createElement(tag) { return new Element(tag); },
-  querySelectorAll() { return []; },
+  querySelectorAll(selector) { return selector === '.filter' ? filters : selector === '.tab' ? tabs : []; },
 };
 const task = { task_id: 'task-a', trace_id: 'trace-a', issue: '实现一个安全变更',
   repository_path: '/tmp/fixture', state: 'needs_human', revision: 3,
@@ -306,4 +329,28 @@ const inlineStatus = (index = 0) => findClass(get('message-list').children[index
   await vm.runInContext('loadDelivery("task-a")', context);
   assert.match(get('delivery-status').textContent, /修订不一致/);
   assert.equal(get('delivery-patch-download').hidden, true);
+
+  let prevented = 0;
+  tabs[0].dispatch('keydown', { key: 'ArrowRight', preventDefault() { prevented++; } });
+  assert.equal(prevented, 1);
+  assert.equal(get('plans-pane').hidden, false);
+  assert.equal(get('room-pane').hidden, true);
+  assert.equal(tabs[1].getAttribute('aria-selected'), 'true');
+  assert.equal(tabs[0].tabIndex, -1);
+  assert.equal(document.activeElement, tabs[1]);
+  tabs[1].dispatch('keydown', { key: 'Home', preventDefault() { prevented++; } });
+  assert.equal(get('room-pane').hidden, false);
+  assert.equal(tabs[0].tabIndex, 0);
+  assert.equal(document.activeElement, tabs[0]);
+  tabs[0].dispatch('keydown', { key: 'End', preventDefault() { prevented++; } });
+  assert.equal(document.activeElement, tabs[1]);
+  filters[2].dispatch('click');
+  assert.equal(filters[2].getAttribute('aria-pressed'), 'true');
+  assert.equal(filters[0].getAttribute('aria-pressed'), 'false');
+  filters[0].dispatch('click');
+  const focusedCard = get('task-list').children[0];
+  assert.equal(focusedCard.getAttribute('aria-current'), 'true');
+  focusedCard.focus();
+  vm.runInContext('renderTasks()', context);
+  assert.equal(document.activeElement, get('task-list').children[0]);
 })().catch((error) => { console.error(error); process.exitCode = 1; });

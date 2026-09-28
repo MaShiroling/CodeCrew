@@ -35,6 +35,11 @@ def test_task_ui_serves_local_assets_without_task_runtime() -> None:
         assert 'class="sidebar"' not in page.text
         assert 'src="/ui/assets/app.js"' in page.text
         assert 'href="/ui/assets/layout.css"' in page.text
+        assert 'href="/ui/assets/theme.css"' in page.text
+        assert 'class="skip-link" href="#workspace-content"' in page.text
+        assert 'aria-controls="room-pane" tabindex="0"' in page.text
+        assert 'aria-controls="plans-pane" tabindex="-1"' in page.text
+        assert 'role="tabpanel" aria-labelledby="tab-room"' in page.text
         assert client.get("/ui").status_code == 200
 
         javascript = client.get("/ui/assets/app.js")
@@ -49,6 +54,10 @@ def test_task_ui_serves_local_assets_without_task_runtime() -> None:
         assert layout.status_code == 200
         assert "grid-template-columns: minmax(218px, 250px)" in layout.text
         assert "@media (max-width: 760px)" in layout.text
+        theme = client.get("/ui/assets/theme.css")
+        assert theme.status_code == 200
+        assert "prefers-reduced-motion" in theme.text
+        assert ".message-human" in theme.text
         assert client.get("/ui/assets/missing.js").status_code == 404
         assert client.get("/health").status_code == 200
         assert client.get("/api/v1/tasks").status_code == 503

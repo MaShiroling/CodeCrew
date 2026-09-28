@@ -1,0 +1,207 @@
+/* CodeCrew's own quiet, conversation-first visual language. No remote fonts or artwork. */
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans SC", sans-serif;
+  color: #243b39;
+  background: #f5f4ef;
+  --surface: #fffefa;
+  --paper: #f9faf5;
+  --ink: #243b39;
+  --muted: #607872;
+  --line: #dce6df;
+  --accent: #087b69;
+  --accent-soft: #e7f4ed;
+  --focus: #075fbc;
+}
+
+body { background: #f5f4ef; }
+button, input, select, textarea { font-family: inherit; }
+button, a, input, select, textarea, summary { -webkit-tap-highlight-color: transparent; }
+:is(button, a, input, select, textarea, summary):focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+.skip-link {
+  position: fixed;
+  z-index: 100;
+  top: 8px;
+  left: 12px;
+  padding: 9px 14px;
+  border-radius: 9px;
+  background: #fff;
+  color: #075fbc;
+  transform: translateY(-160%);
+}
+.skip-link:focus { transform: translateY(0); }
+
+.topbar {
+  background: #fffefa;
+  border-color: var(--line);
+  box-shadow: 0 2px 14px #213e2b08;
+}
+.topbar .brand-mark {
+  border: 0;
+  border-radius: 11px;
+  background: #dcefe4;
+  color: #0b685b;
+  font-size: 13px;
+  letter-spacing: -.07em;
+}
+.topbar .brand-copy strong { color: var(--ink); font-size: 16px; }
+.topbar .brand-copy small { color: var(--muted); font-size: 9px; }
+.read-only-pill { border-color: var(--line); background: #f4f8f3; color: #456e60; }
+.breadcrumb { color: var(--muted); }
+.content { padding-top: 28px; }
+.page-heading { align-items: center; margin-bottom: 20px; }
+.page-heading h1 { margin: 7px 0 5px; font-size: clamp(23px, 2.2vw, 31px); }
+.page-heading p { color: var(--muted); font-size: 13px; }
+.eyebrow, .section-kicker { color: var(--accent); font-weight: 700; }
+.refresh-button, .create-toggle, .create-submit { min-height: 38px; }
+.refresh-button { color: #2d6255; }
+.notice {
+  border-color: #e8c99c;
+  background: #fff8e9;
+  color: #744e21;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.panel {
+  background: var(--surface);
+  border-color: var(--line);
+  border-radius: 15px;
+  box-shadow: 0 8px 28px #1d39220a;
+}
+.panel-head { border-color: #e7ede6; }
+.panel h2 { color: var(--ink); font-size: 17px; }
+.task-panel .panel-head, .inspector-column .panel-head { padding: 18px 18px 16px; }
+.task-panel .task-filters { gap: 5px; padding: 11px 12px 9px; }
+.filter { color: #536e66; font-size: 12px; min-height: 34px; }
+.filter.active { background: var(--accent-soft); color: #075f52; }
+.task-card { border-color: transparent; padding: 13px 12px; }
+.task-card:hover { background: #f4f8f1; }
+.task-card.selected { border-color: #8ecbb3; background: #ecf7ee; box-shadow: inset 3px 0 #149473; }
+.task-card-title { color: #2e4540; font-size: 13px; line-height: 1.5; }
+.task-card-top, .task-card-bottom { color: #627b72; font-size: 10px; }
+.meta-strip small, .artifact-meta, .artifact-hash { color: #536d63; font-size: 10px; }
+.status { font-size: 10px; }
+.status-needs_human { background: #fff2dd; color: #855c1f; }
+.empty-state { color: var(--muted); font-size: 13px; }
+.load-more { min-height: 34px; font-size: 12px; }
+
+.detail-panel { background: #fffefa; }
+.detail-title { color: #263b37; font-size: 20px !important; line-height: 1.4; }
+.live-status { color: #466e63; font-size: 11px; }
+.issue-details summary { color: #306f60; font-size: 12px; font-weight: 600; }
+.detail-issue { color: #536c63; font-size: 13px; }
+.tabbar { gap: 24px; }
+.tab { color: #627b72; font-size: 13px; min-height: 42px; }
+.tab.active { color: #075f52; border-bottom-color: var(--accent); }
+.member-row { gap: 8px; }
+.member-chip { border: 1px solid #dde9dd; background: #f4f8f2; color: #45665d; font-size: 11px; }
+.member-chip b { color: #176e5c; }
+.message-list { padding-bottom: 12px; }
+.message {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  border-bottom: 1px solid #e9eee7;
+  padding: 19px 3px;
+}
+.message-human { align-items: flex-end; }
+.message-head { width: 100%; gap: 9px; }
+.message-human .message-head { justify-content: flex-end; }
+.message-human .message-time { margin-left: 0; }
+.avatar { width: 32px; height: 32px; border-radius: 11px; font-size: 13px; }
+.message-human .avatar { order: 4; background: #d6efe2; color: #0d755d; }
+.message-name { font-size: 13px; }
+.message-role { color: #5f7770; font-size: 10px; }
+.message-time { color: #6b807a; font-size: 10px; }
+.message-type {
+  margin: 6px 0 0 41px;
+  padding: 3px 7px;
+  background: #eff5ed;
+  color: #406f5c;
+  font-size: 10px;
+}
+.message-human .message-type { margin: 6px 0 0; }
+.message-content {
+  max-width: min(88%, 780px);
+  margin: 7px 0 0 41px;
+  border: 1px solid #e1e9df;
+  border-radius: 4px 15px 15px 15px;
+  background: #f7f9f3;
+  padding: 12px 15px;
+  color: #2a4540;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.message-human .message-content {
+  margin: 7px 0 0;
+  border-color: #cce9d5;
+  border-radius: 15px 4px 15px 15px;
+  background: #eaf7ed;
+}
+.message-reply-link, .artifact-links, .reply-action { margin-left: 41px; }
+.message-human .message-reply-link, .message-human .artifact-links { margin-left: 0; }
+.artifact-link, .plan-open, .reply-action { font-size: 11px; min-height: 32px; }
+.message-human .message-continuation {
+  width: min(88%, 780px);
+  margin: 12px 0 0;
+  background: #f2f8f1;
+}
+.message-continuation-intro { font-size: 12px; }
+.message-continue-button, .human-submit { min-height: 36px; font-size: 12px; }
+.message-continuation-status { font-size: 11px; }
+.human-composer { margin-top: 18px; }
+.human-composer-hint, .human-field, .human-status, .human-error { font-size: 12px; }
+.human-field textarea, .human-field select { font-size: 13px; }
+
+.workflow-overview, .workflow-panel .meta-strip { background: #f6f9f3; }
+.workflow-overview { border-color: #dceadf; }
+.workflow-overview small, .control-budget-heading { color: #506e61; font-size: 11px; }
+.workflow-overview strong { color: #224238; font-size: 14px; }
+.workflow-overview-note, .workflow-overview-row p, .control-summary,
+.control-blocker, .control-fields label { font-size: 12px; }
+.workflow-panel .control-fields select, .workflow-panel .control-fields textarea { font-size: 12px; }
+.control-head h3, .delivery-group h3 { font-size: 13px; }
+.control-head button, .delivery-refresh { min-height: 32px; font-size: 11px; }
+.control-buttons button { min-height: 36px; font-size: 11px; }
+.control-budget span { color: #365f4e; font-size: 11px; }
+.delivery-status, .delivery-group { font-size: 12px; }
+.delivery-fact { align-items: baseline; }
+.delivery-fact strong { font-size: 11px; text-align: right; }
+.delivery-artifact-button, .delivery-download { min-height: 33px; font-size: 11px; }
+.delivery-status.is-error, .control-error, .human-error, .create-error { color: #914229; }
+.artifact-preview { font-size: 11px; }
+.evidence-empty { color: #61776e; font-size: 12px; }
+.footer { color: #4c665d; font-size: 10px; }
+
+@media (max-width: 1120px) {
+  .inspector-column { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
+  .inspector-column .evidence-panel { grid-column: 1 / -1; }
+}
+@media (max-width: 760px) {
+  .content { padding-inline: 14px; }
+  .task-panel { max-height: 245px; }
+  .inspector-column { display: flex; }
+  .message-content, .message-human .message-continuation { max-width: calc(100% - 41px); }
+}
+@media (max-width: 500px) {
+  .topbar { padding-inline: 14px; }
+  .topbar-left { gap: 10px; }
+  .page-heading { flex-wrap: wrap; gap: 12px; }
+  .page-heading h1 { font-size: 20px; }
+  .heading-actions { gap: 7px; }
+  .create-toggle, .refresh-button { min-height: 36px; padding: 8px 10px; font-size: 11px; }
+  .refresh-button span { font-size: 16px; margin-right: 3px; }
+  .detail-panel { padding-inline: 14px; }
+  .detail-title { font-size: 18px !important; }
+  .message { padding-block: 17px; }
+  .message-head { flex-wrap: wrap; }
+  .message-content { max-width: calc(100% - 41px); padding: 10px 12px; }
+  .message-human .message-content, .message-human .message-continuation { max-width: 100%; }
+  .message-time { font-size: 9px; }
+}
+@media (prefers-reduced-motion: no-preference) {
+  .task-card, .filter, .create-toggle, .refresh-button, .delivery-download { transition: background-color .15s, border-color .15s, box-shadow .15s; }
+}
