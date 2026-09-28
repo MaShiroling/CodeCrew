@@ -2,6 +2,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Header, Query, Request, status
+from fastapi.responses import FileResponse
 
 from app.api.details import (
     ArtifactDetail,
@@ -10,6 +11,7 @@ from app.api.details import (
     PlanPage,
     RoomMessagePage,
     TaskControlView,
+    TaskDeliveryView,
     TaskRoomView,
 )
 from app.api.events import EventStreamResponse, stream_task_events
@@ -239,6 +241,36 @@ async def get_task_artifact(
     task_id: UUID, artifact_id: UUID, service: TaskServiceDependency
 ) -> ArtifactDetail:
     return await service.get_artifact(task_id, artifact_id)
+
+
+@router.get("/{task_id}/delivery", response_model=TaskDeliveryView, responses=ERROR_RESPONSES)
+async def get_task_delivery(task_id: UUID, service: TaskServiceDependency) -> TaskDeliveryView:
+    method = getattr(service, "get_delivery", None)
+    if not callable(method):
+        raise TaskServiceUnavailable("task delivery evidence is not configured")
+    return await method(task_id)
+
+
+@router.get(
+    "/{task_id}/delivery/patch/{artifact_id}",
+    response_class=FileResponse,
+    responses={
+        200: {"description": "Latest verification-bound Git patch", "content": {"text/x-diff": {}}},
+        **ERROR_RESPONSES,
+    },
+)
+async def download_task_patch(
+    task_id: UUID, artifact_id: UUID, service: TaskServiceDependency,
+) -> FileResponse:
+    method = getattr(service, "get_patch_file", None)
+    if not callable(method):
+        raise TaskServiceUnavailable("patch download is not configured")
+    path, metadata = await method(task_id, artifact_id)
+    return FileResponse(
+        path, media_type="text/x-diff", filename=f"codecrew-{str(task_id)[:8]}.patch",
+        headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
+                 "X-Artifact-SHA256": metadata.sha256},
+    )
 
 
 @router.get(

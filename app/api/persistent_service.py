@@ -9,10 +9,17 @@ from app.api.continuation import preflight_continuation
 from app.api.details import (
     ArtifactDetail,
     ContinueTaskPreflight,
+    DeliveryCheck,
+    DeliveryCompletion,
+    DeliveryCondition,
+    DeliveryReview,
+    DeliveryReviewIssue,
+    DeliveryVerification,
     HumanMessageReceipt,
     PlanPage,
     RoomMessagePage,
     TaskControlView,
+    TaskDeliveryView,
     TaskRoomView,
 )
 from app.api.human_messages import build_human_message, message_view
@@ -41,10 +48,18 @@ from app.api.service import (
     TaskStateConflict,
 )
 from app.orchestration.models import InvalidTaskTransition, Task, TaskState
-from app.recovery import RecoveryDisposition, RecoveryEntry, WorkflowRecoveryCoordinator
+from app.recovery import (
+    EvidenceRecoveryError,
+    EvidenceRecoveryService,
+    RecoveryDisposition,
+    RecoveryEntry,
+    WorkflowRecoveryCoordinator,
+)
 from app.storage import (
     ArtifactIntegrityError,
+    ArtifactMetadata,
     ArtifactNotFoundError,
+    ArtifactType,
     RuntimeContextRepository,
     RuntimeContextRepositoryError,
     StaleTaskRevisionError,
@@ -91,6 +106,12 @@ from app.team.store import (
 from app.trace import TraceActorKind, TraceEvent, TraceEventType
 from app.trace.models import StoredTraceEvent
 from app.verification import VerificationPlan
+from app.verification.completion import (
+    CompletionConditionKind,
+    ReviewIssuePriority,
+    ReviewVerdict,
+)
+from app.verification.verifier import VerificationCheckKind
 from app.workspace import WorktreeError, WorktreeManager
 
 
@@ -587,6 +608,97 @@ class PersistentTaskService:
         except UnicodeDecodeError:
             return ArtifactDetail(metadata=metadata, preview_unavailable_reason="not_utf8")
         return ArtifactDetail(metadata=metadata, preview=preview)
+
+    async def get_delivery(self, task_id: UUID) -> TaskDeliveryView:
+        """Project the latest integrity-checked evidence, never Agent prose as success."""
+        try:
+            snapshot = self.tasks.get(task_id)
+        except TaskNotFoundError as exc:
+            raise TaskNotFound(str(exc)) from exc
+        task = snapshot.task
+        artifacts = self.router.artifacts
+        try:
+            recovered = EvidenceRecoveryService(artifacts, self.router.trace_store).recover(
+                task_id=task.id, trace_id=task.trace_id,
+            )
+            verification = recovered.verification
+            review = recovered.review
+            completion = recovered.completion
+            patch: ArtifactMetadata | None = None
+            if verification is not None and verification.change_set.diff_artifact is not None:
+                reference = verification.change_set.diff_artifact
+                patch = artifacts.get_metadata(reference.artifact_id)
+                if (patch.task_id != task.id or patch.trace_id != task.trace_id
+                        or patch.type is not ArtifactType.DIFF or patch.sha256 != reference.sha256):
+                    raise EvidenceRecoveryError("diff metadata does not match verified evidence")
+            review_follows = bool(
+                review is not None and recovered.review_sequence is not None
+                and recovered.verification_sequence is not None
+                and recovered.review_sequence > recovered.verification_sequence
+            )
+            return TaskDeliveryView(
+                task_id=task.id, trace_id=task.trace_id, task_state=task.state,
+                task_revision=snapshot.revision,
+                verification=DeliveryVerification(
+                    artifact=artifacts.get_metadata(verification.artifact.artifact_id),
+                    passed=verification.passed,
+                    checks=tuple(DeliveryCheck(
+                        kind=check.kind,
+                        name=("hidden_tests" if check.kind is VerificationCheckKind.HIDDEN_TESTS
+                              else check.name),
+                        status=check.status,
+                        detail=(None if check.kind is VerificationCheckKind.HIDDEN_TESTS
+                                else check.detail),
+                    ) for check in verification.checks),
+                    changed_files=tuple(item.path for item in verification.change_set.changed_files),
+                ) if verification is not None else None,
+                review=DeliveryReview(
+                    artifact=artifacts.get_metadata(review.artifact.artifact_id),
+                    verdict=review.verdict, summary=review.summary,
+                    issues=tuple(DeliveryReviewIssue(
+                        priority=issue.priority, summary=issue.summary, resolved=issue.resolved,
+                    ) for issue in review.issues),
+                    follows_latest_verification=review_follows,
+                ) if review is not None else None,
+                completion=DeliveryCompletion(
+                    artifact=artifacts.get_metadata(completion.artifact.artifact_id),
+                    passed=completion.passed,
+                    conditions=tuple(DeliveryCondition(
+                        kind=condition.kind, passed=condition.passed,
+                        detail=("hidden test status recorded" if condition.kind is CompletionConditionKind.HIDDEN_TESTS
+                                else condition.detail),
+                    ) for condition in completion.conditions),
+                ) if completion is not None else None,
+                patch=patch,
+                delivery_ready=(task.state is TaskState.COMPLETED and completion is not None
+                                and completion.passed and verification is not None
+                                and verification.passed
+                                and verification.change_set.has_effective_diff
+                                and review is not None and review.verdict is ReviewVerdict.APPROVED
+                                and not any(
+                                    not issue.resolved and issue.priority in {
+                                        ReviewIssuePriority.HIGH, ReviewIssuePriority.CRITICAL,
+                                    }
+                                    for issue in review.issues
+                                )
+                                and review_follows and patch is not None),
+            )
+        except (EvidenceRecoveryError, ArtifactNotFoundError, ArtifactIntegrityError) as exc:
+            raise TaskArtifactIntegrityError("delivery evidence failed integrity validation") from exc
+
+    async def get_patch_file(
+        self, task_id: UUID, artifact_id: UUID,
+    ) -> tuple[Path, ArtifactMetadata]:
+        """Return only the exact Diff bound to the latest recovered verification."""
+        delivery = await self.get_delivery(task_id)
+        if delivery.patch is None or delivery.patch.artifact_id != artifact_id:
+            raise TaskArtifactNotFound("patch is not the latest verified diff for this task")
+        try:
+            for _ in self.router.artifacts.iter_bytes(artifact_id):
+                pass
+            return self.router.artifacts.blob_path_for(artifact_id), delivery.patch
+        except (ArtifactNotFoundError, ArtifactIntegrityError) as exc:
+            raise TaskArtifactIntegrityError("patch content failed integrity check") from exc
 
     async def cancel_task(
         self, task_id: UUID, request: CancelTaskRequest

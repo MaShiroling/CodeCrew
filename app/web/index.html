@@ -104,8 +104,18 @@
                 <p id="control-error" class="control-error" role="alert" hidden></p>
               </section>
             </section>
+            <section id="delivery-panel" class="panel delivery-panel" aria-labelledby="delivery-title" hidden>
+              <div class="panel-head"><div><div class="section-kicker">04 / DELIVERY</div><h2 id="delivery-title">交付证据</h2></div><button id="delivery-refresh" type="button" class="delivery-refresh">刷新</button></div>
+              <p id="delivery-status" class="delivery-status" role="status">选择任务后读取证据…</p>
+              <div id="delivery-content" hidden>
+                <div class="delivery-group"><h3>Diff 与 Patch</h3><div id="delivery-diff"></div><a id="delivery-patch-download" class="delivery-download" hidden>下载 Patch ↓</a></div>
+                <div class="delivery-group"><h3>编译与测试</h3><div id="delivery-checks"></div></div>
+                <div class="delivery-group"><h3>独立 Review</h3><div id="delivery-review"></div></div>
+                <div class="delivery-group"><h3>完成守卫</h3><div id="delivery-guard"></div></div>
+              </div>
+            </section>
             <section class="panel evidence-panel" aria-labelledby="evidence-title">
-              <div class="panel-head"><div><div class="section-kicker">04 / ARTIFACT</div><h2 id="evidence-title">证据查看</h2></div><span class="panel-head-symbol">↗</span></div>
+              <div class="panel-head"><div><div class="section-kicker">05 / ARTIFACT</div><h2 id="evidence-title">证据查看</h2></div><span class="panel-head-symbol">↗</span></div>
               <div id="artifact-placeholder" class="evidence-empty"><div class="evidence-glyph">◈</div><p>点击对话中的证据引用<br>或方案版本查看内容</p></div>
               <div id="artifact-detail" hidden><div class="artifact-meta"><span id="artifact-type" class="artifact-type"></span><span id="artifact-size"></span></div><h3 id="artifact-name"></h3><div class="artifact-hash">SHA-256 <code id="artifact-hash"></code></div><pre id="artifact-preview" class="artifact-preview"></pre><p id="artifact-unavailable" class="artifact-unavailable" hidden></p></div>
             </section>

@@ -16,6 +16,8 @@ from app.team.budgets import (
     ConversationBudgetUsage,
     ConversationBudgetViolation,
 )
+from app.verification.completion import CompletionConditionKind, ReviewIssuePriority, ReviewVerdict
+from app.verification.verifier import VerificationCheckKind, VerificationStatus
 
 
 class RoomMessageView(BaseModel):
@@ -111,3 +113,71 @@ class ArtifactDetail(BaseModel):
     metadata: ArtifactMetadata
     preview: str | None = None
     preview_unavailable_reason: str | None = None
+
+
+class DeliveryCheck(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: VerificationCheckKind
+    name: str
+    status: VerificationStatus
+    detail: str | None = None
+
+
+class DeliveryVerification(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    artifact: ArtifactMetadata
+    passed: bool
+    checks: tuple[DeliveryCheck, ...]
+    changed_files: tuple[str, ...]
+
+
+class DeliveryReviewIssue(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    priority: ReviewIssuePriority
+    summary: str
+    resolved: bool
+
+
+class DeliveryReview(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    artifact: ArtifactMetadata
+    verdict: ReviewVerdict
+    summary: str
+    issues: tuple[DeliveryReviewIssue, ...]
+    follows_latest_verification: bool
+
+
+class DeliveryCondition(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: CompletionConditionKind
+    passed: bool
+    detail: str
+
+
+class DeliveryCompletion(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    artifact: ArtifactMetadata
+    passed: bool
+    conditions: tuple[DeliveryCondition, ...]
+
+
+class TaskDeliveryView(BaseModel):
+    """Read-only, evidence-backed summary; not an execution authorization."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    task_id: UUID
+    trace_id: UUID
+    task_state: TaskState
+    task_revision: int = Field(ge=1)
+    verification: DeliveryVerification | None = None
+    review: DeliveryReview | None = None
+    completion: DeliveryCompletion | None = None
+    patch: ArtifactMetadata | None = None
+    delivery_ready: bool = False

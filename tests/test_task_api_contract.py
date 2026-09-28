@@ -70,6 +70,8 @@ def test_task_routes_have_explicit_openapi_contract() -> None:
     assert "post" in paths["/api/v1/tasks"]
     assert "get" in paths["/api/v1/tasks"]
     assert "get" in paths["/api/v1/tasks/{task_id}"]
+    assert "get" in paths["/api/v1/tasks/{task_id}/delivery"]
+    assert "get" in paths["/api/v1/tasks/{task_id}/delivery/patch/{artifact_id}"]
     assert "post" in paths["/api/v1/tasks/{task_id}/cancel"]
     assert paths["/api/v1/tasks"]["post"]["responses"]["201"]
     assert paths["/api/v1/tasks/{task_id}/cancel"]["post"]["requestBody"]["required"]

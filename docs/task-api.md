@@ -15,6 +15,8 @@ OpenAPI 描述和统一错误响应。`PersistentTaskService` 可通过
 | `GET` | `/api/v1/tasks/{task_id}/messages` | `after_sequence`（默认 0）, `limit`（1～100） | `200 RoomMessagePage` |
 | `GET` | `/api/v1/tasks/{task_id}/plans` | UUID 路径参数 | `200 PlanPage` |
 | `GET` | `/api/v1/tasks/{task_id}/artifacts/{artifact_id}` | 两个 UUID 路径参数 | `200 ArtifactDetail` |
+| `GET` | `/api/v1/tasks/{task_id}/delivery` | UUID 路径参数 | `200 TaskDeliveryView` |
+| `GET` | `/api/v1/tasks/{task_id}/delivery/patch/{artifact_id}` | 两个 UUID 路径参数 | `200 text/x-diff` 附件 |
 | `POST` | `/api/v1/tasks/{task_id}/cancel` | `expected_revision`, `reason?` | `200 TaskView` |
 | `GET` | `/api/v1/tasks/{task_id}/events` | `after_sequence?` 或 `Last-Event-ID` | `200 text/event-stream` |
 
@@ -37,6 +39,12 @@ Artifact 接口同时校验 `task_id` 与 `trace_id` 归属；其他任务的 Ar
 `preview_unavailable_reason`，不开放任意路径或文件下载。尚无用户身份认证，仍仅适合
 可信本地环境。
 
+交付摘要只读恢复 Trace 与 Artifact 中最近的完整性校验过的 Verifier、Reviewer、
+CompletionGuard 证据，返回任务修订号与 `delivery_ready`；它不依赖 Agent 自述。
+Patch 下载只允许最近一次验证绑定的 Diff Artifact，且下载前校验哈希；它不是任意
+Artifact 下载。未完成任务的最近验证 Patch 不视为最终交付。详情及边界见
+[交付证据面板](ui-delivery-evidence.md)。
+
 本地任务工作台位于 `/ui/`，由同一个 FastAPI 进程提供静态 HTML/CSS/JavaScript；
 不需要额外的前端构建或服务。它使用上述 API 展示任务列表、状态、团队消息、Plan
 版本与 Artifact 预览，并可手动刷新、筛选与分页。选择非终态任务时，浏览器使用
@@ -45,7 +53,8 @@ Artifact 接口同时校验 `task_id` 与 `trace_id` 归属；其他任务的 Ar
 结束时关闭旧连接；界面保留手动刷新作为降级方式。页面现可提交仓库路径与 Issue 创建任务，
 成功后直接选中新任务；列表按创建时间最新优先。创建请求不会在网络结果不明时自动重试。
 选中非终态任务时可确认取消，页面携带当前 `revision`；收到 `409` 会刷新详情但不会自动
-重试取消。终态任务不显示取消按钮。聊天室输入仍未实现。当前没有登录或远程访问控制；默认未装配运行时的
+重试取消。终态任务不显示取消按钮。聊天室现已支持待人工状态发送消息和关联回复，
+以及显式预检、授权与继续；发送消息不自动唤醒 Agent。当前没有登录或远程访问控制；默认未装配运行时的
 应用会显示任务 API 不可用提示。使用
 `codecrew serve --config <JSON>` 显式装配运行时后，在本机打开
 `http://127.0.0.1:8000/ui/`。界面不把 Agent 的自然语言结论当作成功证据；任务状态

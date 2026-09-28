@@ -1,4 +1,4 @@
-const state = { tasks: [], nextOffset: null, selectedId: null, selectedTask: null, filter: 'all', messageCursor: 0, messageHasMore: false, messages: [], roomMembers: [], replyTarget: null, humanAttempts: new Map(), postingHuman: false, control: null, controlLoadError: null, controlTimer: null, controlMessageId: null, controlBusy: false, controlAttempts: new Map(), cancelAttempts: new Map(), inlineRoles: new Map(), inlineReasons: new Map(), inlineFeedback: null, requestId: 0, eventSource: null, refreshTimer: null, refreshingFor: null, refreshQueuedFor: null, creating: false, cancelling: false };
+const state = { tasks: [], nextOffset: null, selectedId: null, selectedTask: null, filter: 'all', messageCursor: 0, messageHasMore: false, messages: [], roomMembers: [], replyTarget: null, humanAttempts: new Map(), postingHuman: false, control: null, controlLoadError: null, controlTimer: null, controlMessageId: null, controlBusy: false, controlAttempts: new Map(), cancelAttempts: new Map(), inlineRoles: new Map(), inlineReasons: new Map(), inlineFeedback: null, delivery: null, deliveryError: null, deliveryRequestId: 0, requestId: 0, eventSource: null, refreshTimer: null, refreshingFor: null, refreshQueuedFor: null, creating: false, cancelling: false };
 const $ = (id) => document.getElementById(id);
 const api = async (path, options = {}) => {
   const response = await fetch(`/api/v1${path}`, {
@@ -82,6 +82,7 @@ function showTask(task) {
   renderCancelAction();
   renderHumanComposer();
   renderControl();
+  renderDelivery();
   if (state.messages.length) renderMessages(task.task_id);
 }
 
@@ -383,6 +384,7 @@ async function loadControl(taskId, requestId = state.requestId) {
       const task = await api(`/tasks/${encodeURIComponent(taskId)}`);
       if (taskId !== state.selectedId || requestId !== state.requestId) return;
       showTask(task);
+      void loadDelivery(taskId, requestId);
     }
     if (previousState === 'claimed' && control.latest_continuation?.receipt.state !== 'claimed') {
       await loadMessages(taskId, false, requestId);
@@ -546,6 +548,8 @@ function clearMissingTask(taskId) {
   state.controlLoadError = null;
   state.controlMessageId = null;
   state.inlineFeedback = null;
+  state.delivery = null;
+  state.deliveryError = null;
   closeControlPoll();
   renderTasks();
   renderCancelAction();
@@ -553,6 +557,7 @@ function clearMissingTask(taskId) {
   renderControl();
   $('task-detail').hidden = true;
   $('inspector-workflow').hidden = true;
+  $('delivery-panel').hidden = true;
   $('empty-detail').hidden = false;
   $('empty-detail').querySelector('h2').textContent = '任务已不存在';
   $('empty-detail').querySelector('p').textContent = '请刷新任务列表后重新选择。';
@@ -700,6 +705,7 @@ async function refreshSelected(taskId, requestId) {
     if (requestId !== state.requestId) return;
     renderPlans(plans.items, taskId);
     void loadControl(taskId, requestId);
+    void loadDelivery(taskId, requestId);
     if (messagesLoaded) notice('');
     if (terminal.has(task.state)) {
       closeStream();
@@ -908,6 +914,126 @@ function renderPlans(plans, taskId) {
   }
 }
 
+const checkNames = {
+  diff: '有效 Diff', permission: '目录权限', command_policy: '命令策略',
+  static_analysis: '静态检查', build: '编译', public_tests: '公开测试', hidden_tests: '隐藏测试',
+};
+const checkStates = { passed: '通过', failed: '失败', blocked: '受阻' };
+const conditionNames = {
+  valid_diff: '有效 Diff', static_or_build: '编译或静态检查', public_tests: '公开测试',
+  hidden_tests: '隐藏测试', permissions: '目录权限', command_policy: '命令策略',
+  verification: '确定性验证', review_approval: '独立评审批准',
+  high_priority_issues: '高优先级问题', evidence_integrity: '证据完整性',
+};
+
+function deliveryArtifactButton(taskId, artifactId, label) {
+  const button = node('button', 'delivery-artifact-button', label);
+  button.type = 'button';
+  button.addEventListener('click', () => { void loadArtifact(taskId, artifactId); });
+  return button;
+}
+
+function deliveryFact(label, result, passed) {
+  const row = node('div', 'delivery-fact');
+  row.append(node('span', '', label), node('strong', passed ? '' : 'is-failed', result));
+  return row;
+}
+
+function renderDelivery() {
+  const task = state.selectedTask;
+  const delivery = state.delivery?.task_id === state.selectedId ? state.delivery : null;
+  const status = $('delivery-status');
+  const content = $('delivery-content');
+  const download = $('delivery-patch-download');
+  content.hidden = true;
+  download.hidden = true;
+  download.href = '';
+  status.className = 'delivery-status';
+  if (!task) { status.textContent = '正在读取任务与交付证据…'; return; }
+  if (state.deliveryError) {
+    status.className = 'delivery-status is-error';
+    status.textContent = `交付证据读取失败：${state.deliveryError}。不能根据旧记录判断结果，请刷新。`;
+    return;
+  }
+  if (!delivery) { status.textContent = '正在读取交付证据…'; return; }
+  if (delivery.task_revision !== task.revision || delivery.trace_id !== task.trace_id
+      || delivery.task_state !== task.state) {
+    status.textContent = '交付证据与当前任务修订不一致，请刷新。';
+    return;
+  }
+  content.hidden = false;
+  status.className = `delivery-status${delivery.delivery_ready ? ' is-ready' : ''}`;
+  status.textContent = delivery.delivery_ready
+    ? '交付就绪：任务已完成，最新验证、独立 Review 与完成守卫证据一致。'
+    : '尚未形成可交付结论；下方展示最近一次可信证据，不代表任务成功。';
+
+  const diff = $('delivery-diff');
+  diff.replaceChildren();
+  if (delivery.patch) {
+    const changed = delivery.verification?.changed_files || [];
+    diff.append(node('p', '', `最近验证 Diff · ${changed.length} 个变更文件`));
+    if (changed.length) diff.append(node('p', 'delivery-muted',
+      `${changed.slice(0, 5).join('、')}${changed.length > 5 ? ` 等 ${changed.length} 个文件` : ''}`));
+    diff.append(deliveryArtifactButton(task.task_id, delivery.patch.artifact_id, '预览 Diff 证据 ↗'));
+    download.href = `/api/v1/tasks/${encodeURIComponent(task.task_id)}/delivery/patch/${encodeURIComponent(delivery.patch.artifact_id)}`;
+    download.textContent = delivery.delivery_ready ? '下载最终 Patch ↓' : '下载最近验证 Patch（非最终）↓';
+    download.hidden = false;
+  } else diff.append(node('p', 'delivery-muted', '尚无验证关联的有效 Diff 或 Patch。'));
+
+  const checks = $('delivery-checks');
+  checks.replaceChildren();
+  if (delivery.verification) {
+    checks.append(node('p', '', delivery.verification.passed ? 'Verifier 总结：通过' : 'Verifier 总结：未通过'));
+    for (const check of delivery.verification.checks) {
+      checks.append(deliveryFact(checkNames[check.kind] || check.name,
+        checkStates[check.status] || check.status, check.status === 'passed'));
+      if (check.detail) checks.append(node('p', 'delivery-muted', check.detail));
+    }
+    checks.append(deliveryArtifactButton(task.task_id, delivery.verification.artifact.artifact_id, '查看验证报告 ↗'));
+  } else checks.append(node('p', 'delivery-muted', '尚无确定性验证报告。'));
+
+  const review = $('delivery-review');
+  review.replaceChildren();
+  if (delivery.review) {
+    review.append(node('p', '', `最近评审：${delivery.review.verdict === 'approved' ? '批准' : '退回'}${delivery.review.follows_latest_verification ? '' : '（早于最新验证）'}`));
+    review.append(node('p', 'delivery-muted', delivery.review.summary));
+    for (const issue of delivery.review.issues) {
+      review.append(deliveryFact(`${issue.priority} · ${issue.summary}`, issue.resolved ? '已解决' : '未解决', issue.resolved));
+    }
+    review.append(deliveryArtifactButton(task.task_id, delivery.review.artifact.artifact_id, '查看 Review 证据 ↗'));
+  } else review.append(node('p', 'delivery-muted', '尚无独立 Review 结论。'));
+
+  const guard = $('delivery-guard');
+  guard.replaceChildren();
+  if (delivery.completion) {
+    guard.append(node('p', '', `CompletionGuard：${delivery.completion.passed ? '通过' : '未通过'}`));
+    for (const condition of delivery.completion.conditions) {
+      guard.append(deliveryFact(conditionNames[condition.kind] || condition.kind,
+        condition.passed ? '通过' : '未通过', condition.passed));
+    }
+    guard.append(deliveryArtifactButton(task.task_id, delivery.completion.artifact.artifact_id, '查看守卫判定 ↗'));
+  } else guard.append(node('p', 'delivery-muted', '尚无绑定最新验证与评审的完成守卫判定。'));
+}
+
+async function loadDelivery(taskId, requestId = state.requestId) {
+  const deliveryRequestId = ++state.deliveryRequestId;
+  try {
+    const delivery = await api(`/tasks/${encodeURIComponent(taskId)}/delivery`);
+    if (taskId !== state.selectedId || requestId !== state.requestId
+        || deliveryRequestId !== state.deliveryRequestId) return;
+    if (delivery.task_id !== taskId) throw new Error('交付证据不属于当前任务');
+    state.delivery = delivery;
+    state.deliveryError = null;
+    renderDelivery();
+  } catch (error) {
+    if (taskId !== state.selectedId || requestId !== state.requestId
+        || deliveryRequestId !== state.deliveryRequestId) return;
+    state.delivery = null;
+    state.deliveryError = error.message;
+    renderDelivery();
+  }
+}
+
 async function loadArtifact(taskId, artifactId) {
   try {
     const artifact = await api(`/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifactId)}`);
@@ -945,9 +1071,12 @@ async function selectTask(taskId) {
   state.controlLoadError = null;
   state.controlMessageId = null;
   state.inlineFeedback = null;
+  state.delivery = null;
+  state.deliveryError = null;
   renderCancelAction();
   renderHumanComposer();
   renderControl();
+  renderDelivery();
   state.requestId += 1;
   const requestId = state.requestId;
   state.messageCursor = 0;
@@ -955,6 +1084,7 @@ async function selectTask(taskId) {
   $('empty-detail').hidden = true;
   $('task-detail').hidden = false;
   $('inspector-workflow').hidden = false;
+  $('delivery-panel').hidden = false;
   $('live-status').textContent = '正在读取任务…';
   $('detail-title').textContent = '正在加载…';
   $('detail-issue').textContent = '';
@@ -983,6 +1113,7 @@ async function selectTask(taskId) {
     notice('');
     await loadMessages(taskId, false, requestId);
     await loadControl(taskId, requestId);
+    await loadDelivery(taskId, requestId);
     if (terminal.has(task.state)) $('live-status').textContent = task.state === 'needs_human'
       ? '等待人工输入 · 可发送消息' : '任务已结束 · 显示最终记录';
     else followTask(taskId, requestId);
@@ -990,6 +1121,7 @@ async function selectTask(taskId) {
     if (requestId !== state.requestId) return;
     $('task-detail').hidden = true;
     $('inspector-workflow').hidden = true;
+    $('delivery-panel').hidden = true;
     $('empty-detail').hidden = false;
     $('empty-detail').querySelector('h2').textContent = '任务详情暂不可用';
     $('empty-detail').querySelector('p').textContent = '请检查任务是否存在，或稍后重试。';
@@ -1009,6 +1141,7 @@ $('cancel-task').addEventListener('click', () => { void cancelTask(); });
 $('human-form').addEventListener('submit', (event) => { event.preventDefault(); void postHumanMessage(); });
 $('human-reply-clear').addEventListener('click', () => { state.replyTarget = null; humanError(''); renderHumanComposer(); });
 $('control-refresh').addEventListener('click', () => { if (state.selectedId) void loadControl(state.selectedId); });
+$('delivery-refresh').addEventListener('click', () => { if (state.selectedId) void loadDelivery(state.selectedId); });
 $('control-message').addEventListener('change', () => { state.controlMessageId = $('control-message').value; renderControl(); });
 $('control-role').addEventListener('change', renderControl);
 $('control-reason').addEventListener('input', renderControl);

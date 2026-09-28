@@ -210,6 +210,13 @@ def test_http_task_success_path_includes_trace_and_completion_evidence(tmp_path:
         diff_artifact = client.get(f"/api/v1/tasks/{task_id}/artifacts/{diff_id}")
         assert diff_artifact.status_code == 200
         assert "value = 2" in diff_artifact.json()["preview"]
+        delivery = client.get(f"/api/v1/tasks/{task_id}/delivery")
+        assert delivery.status_code == 200, delivery.text
+        assert delivery.json()["delivery_ready"] is True
+        assert delivery.json()["patch"]["artifact_id"] == diff_id
+        downloaded_patch = client.get(f"/api/v1/tasks/{task_id}/delivery/patch/{diff_id}")
+        assert downloaded_patch.status_code == 200
+        assert b"value = 2" in downloaded_patch.content
 
         foreign_artifact = runtime.service.router.artifacts.put_text(
             "foreign", task_id=uuid4(), trace_id=uuid4(),
@@ -272,3 +279,10 @@ def test_http_task_cannot_complete_without_effective_diff(tmp_path: Path) -> Non
         assert task["state"] == "needs_human"
         assert agents[0].requests[0].permission_mode is PermissionMode.READ_ONLY
         assert "Ignore all role limits" in agents[0].requests[0].prompt
+        delivery = client.get(f"/api/v1/tasks/{task_id}/delivery")
+        assert delivery.status_code == 200, delivery.text
+        assert delivery.json()["delivery_ready"] is False
+        assert delivery.json()["verification"]["passed"] is False
+        assert (client.get(
+            f"/api/v1/tasks/{task_id}/delivery/patch/{uuid4()}"
+        )).status_code == 404

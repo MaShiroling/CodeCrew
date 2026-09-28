@@ -51,6 +51,8 @@ const usage = { agent_turns: 1, reported_input_tokens: 10, reported_output_token
 const control = { task_id: 'task-a', task_state: 'needs_human', task_revision: 3, runtime_revision: 2,
   rework_rounds: 0, max_rework_rounds: 2, budget_policy: policy, budget_usage: usage,
   budget_violation: null, latest_continuation: null, latest_workflow_outcome: null, latest_cancellation: null };
+const delivery = { task_id: 'task-a', trace_id: 'trace-a', task_state: 'needs_human', task_revision: 3,
+  verification: null, review: null, completion: null, patch: null, delivery_ready: false };
 let nextUuid = 1;
 let mode = 'normal';
 let releasePreflight = null;
@@ -78,6 +80,9 @@ const fetch = async (url, options = {}) => {
   }
   if (url.endsWith('/control')) return mode === 'control-error'
     ? response(503, { error: { code: 'unavailable', message: 'control offline' } }) : response(200, control);
+  if (url.endsWith('/delivery')) return mode === 'delivery-error'
+    ? response(500, { error: { code: 'task_artifact_integrity_error', message: 'invalid evidence' } })
+    : response(200, delivery);
   if (url.endsWith('/continue/preflight')) {
     const body = JSON.parse(options.body);
     preflights.push(body);
@@ -137,6 +142,8 @@ const inlineStatus = (index = 0) => findClass(get('message-list').children[index
   assert.match(get('overview-agent-note').textContent, /不证明 Agent 正在运行/);
   assert.match(get('overview-blocking').textContent, /等待人工显式预检并继续/);
   assert.match(get('overview-recent').textContent, /任务已创建/);
+  assert.match(get('delivery-status').textContent, /尚未形成可交付结论/);
+  assert.equal(get('delivery-patch-download').hidden, true);
   assert.equal(get('continue-workflow').disabled, false);
   assert.equal(inlineButton().disabled, false);
   assert.equal(get('control-message').value, 'human-1');
@@ -266,4 +273,37 @@ const inlineStatus = (index = 0) => findClass(get('message-list').children[index
   vm.runInContext('renderControl()', context);
   assert.equal(get('overview-agent').textContent, '鲸鲸 · Reviewer');
   assert.match(get('overview-blocking').textContent, /快照未报告已知阻塞/);
+
+  mode = 'delivery-error';
+  await vm.runInContext('loadDelivery("task-a")', context);
+  assert.match(get('delivery-status').textContent, /证据读取失败/);
+  assert.equal(get('delivery-content').hidden, true);
+  assert.equal(get('delivery-patch-download').hidden, true);
+  mode = 'normal';
+  task.state = 'completed';
+  delivery.task_state = 'completed';
+  delivery.verification = { artifact: { artifact_id: 'verify-id' }, passed: true,
+    changed_files: ['src/app.py'], checks: [
+      { kind: 'build', name: 'compile', status: 'passed', detail: 'compile passed' },
+      { kind: 'public_tests', name: 'pytest', status: 'passed', detail: 'tests passed' },
+      { kind: 'hidden_tests', name: 'hidden_tests', status: 'passed', detail: null },
+    ] };
+  delivery.review = { artifact: { artifact_id: 'review-id' }, verdict: 'approved',
+    summary: '证据充分', issues: [], follows_latest_verification: true };
+  delivery.completion = { artifact: { artifact_id: 'guard-id' }, passed: true,
+    conditions: [{ kind: 'valid_diff', passed: true, detail: 'valid patch' }] };
+  delivery.patch = { artifact_id: 'patch-id', sha256: 'a'.repeat(64) };
+  delivery.delivery_ready = true;
+  await vm.runInContext('loadDelivery("task-a")', context);
+  assert.match(get('delivery-status').textContent, /交付就绪/);
+  assert.equal(get('delivery-content').hidden, false);
+  assert.equal(get('delivery-patch-download').hidden, false);
+  assert.match(get('delivery-patch-download').href, /task-a\/delivery\/patch\/patch-id$/);
+  assert.match(get('delivery-diff').children[0].textContent, /1 个变更文件/);
+  assert.match(get('delivery-checks').children[0].textContent, /Verifier 总结：通过/);
+  assert.match(get('delivery-guard').children[0].textContent, /CompletionGuard：通过/);
+  delivery.task_revision = 4;
+  await vm.runInContext('loadDelivery("task-a")', context);
+  assert.match(get('delivery-status').textContent, /修订不一致/);
+  assert.equal(get('delivery-patch-download').hidden, true);
 })().catch((error) => { console.error(error); process.exitCode = 1; });

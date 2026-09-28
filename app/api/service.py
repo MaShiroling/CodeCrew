@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Protocol
 from uuid import UUID
 
@@ -8,6 +9,7 @@ from app.api.details import (
     PlanPage,
     RoomMessagePage,
     TaskControlView,
+    TaskDeliveryView,
     TaskRoomView,
 )
 from app.api.models import (
@@ -23,6 +25,7 @@ from app.api.models import (
     TaskView,
 )
 from app.orchestration.models import TaskState
+from app.storage import ArtifactMetadata
 from app.storage.continuation_authorizations import ContinuationAuthorizationReceipt
 from app.storage.continuation_cancellations import ContinuationCancellationReceipt
 from app.storage.continuations import ContinuationQuarantineReceipt, ContinuationStatus
@@ -145,3 +148,9 @@ class TaskService(Protocol):
     async def list_plans(self, task_id: UUID) -> PlanPage: ...
 
     async def get_artifact(self, task_id: UUID, artifact_id: UUID) -> ArtifactDetail: ...
+
+    async def get_delivery(self, task_id: UUID) -> TaskDeliveryView: ...
+
+    async def get_patch_file(
+        self, task_id: UUID, artifact_id: UUID,
+    ) -> tuple[Path, ArtifactMetadata]: ...
