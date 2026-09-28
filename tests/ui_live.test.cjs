@@ -67,6 +67,7 @@ const runTimers = async () => { while (timers.length) { timers.shift()(); await 
   assert.equal(streams.length, 1);
   assert.match(streams[0].url, /task-a\/events$/);
   assert.equal(get('live-status').textContent, '正在连接实时事件…');
+  assert.equal(get('inspector-workflow').hidden, false);
 
   messages = [{ sequence: 1, sender_role: 'planner', sender_name: '白金', created_at: '2026-09-24T00:00:00Z', type: 'message', content: 'Plan ready', artifacts: [] }];
   streams[0].emit('chat_message_persisted');
@@ -101,6 +102,7 @@ const runTimers = async () => { while (timers.length) { timers.shift()(); await 
   failRoomFor = 'task-b';
   await vm.runInContext('selectTask("task-b")', context);
   assert.equal(get('task-detail').hidden, true);
+  assert.equal(get('inspector-workflow').hidden, true);
   assert.equal(get('empty-detail').hidden, false);
   assert.equal(get('empty-detail').querySelector('h2').textContent, '任务详情暂不可用');
   assert.match(get('notice').textContent, /Room unavailable/);

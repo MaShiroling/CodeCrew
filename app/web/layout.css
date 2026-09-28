@@ -1,0 +1,291 @@
+/* Layout-only layer for the conversation-first workspace. Visual identity is refined separately. */
+.app-shell {
+  display: block;
+}
+
+.main {
+  width: 100%;
+}
+
+.topbar {
+  height: 64px;
+  padding: 0 28px;
+}
+
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  min-width: 0;
+}
+
+.topbar .brand {
+  color: #19373a;
+  padding: 0;
+  flex: none;
+}
+
+.topbar .brand-mark {
+  width: 34px;
+  height: 34px;
+  border-color: #a9d6c7;
+  color: #147e6c;
+}
+
+.topbar .brand-copy small {
+  color: #6e9d91;
+}
+
+.content {
+  max-width: 1900px;
+  padding: 20px 28px 28px;
+}
+
+.page-heading {
+  margin-bottom: 18px;
+}
+
+.page-heading h1 {
+  font-size: 23px;
+  margin: 5px 0 2px;
+}
+
+.workspace-grid {
+  grid-template-columns: minmax(218px, 250px) minmax(0, 1fr) minmax(284px, 330px);
+  gap: 14px;
+  align-items: start;
+}
+
+.panel {
+  min-height: 0;
+}
+
+.task-panel {
+  position: sticky;
+  top: 14px;
+  max-height: calc(100vh - 92px);
+  display: flex;
+  flex-direction: column;
+}
+
+.task-panel .panel-head,
+.inspector-column .panel-head {
+  padding: 18px 17px 15px;
+}
+
+.task-panel .task-filters {
+  padding: 10px 10px 6px;
+}
+
+.task-list {
+  min-height: 0;
+  max-height: none;
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 8px 6px;
+}
+
+.task-card {
+  padding: 12px 10px;
+  margin: 2px 0;
+}
+
+.task-card-title {
+  margin: 8px 0 10px;
+}
+
+.detail-panel {
+  min-height: calc(100vh - 134px);
+  padding: 0 24px 24px;
+}
+
+.detail-top {
+  padding-top: 19px;
+}
+
+.detail-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  font-size: 18px !important;
+  line-height: 1.4;
+  margin: 11px 0 6px !important;
+}
+
+.issue-details {
+  margin-bottom: 12px;
+  border-bottom: 1px solid #e9eeeb;
+}
+
+.issue-details summary {
+  width: max-content;
+  max-width: 100%;
+  padding: 3px 0 12px;
+  cursor: pointer;
+  color: #62847b;
+  font-size: 11px;
+}
+
+.issue-details summary:focus-visible {
+  outline: 2px solid #0d927e;
+  outline-offset: 3px;
+}
+
+.detail-issue {
+  max-height: 200px;
+  margin: 0 0 13px;
+}
+
+.member-row {
+  padding: 12px 0 6px;
+}
+
+.message-list {
+  max-height: none;
+  overflow: visible;
+}
+
+.inspector-column {
+  position: sticky;
+  top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  max-height: calc(100vh - 92px);
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.inspector-column .panel {
+  flex: none;
+}
+
+.workflow-panel .meta-strip {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin: 14px 16px 0;
+  padding: 11px 0;
+}
+
+.workflow-panel .meta-strip div {
+  padding: 0 10px;
+}
+
+.workflow-panel .meta-strip div:first-child {
+  grid-column: 1 / -1;
+  border-right: 0;
+  border-bottom: 1px solid #e1ebe6;
+  padding-bottom: 10px;
+  margin-bottom: 10px;
+}
+
+.workflow-panel .meta-strip div:last-child {
+  border-right: 0;
+}
+
+.workflow-panel .control-panel {
+  border: 0;
+  background: transparent;
+  border-radius: 0;
+  padding: 17px 16px 18px;
+  margin: 0;
+}
+
+.workflow-panel .control-fields {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.workflow-panel .control-fields label:last-child {
+  grid-column: auto;
+}
+
+.evidence-panel .evidence-empty {
+  height: 170px;
+}
+
+.evidence-panel #artifact-detail {
+  padding: 17px;
+}
+
+@media (max-width: 1120px) {
+  .workspace-grid {
+    grid-template-columns: minmax(205px, 230px) minmax(0, 1fr);
+  }
+
+  .inspector-column {
+    grid-column: 2;
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 760px) {
+  .topbar {
+    padding: 0 18px;
+  }
+
+  .topbar .breadcrumb,
+  .topbar #clock {
+    display: none;
+  }
+
+  .content {
+    padding: 17px 15px 24px;
+  }
+
+  .workspace-grid {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .task-panel,
+  .detail-panel,
+  .inspector-column {
+    width: 100%;
+    position: static;
+  }
+
+  .task-panel {
+    max-height: 260px;
+  }
+
+  .detail-panel {
+    min-height: 420px;
+  }
+
+  .inspector-column {
+    max-height: none;
+  }
+}
+
+@media (max-width: 500px) {
+  .topbar .brand-copy small,
+  .topbar-right .read-only-pill,
+  .page-heading p {
+    display: none;
+  }
+
+  .page-heading {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .page-heading h1 {
+    font-size: 20px;
+  }
+
+  .heading-actions {
+    width: auto;
+  }
+
+  .create-toggle {
+    padding: 9px 10px;
+  }
+
+  .detail-panel {
+    padding: 0 16px 18px;
+  }
+}

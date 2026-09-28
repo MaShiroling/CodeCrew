@@ -458,6 +458,7 @@ function clearMissingTask(taskId) {
   renderHumanComposer();
   renderControl();
   $('task-detail').hidden = true;
+  $('inspector-workflow').hidden = true;
   $('empty-detail').hidden = false;
   $('empty-detail').querySelector('h2').textContent = '任务已不存在';
   $('empty-detail').querySelector('p').textContent = '请刷新任务列表后重新选择。';
@@ -765,6 +766,7 @@ async function selectTask(taskId) {
   closeControlPoll();
   if (state.selectedId !== taskId) {
     $('human-content').value = '';
+    $('issue-details').open = false;
     humanError('');
     humanStatus('');
     controlError('');
@@ -785,6 +787,7 @@ async function selectTask(taskId) {
   renderTasks();
   $('empty-detail').hidden = true;
   $('task-detail').hidden = false;
+  $('inspector-workflow').hidden = false;
   $('live-status').textContent = '正在读取任务…';
   $('detail-title').textContent = '正在加载…';
   $('detail-issue').textContent = '';
@@ -819,6 +822,7 @@ async function selectTask(taskId) {
   } catch (error) {
     if (requestId !== state.requestId) return;
     $('task-detail').hidden = true;
+    $('inspector-workflow').hidden = true;
     $('empty-detail').hidden = false;
     $('empty-detail').querySelector('h2').textContent = '任务详情暂不可用';
     $('empty-detail').querySelector('p').textContent = '请检查任务是否存在，或稍后重试。';

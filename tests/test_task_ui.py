@@ -22,7 +22,13 @@ def test_task_ui_serves_local_assets_without_task_runtime() -> None:
         assert 'id="control-panel"' in page.text
         assert 'id="continue-workflow"' in page.text
         assert 'id="cancel-continuation"' in page.text
+        assert 'class="topbar-left"' in page.text
+        assert '<details id="issue-details"' in page.text
+        assert 'class="inspector-column"' in page.text
+        assert page.text.index('id="message-list"') < page.text.index('id="control-panel"')
+        assert 'class="sidebar"' not in page.text
         assert 'src="/ui/assets/app.js"' in page.text
+        assert 'href="/ui/assets/layout.css"' in page.text
         assert client.get("/ui").status_code == 200
 
         javascript = client.get("/ui/assets/app.js")
@@ -33,6 +39,10 @@ def test_task_ui_serves_local_assets_without_task_runtime() -> None:
         stylesheet = client.get("/ui/assets/styles.css")
         assert stylesheet.status_code == 200
         assert "workspace-grid" in stylesheet.text
+        layout = client.get("/ui/assets/layout.css")
+        assert layout.status_code == 200
+        assert "grid-template-columns: minmax(218px, 250px)" in layout.text
+        assert "@media (max-width: 760px)" in layout.text
         assert client.get("/ui/assets/missing.js").status_code == 404
         assert client.get("/health").status_code == 200
         assert client.get("/api/v1/tasks").status_code == 503
