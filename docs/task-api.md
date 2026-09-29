@@ -13,6 +13,7 @@ OpenAPI 描述和统一错误响应。`PersistentTaskService` 可通过
 | `GET` | `/api/v1/tasks/{task_id}` | UUID 路径参数 | `200 TaskView` |
 | `GET` | `/api/v1/tasks/{task_id}/room` | UUID 路径参数 | `200 TaskRoomView` |
 | `GET` | `/api/v1/tasks/{task_id}/messages` | `after_sequence`（默认 0）, `limit`（1～100） | `200 RoomMessagePage` |
+| `POST` | `/api/v1/tasks/{task_id}/messages/discussion` | `expected_revision`, `idempotency_key`, `content`, `reply_to?` | `201 DiscussionMessageReceipt` |
 | `GET` | `/api/v1/tasks/{task_id}/plans` | UUID 路径参数 | `200 PlanPage` |
 | `GET` | `/api/v1/tasks/{task_id}/artifacts/{artifact_id}` | 两个 UUID 路径参数 | `200 ArtifactDetail` |
 | `GET` | `/api/v1/tasks/{task_id}/delivery` | UUID 路径参数 | `200 TaskDeliveryView` |
@@ -38,6 +39,11 @@ Artifact 接口同时校验 `task_id` 与 `trace_id` 归属；其他任务的 Ar
 小于等于 128 KiB 的 UTF-8 文本/JSON 提供 `preview`，大文件或二进制只给元数据及
 `preview_unavailable_reason`，不开放任意路径或文件下载。尚无用户身份认证，仍仅适合
 可信本地环境。
+
+讨论消息 API 为 8.1 的独立契约：`@` 三位 Agent 或回复某条 Agent 消息，持久化
+为 `discussion` 类型，并返回明确的非执行回执。它不唤醒 Agent，不改变任务状态，
+也不能用于受控工作流预检/继续；前端输入和讨论调度分别留待 8.3、8.2。
+详见[讨论消息契约](discussion-contract.md)。
 
 交付摘要只读恢复 Trace 与 Artifact 中最近的完整性校验过的 Verifier、Reviewer、
 CompletionGuard 证据，返回任务修订号与 `delivery_ready`；它不依赖 Agent 自述。

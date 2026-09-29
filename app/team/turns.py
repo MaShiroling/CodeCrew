@@ -190,7 +190,7 @@ class AgentTurnRunner:
             raise AgentTurnError("clarification-only turns require an implementer")
         permission_mode = PermissionMode.READ_ONLY if clarification_only else _PERMISSIONS[member.role]
         incoming = (
-            self.rooms.pending_for(member_id, limit=self.pending_limit)
+            self.rooms.pending_for(member_id, limit=self.pending_limit, exclude_discussion=True)
             if input_message_ids is None
             else self._selected_inputs(task, room_id, member_id, input_message_ids)
         )
@@ -423,6 +423,8 @@ class AgentTurnRunner:
         selected = tuple(self.rooms.get_message(message_id) for message_id in message_ids)
         for item in selected:
             message = item.message
+            if message.type is MessageType.DISCUSSION:
+                raise AgentTurnError("discussion is not an execution input")
             if (message.task_id != task.id or message.trace_id != task.trace_id
                     or message.room_id != room_id):
                 raise AgentTurnError("selected input belongs to another task or room")

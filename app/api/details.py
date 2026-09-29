@@ -56,6 +56,19 @@ class HumanMessageReceipt(BaseModel):
     agent_dispatched: Literal[False] = False
 
 
+class DiscussionMessageReceipt(BaseModel):
+    """A queued conversation message, never a workflow admission receipt."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    scope: Literal["discussion"] = "discussion"
+    message: RoomMessageView
+    target_roles: tuple[MemberRole, ...]
+    task_revision: int = Field(ge=1)
+    execution_authorized: Literal[False] = False
+    agent_dispatched: Literal[False] = False
+
+
 class ContinueTaskPreflight(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 

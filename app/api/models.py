@@ -48,6 +48,17 @@ class PostHumanMessageRequest(BaseModel):
         return self
 
 
+class PostDiscussionMessageRequest(BaseModel):
+    """Address Agent teammates in a room without granting execution authority."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    expected_revision: int = Field(ge=1, strict=True)
+    idempotency_key: UUID
+    content: str = Field(min_length=1, max_length=16_000)
+    reply_to: UUID | None = None
+
+
 class TaskView(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 

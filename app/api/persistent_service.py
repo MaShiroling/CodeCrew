@@ -15,6 +15,7 @@ from app.api.details import (
     DeliveryReview,
     DeliveryReviewIssue,
     DeliveryVerification,
+    DiscussionMessageReceipt,
     HumanMessageReceipt,
     PlanPage,
     RoomMessagePage,
@@ -22,6 +23,7 @@ from app.api.details import (
     TaskDeliveryView,
     TaskRoomView,
 )
+from app.api.discussion import build_discussion_message
 from app.api.human_messages import build_human_message, message_view
 from app.api.models import (
     AuthorizeContinuationRequest,
@@ -30,6 +32,7 @@ from app.api.models import (
     ContinueTaskPreflightRequest,
     ContinueTaskRequest,
     CreateTaskRequest,
+    PostDiscussionMessageRequest,
     PostHumanMessageRequest,
     QuarantineContinuationRequest,
     TaskPage,
@@ -352,6 +355,33 @@ class PersistentTaskService:
             except ConversationRoutingError as exc:
                 raise TaskMessageInvalid("human message is not allowed in this room") from exc
             return HumanMessageReceipt(message=message_view(stored, room), task_revision=snapshot.revision)
+
+    async def post_discussion_message(
+        self, task_id: UUID, request: PostDiscussionMessageRequest,
+    ) -> DiscussionMessageReceipt:
+        """Persist a discussion only; do not enter the workflow or wake an Agent."""
+        async with self._lock:
+            task, room = self._task_room(task_id)
+            snapshot = self.tasks.get(task_id)
+            if snapshot.revision != request.expected_revision:
+                raise TaskStateConflict("task revision changed")
+            if (task_id in self._cancelling or task.state in {
+                TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED,
+            } or room.status is not RoomStatus.ACTIVE):
+                raise TaskStateConflict("discussion requires an active, non-final task room")
+            message, roles = build_discussion_message(task, room, self.rooms, request)
+            try:
+                stored = self.router.route(message, authenticated_sender_id=message.sender_id)
+            except ChatIdempotencyConflictError as exc:
+                raise TaskMessageConflict("idempotency key was used for different discussion") from exc
+            except RoomConflictError as exc:
+                raise TaskMessageConflict("task room changed") from exc
+            except ConversationRoutingError as exc:
+                raise TaskMessageInvalid("discussion route is not allowed") from exc
+            return DiscussionMessageReceipt(
+                message=message_view(stored, room), target_roles=roles,
+                task_revision=snapshot.revision,
+            )
 
     async def preflight_continue_task(
         self, task_id: UUID, request: ContinueTaskPreflightRequest,

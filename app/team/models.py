@@ -34,6 +34,7 @@ class MemberKind(str, Enum):
 class MessageType(str, Enum):
     ISSUE_POSTED = "issue_posted"
     MESSAGE = "message"
+    DISCUSSION = "discussion"
     QUESTION = "question"
     ANSWER = "answer"
     STATUS_UPDATE = "status_update"

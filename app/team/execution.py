@@ -282,7 +282,9 @@ class WorkflowDirectiveExecutor:
             # Multiple messages produced by one Agent turn can each request a wake-up.
             # The first wake consumes the complete pending batch, so later directives
             # are intentionally coalesced instead of failing with "no pending messages".
-            if input_message_ids is None and not self.turns.rooms.pending_for(member.member_id, limit=1):
+            if input_message_ids is None and not self.turns.rooms.pending_for(
+                member.member_id, limit=1, exclude_discussion=True,
+            ):
                 continue
             violation = self.budget_guard.evaluate(runtime.task.id, room_id=runtime.room_id)
             if violation is not None:

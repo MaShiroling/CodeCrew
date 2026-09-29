@@ -5,6 +5,7 @@ from uuid import UUID
 from app.api.details import (
     ArtifactDetail,
     ContinueTaskPreflight,
+    DiscussionMessageReceipt,
     HumanMessageReceipt,
     PlanPage,
     RoomMessagePage,
@@ -19,6 +20,7 @@ from app.api.models import (
     ContinueTaskPreflightRequest,
     ContinueTaskRequest,
     CreateTaskRequest,
+    PostDiscussionMessageRequest,
     PostHumanMessageRequest,
     QuarantineContinuationRequest,
     TaskPage,
@@ -120,6 +122,10 @@ class TaskService(Protocol):
     async def post_human_message(
         self, task_id: UUID, request: PostHumanMessageRequest,
     ) -> HumanMessageReceipt: ...
+
+    async def post_discussion_message(
+        self, task_id: UUID, request: PostDiscussionMessageRequest,
+    ) -> DiscussionMessageReceipt: ...
 
     async def preflight_continue_task(
         self, task_id: UUID, request: ContinueTaskPreflightRequest,

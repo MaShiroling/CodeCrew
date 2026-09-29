@@ -7,6 +7,7 @@ from fastapi.responses import FileResponse
 from app.api.details import (
     ArtifactDetail,
     ContinueTaskPreflight,
+    DiscussionMessageReceipt,
     HumanMessageReceipt,
     PlanPage,
     RoomMessagePage,
@@ -23,6 +24,7 @@ from app.api.models import (
     ContinueTaskPreflightRequest,
     ContinueTaskRequest,
     CreateTaskRequest,
+    PostDiscussionMessageRequest,
     PostHumanMessageRequest,
     QuarantineContinuationRequest,
     TaskPage,
@@ -114,6 +116,14 @@ async def post_human_message(
     task_id: UUID, request: PostHumanMessageRequest, service: TaskServiceDependency,
 ) -> HumanMessageReceipt:
     return await service.post_human_message(task_id, request)
+
+
+@router.post("/{task_id}/messages/discussion", response_model=DiscussionMessageReceipt,
+             status_code=status.HTTP_201_CREATED, responses=ERROR_RESPONSES)
+async def post_discussion_message(
+    task_id: UUID, request: PostDiscussionMessageRequest, service: TaskServiceDependency,
+) -> DiscussionMessageReceipt:
+    return await service.post_discussion_message(task_id, request)
 
 
 @router.get("/{task_id}/plans", response_model=PlanPage, responses=ERROR_RESPONSES)

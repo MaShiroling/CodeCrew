@@ -351,6 +351,7 @@ class TeamRoomStore:
         *,
         after_sequence: int = 0,
         limit: int = 100,
+        exclude_discussion: bool = False,
     ) -> tuple[StoredChatMessage, ...]:
         if after_sequence < 0:
             raise ValueError("after_sequence cannot be negative")
@@ -366,12 +367,15 @@ class TeamRoomStore:
                 SELECT m.message_id FROM chat_messages m
                 JOIN chat_deliveries d ON d.message_id = m.message_id
                 WHERE d.recipient_id = ? AND d.status = ? AND m.sequence > ?
+                  AND (? = 0 OR m.message_type != ?)
                 ORDER BY m.sequence LIMIT ?
                 """,
                 (
                     str(member_id),
                     MessageDeliveryStatus.PENDING.value,
                     after_sequence,
+                    int(exclude_discussion),
+                    MessageType.DISCUSSION.value,
                     limit,
                 ),
             ).fetchall()
