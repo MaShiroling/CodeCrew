@@ -1,5 +1,11 @@
 # CodeCrew｜异构编码 Agent 协作与可靠性评测平台
 
+> **当前简历版主线：开发协作型多 Agent 聊天室。** 无仓库的独立聊天后端
+> 已定向离线验收；接下来先完成独立 UI、真实三模型浏览器对话，再做一次
+> Human 显式授权的代码修复演示。正式可靠性评测平台暂缓，不作为本版完成条件。
+> 当前进度以[精简开发路线](docs/portfolio-roadmap.md)为准；下文保留既有编码
+> 工作流的实现与历史验收记录。
+
 CodeCrew 是一个面向软件变更任务的独立开源项目。它把 Codex CLI、Kimi Code CLI、
 Claude Code 等不同 Agent 执行环境组织成一支职责明确的编码团队，并使用确定性程序
 验证代码变更，而不是接受 Agent 对“任务已经完成”的自然语言声明。
@@ -31,8 +37,9 @@ Prompt、UI、文档或品牌资源。CodeCrew 聚焦代码开发协作；规划
 > 独立聊天 UI 入口与真实三模型验收仍待后续步骤；正式评测集也未完成。
 > 第 5～6 步定向测试通过；全量离线测试仍有 9 项已在第 5 步改动前快照复现的 continuation 失败，
 > 不能视为全量通过。
-> 最新验证状态见[项目状态](docs/project-status.md)，后续交付见
-> [15 步开发进度表](docs/development-plan.md)，每次开发完成后同步更新。
+> 最新验证状态见[项目状态](docs/project-status.md)，当前后续交付见
+> [精简开发路线](docs/portfolio-roadmap.md)；原[15 步计划](docs/development-plan.md)
+> 保留为历史记录。
 
 ## 目标工作流
 
@@ -465,7 +472,7 @@ docs/                # 架构和 Adapter 文档
 但它还不是操作系统级沙箱。被允许执行的编译器或测试进程仍是本机进程。
 在运行不可信仓库之前，应使用额外的容器、虚拟机或操作系统沙箱；Docker 隔离计划作为后续可选能力。
 
-## 开发路线
+## 历史开发路线（当前请看[精简路线](docs/portfolio-roadmap.md)）
 
 - [x] 阶段一：项目骨架、配置和任务状态模型
 - [x] 阶段二：AgentAdapter、Claude Code、Codex CLI 和 Fake Agent
