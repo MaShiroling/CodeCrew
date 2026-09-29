@@ -6,6 +6,7 @@ from app import cli
 from app.config import Settings
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "examples/server-config.python.json"
+CHAT_TEAM_EXAMPLE = Path(__file__).resolve().parents[1] / "examples/server-config.chat-team.json"
 
 
 def test_example_config_builds_runnable_api(tmp_path: Path) -> None:
@@ -20,6 +21,33 @@ def test_example_config_builds_runnable_api(tmp_path: Path) -> None:
     )
     assert app.state.task_service is not None
     assert "/api/v1/tasks" in app.openapi()["paths"]
+
+
+def test_chat_team_example_binds_three_requested_adapters(tmp_path: Path, monkeypatch) -> None:
+    config = cli.load_server_config(CHAT_TEAM_EXAMPLE)
+    assert (config.planner_adapter, config.implementer_adapter, config.reviewer_adapter) == (
+        "codex-cli", "kimi-code-cli", "deepseek-claude-reviewer",
+    )
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'tasks.sqlite3'}",
+        artifact_root=tmp_path / "artifacts",
+        worktree_root=tmp_path / "worktrees",
+    )
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("KIMI_MODEL_API_KEY", raising=False)
+    with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
+        cli.build_server_app(config, settings=settings)
+    monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+    with pytest.raises(ValueError, match="KIMI_MODEL_API_KEY"):
+        cli.build_server_app(config, settings=settings)
+    monkeypatch.setenv("KIMI_MODEL_API_KEY", "test-key")
+    monkeypatch.setattr(cli.platform, "system", lambda: "Darwin")
+    app = cli.build_server_app(config, settings=settings)
+    assert app.state.task_service.agent_names == {
+        cli.MemberRole.PLANNER: "codex-cli",
+        cli.MemberRole.IMPLEMENTER: "kimi-code-cli",
+        cli.MemberRole.REVIEWER: "deepseek-claude-reviewer",
+    }
 
 
 def test_cli_serve_binds_local_single_worker(tmp_path: Path, monkeypatch) -> None:

@@ -329,6 +329,15 @@ CODECREW_RUN_DISCUSSION_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_dis
 
 默认不会运行该测试；真实模型测试通过前，不把 8.4 标记为完成。
 
+若要在本机 UI 使用这三种真实适配器，可在同一终端设置上述密钥后运行：
+
+```bash
+.venv/bin/python -m app.cli serve --config examples/server-config.chat-team.json --port 8000
+```
+
+此示例只确定 Agent 绑定；其中的 `tests/hidden` 仍是占位路径，运行编码任务前必须按
+目标仓库修改验证命令、授权目录与 Worktree 根目录。真实三模型 UI 对话尚未在线验收。
+
 使用显式策略启动可执行任务的本地单 worker API：
 
 ```bash

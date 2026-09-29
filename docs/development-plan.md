@@ -230,7 +230,9 @@
 - `tests/integration/test_discussion_live.py` 提供显式 opt-in 的三真实模型小型只读讨论验收，
   上限六个 Agent 回合，要求本机 CLI 与两个环境密钥；默认跳过。本次进程未设置
   `KIMI_MODEL_API_KEY` 和 `DEEPSEEK_API_KEY`，因此没有运行真实模型、没有产生在线
-  成功结论；真实模型 UI 浏览器验收仍待执行。8.4 尚不能标记完成。
+  成功结论。新增 `examples/server-config.chat-team.json` 明确绑定三种真实适配器，
+  仅用于本地可信环境，验证计划仍含占位路径；真实模型 UI 浏览器验收仍待执行。
+  8.4 尚不能标记完成。
 
 ## 里程碑
 
