@@ -10,7 +10,7 @@ from fastapi import Request
 from fastapi.responses import StreamingResponse
 
 from app.api.service import TaskService
-from app.orchestration.models import TERMINAL_STATES
+from app.orchestration.models import TaskState
 from app.trace import TraceEvent
 
 
@@ -37,7 +37,7 @@ async def stream_task_events(
     heartbeat_seconds: float = 15.0,
     batch_size: int = 100,
 ) -> AsyncIterator[str]:
-    """Replay stored rows, then follow new rows until terminal or disconnect."""
+    """Replay stored rows, then follow chat-capable tasks until final or disconnect."""
     if after_sequence < 0 or poll_seconds <= 0 or heartbeat_seconds <= 0 or batch_size <= 0:
         raise ValueError("SSE cursor, polling, heartbeat, and batch settings must be valid")
     cursor = after_sequence
@@ -56,7 +56,7 @@ async def stream_task_events(
             last_sent = monotonic()
             continue
         task = await service.get_task(task_id)
-        if task.state in TERMINAL_STATES:
+        if task.state in {TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED}:
             return
         if monotonic() - last_sent >= heartbeat_seconds:
             yield ": keepalive\n\n"

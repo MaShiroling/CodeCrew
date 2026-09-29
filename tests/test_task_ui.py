@@ -19,6 +19,11 @@ def test_task_ui_serves_local_assets_without_task_runtime() -> None:
         assert 'id="cancel-task"' in page.text
         assert 'id="human-form"' in page.text
         assert 'id="human-reply"' in page.text
+        assert 'id="discussion-form"' in page.text
+        assert 'id="discussion-content"' in page.text
+        assert 'data-discussion-mention="@白金"' in page.text
+        assert page.text.index('id="message-list"') < page.text.index('id="discussion-form"')
+        assert page.text.index('id="discussion-form"') < page.text.index('id="human-form"')
         assert 'id="control-panel"' in page.text
         assert 'id="overview-phase"' in page.text
         assert 'id="overview-agent"' in page.text
@@ -58,6 +63,7 @@ def test_task_ui_serves_local_assets_without_task_runtime() -> None:
         assert theme.status_code == 200
         assert "prefers-reduced-motion" in theme.text
         assert ".message-human" in theme.text
+        assert ".discussion-composer" in theme.text
         assert client.get("/ui/assets/missing.js").status_code == 404
         assert client.get("/health").status_code == 200
         assert client.get("/api/v1/tasks").status_code == 503
@@ -91,6 +97,14 @@ def test_ui_human_message_and_reply_with_mock_api() -> None:
     if shutil.which("node") is None:
         pytest.skip("Node.js is not installed; browser script harness unavailable")
     script = Path(__file__).with_name("ui_human.test.cjs")
+    subprocess.run(["node", "--check", str(script)], check=True)
+    subprocess.run(["node", str(script)], check=True)
+
+
+def test_ui_discussion_and_live_reply_with_mock_api() -> None:
+    if shutil.which("node") is None:
+        pytest.skip("Node.js is not installed; browser script harness unavailable")
+    script = Path(__file__).with_name("ui_discussion.test.cjs")
     subprocess.run(["node", "--check", str(script)], check=True)
     subprocess.run(["node", str(script)], check=True)
 

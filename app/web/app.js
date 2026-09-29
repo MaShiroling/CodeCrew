@@ -1,4 +1,4 @@
-const state = { tasks: [], nextOffset: null, selectedId: null, selectedTask: null, filter: 'all', messageCursor: 0, messageHasMore: false, messages: [], roomMembers: [], replyTarget: null, humanAttempts: new Map(), postingHuman: false, control: null, controlLoadError: null, controlTimer: null, controlMessageId: null, controlBusy: false, controlAttempts: new Map(), cancelAttempts: new Map(), inlineRoles: new Map(), inlineReasons: new Map(), inlineFeedback: null, delivery: null, deliveryError: null, deliveryRequestId: 0, requestId: 0, eventSource: null, refreshTimer: null, refreshingFor: null, refreshQueuedFor: null, creating: false, cancelling: false };
+const state = { tasks: [], nextOffset: null, selectedId: null, selectedTask: null, filter: 'all', messageCursor: 0, messageHasMore: false, messages: [], roomMembers: [], replyTarget: null, humanAttempts: new Map(), postingHuman: false, discussionReplyTarget: null, discussionDrafts: new Map(), discussionAttempts: new Map(), postingDiscussion: false, awaitingDiscussion: null, control: null, controlLoadError: null, controlTimer: null, controlMessageId: null, controlBusy: false, controlAttempts: new Map(), cancelAttempts: new Map(), inlineRoles: new Map(), inlineReasons: new Map(), inlineFeedback: null, delivery: null, deliveryError: null, deliveryRequestId: 0, requestId: 0, eventSource: null, refreshTimer: null, refreshingFor: null, refreshQueuedFor: null, creating: false, cancelling: false };
 const $ = (id) => document.getElementById(id);
 const api = async (path, options = {}) => {
   const response = await fetch(`/api/v1${path}`, {
@@ -87,6 +87,7 @@ function showTask(task) {
   if (index !== -1) state.tasks[index] = task;
   renderTasks();
   renderCancelAction();
+  renderDiscussionComposer();
   renderHumanComposer();
   renderControl();
   renderDelivery();
@@ -101,6 +102,130 @@ function humanError(message) {
 function humanStatus(message) {
   $('human-status').textContent = message;
   $('human-status').hidden = !message;
+}
+
+function discussionError(message) {
+  $('discussion-error').textContent = message;
+  $('discussion-error').hidden = !message;
+}
+
+function discussionStatus(message) {
+  $('discussion-status').textContent = message;
+  $('discussion-status').hidden = !message;
+}
+
+function renderDiscussionComposer() {
+  const available = !!state.selectedTask && !finishedStates.has(state.selectedTask.state)
+    && state.roomMembers.some((member) => member.role === 'human' && member.kind === 'human')
+    && state.roomMembers.some((member) => ['planner', 'implementer', 'reviewer'].includes(member.role));
+  $('discussion-composer').hidden = !available;
+  $('discussion-submit').disabled = state.postingDiscussion || !available;
+  $('discussion-submit').textContent = state.postingDiscussion ? '发送中…' : '发送讨论';
+  $('discussion-reply').hidden = !state.discussionReplyTarget;
+  if (state.discussionReplyTarget) {
+    $('discussion-reply-summary').textContent = `讨论回复 ${state.discussionReplyTarget.sender_name}：${state.discussionReplyTarget.content.slice(0, 120)}`;
+  }
+  document.querySelectorAll('[data-discussion-mention]').forEach((button) => { button.disabled = !available || state.postingDiscussion; });
+}
+
+function selectDiscussionReply(message) {
+  if (state.postingDiscussion || finishedStates.has(state.selectedTask?.state)
+      || !['planner', 'implementer', 'reviewer'].includes(message.sender_role)) return;
+  state.discussionReplyTarget = { message_id: message.message_id, sender_name: message.sender_name, content: message.content };
+  discussionError('');
+  discussionStatus('');
+  renderDiscussionComposer();
+  $('discussion-content').focus();
+}
+
+function insertDiscussionMention(mention) {
+  if (state.postingDiscussion || $('discussion-composer').hidden) return;
+  const input = $('discussion-content');
+  const start = Number.isInteger(input.selectionStart) ? input.selectionStart : input.value.length;
+  const end = Number.isInteger(input.selectionEnd) ? input.selectionEnd : start;
+  const prefix = start > 0 && !/\s/.test(input.value[start - 1]) ? ' ' : '';
+  const insertion = `${prefix}${mention} `;
+  input.value = `${input.value.slice(0, start)}${insertion}${input.value.slice(end)}`;
+  state.discussionDrafts.set(state.selectedId, input.value);
+  input.focus();
+  if (typeof input.setSelectionRange === 'function') input.setSelectionRange(start + insertion.length, start + insertion.length);
+}
+
+async function postDiscussionMessage() {
+  const task = state.selectedTask;
+  if (state.postingDiscussion || !task || task.task_id !== state.selectedId || finishedStates.has(task.state)) return;
+  const content = $('discussion-content').value.trim();
+  const replyTo = state.discussionReplyTarget?.message_id || null;
+  if (!content || content.length > 16000) {
+    discussionError('请填写 1～16000 字的讨论内容。');
+    return;
+  }
+  if (!replyTo && !/@(白金|codex|platinum|月见|kimi|yuejian|鲸鲸|jingjing|whale|deepseek)(?!\w)/i.test(content)) {
+    discussionError('请 @白金、@月见或@鲸鲸，或选择一条 Agent 消息进行回复。');
+    return;
+  }
+  const taskId = task.task_id;
+  const requestId = state.requestId;
+  const signature = JSON.stringify({ expected_revision: task.revision, content, reply_to: replyTo });
+  const prior = state.discussionAttempts.get(taskId);
+  const idempotencyKey = prior?.signature === signature ? prior.key : crypto.randomUUID();
+  state.discussionAttempts.set(taskId, { signature, key: idempotencyKey });
+  state.postingDiscussion = true;
+  renderDiscussionComposer();
+  discussionError('');
+  discussionStatus('');
+  try {
+    const receipt = await api(`/tasks/${encodeURIComponent(taskId)}/messages/discussion`, {
+      method: 'POST', body: JSON.stringify({ expected_revision: task.revision, idempotency_key: idempotencyKey, content, reply_to: replyTo }),
+    });
+    if (receipt.scope !== 'discussion' || receipt.execution_authorized !== false
+        || receipt.agent_dispatched !== false || receipt.task_revision !== task.revision
+        || receipt.message?.type !== 'discussion' || receipt.message.sender_role !== 'human'
+        || receipt.message.content !== content || receipt.message.reply_to !== replyTo) {
+      throw new Error('服务回执与本次讨论消息不一致');
+    }
+    state.discussionAttempts.delete(taskId);
+    if (state.selectedId !== taskId || state.requestId !== requestId) {
+      if (state.discussionDrafts.get(taskId)?.trim() === content) state.discussionDrafts.delete(taskId);
+      if (state.selectedId === taskId) {
+        if ($('discussion-content').value.trim() === content) $('discussion-content').value = '';
+        scheduleRefresh(taskId, state.requestId);
+      }
+      return;
+    }
+    state.messages = [...new Map([...state.messages, receipt.message].map((item) => [item.message_id, item])).values()]
+      .sort((a, b) => a.sequence - b.sequence);
+    state.discussionReplyTarget = null;
+    state.awaitingDiscussion = receipt.discussion_queued
+      ? { taskId, sequence: receipt.message.sequence, correlationId: receipt.message.correlation_id } : null;
+    $('discussion-content').value = '';
+    state.discussionDrafts.delete(taskId);
+    renderMessages(taskId);
+    discussionStatus(receipt.discussion_queued
+      ? '讨论已排队，等待 Agent 回复；这不会启动改代码。'
+      : '讨论已保存；本次回执未确认新排队，请查看对话确认后续回复。');
+  } catch (error) {
+    if (state.selectedId !== taskId || state.requestId !== requestId) return;
+    if (error.status === 409 && error.code !== 'task_message_conflict') {
+      try {
+        const latest = await api(`/tasks/${encodeURIComponent(taskId)}`);
+        if (state.selectedId === taskId && state.requestId === requestId) {
+          showTask(latest);
+          await loadMessages(taskId, false, requestId);
+        }
+      } catch { /* Keep the draft and idempotency key. */ }
+      if (state.selectedId === taskId && state.requestId === requestId) {
+        discussionError(`讨论未确认：${error.detail || error.message}。请先核对对话，不会自动重发。`);
+      }
+    } else if (error.status === 404 && error.code === 'task_not_found') {
+      if (clearMissingTask(taskId)) notice('任务不存在，请刷新任务列表。');
+    } else {
+      discussionError(`讨论结果未确认：${error.detail || error.message}。草稿已保留；请先核对对话，不会自动重发。`);
+    }
+  } finally {
+    state.postingDiscussion = false;
+    renderDiscussionComposer();
+  }
 }
 
 function renderHumanComposer() {
@@ -714,10 +839,11 @@ async function refreshSelected(taskId, requestId) {
     void loadControl(taskId, requestId);
     void loadDelivery(taskId, requestId);
     if (messagesLoaded) notice('');
-    if (terminal.has(task.state)) {
+    if (finishedStates.has(task.state)) {
       closeStream();
-      $('live-status').textContent = task.state === 'needs_human'
-        ? '等待人工输入 · 可发送消息' : '任务已结束 · 显示最终记录';
+      $('live-status').textContent = '任务已结束 · 显示最终记录';
+    } else if (task.state === 'needs_human') {
+      $('live-status').textContent = '等待人工输入 · 讨论实时更新';
     }
   } catch (error) {
     if (requestId === state.requestId) notice(`实时数据刷新失败：${error.message}`);
@@ -741,14 +867,17 @@ function scheduleRefresh(taskId, requestId) {
 
 function followTask(taskId, requestId) {
   if (typeof EventSource === 'undefined') {
-    $('live-status').textContent = '浏览器不支持实时连接 · 可手动刷新';
+    $('live-status').textContent = state.selectedTask?.state === 'needs_human'
+      ? '等待人工输入 · 浏览器不支持实时连接，可手动刷新'
+      : '浏览器不支持实时连接 · 可手动刷新';
     return;
   }
   const source = new EventSource(`/api/v1/tasks/${encodeURIComponent(taskId)}/events`);
   state.eventSource = source;
   $('live-status').textContent = '正在连接实时事件…';
   source.onopen = () => {
-    if (requestId === state.requestId) $('live-status').textContent = '实时连接中 · 自动更新';
+    if (requestId === state.requestId) $('live-status').textContent = state.selectedTask?.state === 'needs_human'
+      ? '等待人工输入 · 讨论实时更新' : '实时连接中 · 自动更新';
   };
   for (const type of ['chat_message_persisted', 'workflow_decision', 'task_state_changed', 'agent_turn_started', 'agent_turn_completed', 'agent_turn_failed', 'verification_completed', 'review_decided', 'completion_decided', 'recovery_decided', 'budget_exceeded', 'human_input_requested', 'system_error']) {
     source.addEventListener(type, () => scheduleRefresh(taskId, requestId));
@@ -870,6 +999,13 @@ function renderMessage(message, taskId) {
     reply.addEventListener('click', () => selectHumanReply(message));
     item.append(reply);
   }
+  if (['planner', 'implementer', 'reviewer'].includes(role)
+      && !finishedStates.has(state.selectedTask?.state)) {
+    const reply = node('button', 'discussion-reply-action', '在讨论中回复');
+    reply.type = 'button';
+    reply.addEventListener('click', () => selectDiscussionReply(message));
+    item.append(reply);
+  }
   const continuation = renderContinuationAction(message, taskId);
   if (continuation) item.append(continuation);
   return item;
@@ -880,6 +1016,19 @@ function renderMessages(taskId) {
   if (selectedParent && !selectedParent.pending_for_human) {
     state.replyTarget = null;
     renderHumanComposer();
+  }
+  const discussionParent = state.messages.find((message) => message.message_id === state.discussionReplyTarget?.message_id);
+  if (state.discussionReplyTarget && !discussionParent) {
+    state.discussionReplyTarget = null;
+    renderDiscussionComposer();
+  }
+  if (state.awaitingDiscussion?.taskId === taskId
+      && state.messages.some((message) => message.sequence > state.awaitingDiscussion.sequence
+        && message.correlation_id === state.awaitingDiscussion.correlationId
+        && message.type === 'discussion'
+        && ['planner', 'implementer', 'reviewer'].includes(message.sender_role))) {
+    state.awaitingDiscussion = null;
+    discussionStatus('Agent 已回复。');
   }
   const list = $('message-list');
   list.replaceChildren();
@@ -1063,10 +1212,14 @@ async function selectTask(taskId) {
   closeStream();
   closeControlPoll();
   if (state.selectedId !== taskId) {
+    if (state.selectedId) state.discussionDrafts.set(state.selectedId, $('discussion-content').value);
+    $('discussion-content').value = state.discussionDrafts.get(taskId) || '';
     $('human-content').value = '';
     $('issue-details').open = false;
     humanError('');
     humanStatus('');
+    discussionError('');
+    discussionStatus('');
     controlError('');
   }
   state.selectedId = taskId;
@@ -1074,6 +1227,8 @@ async function selectTask(taskId) {
   state.messages = [];
   state.roomMembers = [];
   state.replyTarget = null;
+  state.discussionReplyTarget = null;
+  state.awaitingDiscussion = null;
   state.control = null;
   state.controlLoadError = null;
   state.controlMessageId = null;
@@ -1081,6 +1236,7 @@ async function selectTask(taskId) {
   state.delivery = null;
   state.deliveryError = null;
   renderCancelAction();
+  renderDiscussionComposer();
   renderHumanComposer();
   renderControl();
   renderDelivery();
@@ -1110,6 +1266,7 @@ async function selectTask(taskId) {
     if (requestId !== state.requestId) return;
     showTask(task);
     state.roomMembers = room.room.members;
+    renderDiscussionComposer();
     renderHumanComposer();
     $('room-members').replaceChildren(...room.room.members.filter((member) => member.kind === 'agent').map((member) => {
       const chip = node('span', 'member-chip');
@@ -1121,8 +1278,7 @@ async function selectTask(taskId) {
     await loadMessages(taskId, false, requestId);
     await loadControl(taskId, requestId);
     await loadDelivery(taskId, requestId);
-    if (terminal.has(task.state)) $('live-status').textContent = task.state === 'needs_human'
-      ? '等待人工输入 · 可发送消息' : '任务已结束 · 显示最终记录';
+    if (finishedStates.has(task.state)) $('live-status').textContent = '任务已结束 · 显示最终记录';
     else followTask(taskId, requestId);
   } catch (error) {
     if (requestId !== state.requestId) return;
@@ -1148,6 +1304,17 @@ $('create-toggle').addEventListener('click', () => setCreateOpen($('create-form'
 $('create-close').addEventListener('click', () => setCreateOpen(false));
 $('create-form').addEventListener('submit', (event) => { event.preventDefault(); void createTask(); });
 $('cancel-task').addEventListener('click', () => { void cancelTask(); });
+$('discussion-form').addEventListener('submit', (event) => { event.preventDefault(); void postDiscussionMessage(); });
+$('discussion-content').addEventListener('input', () => {
+  if (state.selectedId) state.discussionDrafts.set(state.selectedId, $('discussion-content').value);
+  discussionError('');
+});
+$('discussion-reply-clear').addEventListener('click', () => {
+  state.discussionReplyTarget = null;
+  discussionError('');
+  renderDiscussionComposer();
+});
+document.querySelectorAll('[data-discussion-mention]').forEach((button) => button.addEventListener('click', () => insertDiscussionMention(button.dataset.discussionMention)));
 $('human-form').addEventListener('submit', (event) => { event.preventDefault(); void postHumanMessage(); });
 $('human-reply-clear').addEventListener('click', () => { state.replyTarget = null; humanError(''); renderHumanComposer(); });
 $('control-refresh').addEventListener('click', () => { if (state.selectedId) void loadControl(state.selectedId); });

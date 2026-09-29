@@ -131,3 +131,22 @@ async def test_sse_stops_on_client_disconnect() -> None:
     request.disconnected = True
     with pytest.raises(StopAsyncIteration):
         await anext(stream)
+
+
+@pytest.mark.asyncio
+async def test_sse_keeps_needs_human_room_open_for_agent_chat() -> None:
+    service = EventService(state=TaskState.NEEDS_HUMAN)
+    request = ConnectedRequest()
+    stream = stream_task_events(
+        request, service, service.task.task_id,
+        after_sequence=0, poll_seconds=0.01, heartbeat_seconds=1,
+    )
+    assert await anext(stream) == "retry: 3000\n\n"
+    next_frame = asyncio.create_task(anext(stream))
+    await asyncio.sleep(0.02)
+    assert not next_frame.done()
+    service.append(1, content="discussion reply")
+    assert (await asyncio.wait_for(next_frame, timeout=1)).startswith("id: 1\n")
+    request.disconnected = True
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
