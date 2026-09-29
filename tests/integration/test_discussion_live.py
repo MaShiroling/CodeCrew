@@ -21,12 +21,48 @@ from app.agents import (
     KimiCodeAdapter,
     PermissionMode,
 )
+from app.config import Settings
 from app.main import create_app
 from app.team import MemberRole, MessageType
 from app.team.turns import AgentTurnRunner
 from app.workspace import PermissionPolicy
 
 pytest_plugins = ("tests.test_continuation_workflow",)
+
+
+def _resolve_cli_executables() -> dict[str, str]:
+    settings = Settings()
+    configured = {
+        "codex": settings.codex_cli_path,
+        "kimi": settings.kimi_cli_path,
+        "claude": settings.claude_cli_path,
+    }
+    executables = {}
+    for name, command in configured.items():
+        executable = shutil.which(command)
+        if executable is None:
+            raise ValueError(
+                f"{name} CLI is unavailable at {command!r}; set "
+                f"CODECREW_{name.upper()}_CLI_PATH or update PATH"
+            )
+        executables[name] = executable
+    return executables
+
+
+def test_live_cli_preflight_uses_configured_paths(tmp_path, monkeypatch):
+    configured = {}
+    for name in ("codex", "kimi", "claude"):
+        executable = tmp_path / name
+        executable.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        executable.chmod(0o755)
+        monkeypatch.setenv(f"CODECREW_{name.upper()}_CLI_PATH", str(executable))
+        configured[name] = str(executable)
+
+    assert _resolve_cli_executables() == configured
+
+    monkeypatch.setenv("CODECREW_CODEX_CLI_PATH", str(tmp_path / "missing-codex"))
+    with pytest.raises(ValueError, match="CODECREW_CODEX_CLI_PATH"):
+        _resolve_cli_executables()
 
 
 @pytest.mark.integration
@@ -38,10 +74,10 @@ pytest_plugins = ("tests.test_continuation_workflow",)
 async def test_three_real_agents_discuss_via_http_without_code_change(waiting_for_planner):
     if platform.system() != "Darwin":
         pytest.fail("live three-agent chat requires macOS Seatbelt for Kimi")
-    executables = {name: shutil.which(name) for name in ("codex", "kimi", "claude")}
-    for name, executable in executables.items():
-        if executable is None:
-            pytest.fail(f"{name} CLI is not on PATH")
+    try:
+        executables = _resolve_cli_executables()
+    except ValueError as exc:
+        pytest.fail(str(exc))
     for name in ("KIMI_MODEL_API_KEY", "DEEPSEEK_API_KEY"):
         if not os.environ.get(name, "").strip():
             pytest.fail(f"set {name} in this terminal; never put it in the command")

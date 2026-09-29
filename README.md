@@ -320,8 +320,11 @@ curl http://127.0.0.1:8000/health
 `@白金 @鲸鲸 请一起讨论方案`。白金可转给月见，三位 Fake Agent 的回复会经 SSE 出现在
 同一对话；点击 Agent 消息旁“在讨论中回复”可继续。停止服务会删除临时夹具。
 若要显式运行最多六回合的真实三模型只读讨论测试，先在同一终端配置
-`KIMI_MODEL_API_KEY` 和 `DEEPSEEK_API_KEY`，确保 `codex`、`kimi`、`claude` 在 PATH，
-再运行：
+`KIMI_MODEL_API_KEY` 和 `DEEPSEEK_API_KEY`。确保三个 CLI 在 PATH，或分别通过
+`CODECREW_CODEX_CLI_PATH`、`CODECREW_KIMI_CLI_PATH`、`CODECREW_CLAUDE_CLI_PATH`
+指定可执行文件。若 macOS 上的 `codex` 位于 ChatGPT App 内，可先运行
+`export CODECREW_CODEX_CLI_PATH="/Applications/ChatGPT.app/Contents/Resources/codex"`；
+实际路径应以本机安装为准。然后运行：
 
 ```bash
 CODECREW_RUN_DISCUSSION_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_discussion_live.py
