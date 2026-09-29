@@ -42,5 +42,6 @@ Agent 失败、取消或执行结果不明时不自动重试该线程；后续�
 UI 中可以点击 `@` 成员按钮或 Agent 消息旁“在讨论中回复”。讨论回执仅证明消息已保存；
 `discussion_queued=true` 只表示异步回合排队，Agent 回复会通过消息列表/SSE 出现。
 `needs_human` 状态下 SSE 仍保持连接用于接收讨论回复。UI 保留草稿与不确定结果的
-幂等键，不自动重发；完整 Fake/真实模型 UI 端到端验收仍待 8.4。
+幂等键，不自动重发。8.4 已用真实浏览器和 Fake Agent 验证发送、SSE 与关联回复；
+真实三模型聊天和真实模型 UI 端到端仍待在线验收。
 任何聊天内容都不能取代显式工作流授权、确定性 Verifier、Reviewer 和 CompletionGuard。

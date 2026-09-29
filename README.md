@@ -22,7 +22,8 @@ Prompt、UI、文档或品牌资源。CodeCrew 只聚焦代码开发场景，不
 > 第 8 步现按多 Agent 对话目标推进：8.1 增加独立的 `@` 提及/关联回复讨论契约，
 > 8.2 已在显式装配的本地服务中实现只读、有限轮次的消息驱动讨论调度；8.3 已
 > 接入 UI 独立聊天输入、@提及和回复，讨论不会授权改代码。Fake/真实模型 UI 端到端
-> 验收留待 8.4。
+> 验收进入 8.4：Fake 三 Agent 已通过 HTTP/SQLite 自动测试与本地浏览器操作；
+> 真实三模型因当前进程缺少 Kimi/DeepSeek 环境密钥尚未运行。
 > 该入口的真实模型验收、UI 真实团队验收和正式评测集尚未完成。
 > 第 5～6 步定向测试通过；全量离线测试仍有 9 项已在第 5 步改动前快照复现的 continuation 失败，
 > 不能视为全量通过。
@@ -309,6 +310,25 @@ curl http://127.0.0.1:8000/health
 该脚本会打印一次性 Git 仓库路径；将它填入页面后创建并取消测试任务，退出服务即清理仓库。
 它只验证 UI/API 控制链路，不代表真实 Agent 任务成功。
 
+若要体验三位 **Fake Agent** 的只读聊天室（不会调用模型或改代码），运行：
+
+```bash
+.venv/bin/python tests/manual_ui_discussion_smoke.py
+```
+
+打开 `http://127.0.0.1:8766/ui/`，选择预置任务，在“和团队聊一聊”输入
+`@白金 @鲸鲸 请一起讨论方案`。白金可转给月见，三位 Fake Agent 的回复会经 SSE 出现在
+同一对话；点击 Agent 消息旁“在讨论中回复”可继续。停止服务会删除临时夹具。
+若要显式运行最多六回合的真实三模型只读讨论测试，先在同一终端配置
+`KIMI_MODEL_API_KEY` 和 `DEEPSEEK_API_KEY`，确保 `codex`、`kimi`、`claude` 在 PATH，
+再运行：
+
+```bash
+CODECREW_RUN_DISCUSSION_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_discussion_live.py
+```
+
+默认不会运行该测试；真实模型测试通过前，不把 8.4 标记为完成。
+
 使用显式策略启动可执行任务的本地单 worker API：
 
 ```bash
@@ -473,7 +493,7 @@ docs/                # 架构和 Adapter 文档
 - [x] 统一路线第 8.1 步：Human `@` 三 Agent 与关联回复的独立讨论契约（定向离线验收；不自动唤醒或执行）
 - [x] 统一路线第 8.2 步：只读讨论回合与有界 Agent 接话（定向离线验收；真实模型未验收）
 - [x] 统一路线第 8.3 步：独立聊天 UI、@提及、回复与实时状态（定向离线验收）
-- [ ] 统一路线第 8.4 步：Fake/真实模型 UI 端到端验收
+- [ ] 统一路线第 8.4 步：Fake UI/HTTP/SQLite 端到端已验收；真实三模型与真实模型 UI 待验收
 - [x] DeepSeek Reviewer 真实冒烟之一：本机 CLI 选项、只读工具装配和密钥隔离预检（无模型调用）
 - [x] DeepSeek Reviewer 真实冒烟之二：真实 Diff/Verifier 证据夹具、模拟 CLI 双会话与错误失败关闭（无模型调用）
 - [x] DeepSeek Reviewer 真实冒烟之三：用户本机在线用例通过（有效证据批准、无 Diff 拒绝、工具/文件状态检查）
