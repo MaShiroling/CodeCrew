@@ -9,12 +9,15 @@ from app.api.chat_models import (
     ChatMessagePage,
     ChatMessageReceipt,
     ChatRoomPage,
+    ChatTurnPage,
     CreateChatRequest,
     PostChatMessageRequest,
 )
 from app.api.models import ApiErrorResponse
-from app.chat.models import StandaloneChatRoom
-from app.chat.service import ChatServiceUnavailable, StandaloneChatService
+from app.chat.dispatch import StandaloneChatDispatcher
+from app.chat.models import StandaloneChatRoom, StandaloneChatTurn
+from app.chat.service import ChatMessageNotFound, ChatServiceUnavailable, StandaloneChatService
+from app.chat.store import StandaloneChatMessageNotFoundError
 
 router = APIRouter(prefix="/api/v1/chats", tags=["standalone chats"])
 ERROR_RESPONSES = {
@@ -32,7 +35,12 @@ def get_chat_service(request: Request) -> StandaloneChatService:
     return service
 
 
+def get_chat_dispatcher(request: Request) -> StandaloneChatDispatcher | None:
+    return getattr(request.app.state, "chat_dispatcher", None)
+
+
 ChatServiceDependency = Annotated[StandaloneChatService, Depends(get_chat_service)]
+ChatDispatcherDependency = Annotated[StandaloneChatDispatcher | None, Depends(get_chat_dispatcher)]
 
 
 @router.post("", response_model=StandaloneChatRoom, status_code=status.HTTP_201_CREATED,
@@ -70,12 +78,43 @@ def list_chat_messages(
     )
 
 
+@router.get("/{room_id}/turns", response_model=ChatTurnPage, responses=ERROR_RESPONSES)
+def list_chat_turns(room_id: UUID, service: ChatServiceDependency) -> ChatTurnPage:
+    service.get_room(room_id)
+    return ChatTurnPage(items=service.store.list_turns(room_id))
+
+
+@router.post("/{room_id}/turns/{turn_id}/cancel", response_model=StandaloneChatTurn,
+             responses=ERROR_RESPONSES)
+async def cancel_chat_turn(
+    room_id: UUID, turn_id: UUID, service: ChatServiceDependency,
+    dispatcher: ChatDispatcherDependency,
+) -> StandaloneChatTurn:
+    service.get_room(room_id)
+    if dispatcher is None:
+        raise ChatServiceUnavailable("standalone chat dispatcher is not configured")
+    try:
+        turn = service.store.get_turn(turn_id)
+    except StandaloneChatMessageNotFoundError as exc:
+        raise ChatMessageNotFound("chat turn not found") from exc
+    if turn.room_id != room_id:
+        raise ChatMessageNotFound("chat turn not found")
+    await dispatcher.cancel(turn_id)
+    return service.store.get_turn(turn_id)
+
+
 @router.post("/{room_id}/messages", response_model=ChatMessageReceipt,
              status_code=status.HTTP_201_CREATED, responses=ERROR_RESPONSES)
-def post_chat_message(
+async def post_chat_message(
     room_id: UUID, request: PostChatMessageRequest, service: ChatServiceDependency,
+    dispatcher: ChatDispatcherDependency,
 ) -> ChatMessageReceipt:
-    return ChatMessageReceipt(message=service.post_message(
+    message = service.post_message(
         room_id, content=request.content, idempotency_key=request.idempotency_key,
         reply_to=request.reply_to,
-    ))
+    )
+    turns = dispatcher.enqueue(message) if dispatcher is not None else ()
+    return ChatMessageReceipt(
+        message=message, discussion_queued=any(turn.status.value == "queued" for turn in turns),
+        turns=turns,
+    )

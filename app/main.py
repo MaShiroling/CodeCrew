@@ -11,6 +11,7 @@ from app.api.models import ApiErrorDetail, ApiErrorResponse, ApiValidationIssue
 from app.api.runtime import TaskRuntime
 from app.api.service import TaskApiServiceError, TaskService
 from app.api.tasks import router as tasks_router
+from app.chat.dispatch import StandaloneChatDispatcher
 from app.chat.service import ChatApiError, StandaloneChatService
 from app.config import get_settings
 
@@ -18,19 +19,26 @@ from app.config import get_settings
 def create_app(
     *, task_service: TaskService | None = None, runtime: TaskRuntime | None = None,
     chat_service: StandaloneChatService | None = None,
+    chat_dispatcher: StandaloneChatDispatcher | None = None,
 ) -> FastAPI:
     if task_service is not None and runtime is not None:
         raise ValueError("provide either task_service or runtime, not both")
+    if chat_dispatcher is not None and chat_service is None:
+        raise ValueError("chat dispatcher requires a chat service")
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
         if runtime is not None:
             await runtime.service.startup(runtime.recovery)
+        if chat_dispatcher is not None:
+            await chat_dispatcher.startup()
         try:
             yield
         finally:
             if runtime is not None:
                 await runtime.service.shutdown()
+            if chat_dispatcher is not None:
+                await chat_dispatcher.shutdown()
 
     application = FastAPI(title="CodeCrew", version="0.1.0", lifespan=lifespan)
     if runtime is not None:
@@ -39,6 +47,8 @@ def create_app(
         application.state.task_service = task_service
     if chat_service is not None:
         application.state.chat_service = chat_service
+    if chat_dispatcher is not None:
+        application.state.chat_dispatcher = chat_dispatcher
 
     @application.exception_handler(ChatApiError)
     async def chat_service_error(_request: Request, error: ChatApiError) -> JSONResponse:

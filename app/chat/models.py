@@ -1,5 +1,6 @@
 """Task-independent, repository-free team chat data contracts."""
 
+from enum import Enum
 from uuid import UUID, uuid4
 
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
@@ -87,3 +88,30 @@ class StoredStandaloneChatMessage(BaseModel):
     sequence: int = Field(gt=0)
     message: StandaloneChatMessage
     deliveries: tuple[MessageDelivery, ...]
+
+
+class ChatTurnStatus(str, Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+
+
+class StandaloneChatTurn(BaseModel):
+    """Durable disposition of one message delivery to one Agent."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    turn_id: UUID
+    room_id: UUID
+    message_id: UUID
+    recipient_id: UUID
+    correlation_id: UUID
+    status: ChatTurnStatus
+    session_id: UUID | None = None
+    error: str | None = None
+    created_at: AwareDatetime
+    updated_at: AwareDatetime

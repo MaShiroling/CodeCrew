@@ -19,6 +19,8 @@ def test_example_config_builds_runnable_api(tmp_path: Path) -> None:
             database_url=f"sqlite:///{tmp_path / 'tasks.sqlite3'}",
             artifact_root=tmp_path / "artifacts",
             worktree_root=tmp_path / "worktrees",
+            standalone_chat_workspace_root=tmp_path / "chat-workspaces",
+            standalone_chat_runtime_root=tmp_path / "chat-runtime",
         ),
     )
     assert app.state.task_service is not None
@@ -43,6 +45,8 @@ def test_chat_team_example_binds_three_requested_adapters(tmp_path: Path, monkey
         database_url=f"sqlite:///{tmp_path / 'tasks.sqlite3'}",
         artifact_root=tmp_path / "artifacts",
         worktree_root=tmp_path / "worktrees",
+        standalone_chat_workspace_root=tmp_path / "chat-workspaces",
+        standalone_chat_runtime_root=tmp_path / "chat-runtime",
     )
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.delenv("KIMI_MODEL_API_KEY", raising=False)
@@ -66,6 +70,8 @@ def test_cli_serve_binds_local_single_worker(tmp_path: Path, monkeypatch) -> Non
         database_url=f"sqlite:///{tmp_path / 'tasks.sqlite3'}",
         artifact_root=tmp_path / "artifacts",
         worktree_root=tmp_path / "worktrees",
+        standalone_chat_workspace_root=tmp_path / "chat-workspaces",
+        standalone_chat_runtime_root=tmp_path / "chat-runtime",
     )
     monkeypatch.setattr(cli, "get_settings", lambda: settings)
     monkeypatch.setattr(cli.shutil, "which", lambda _name: "/fake/agent")
@@ -79,7 +85,11 @@ def test_cli_serve_binds_local_single_worker(tmp_path: Path, monkeypatch) -> Non
 
 
 def test_chat_serve_needs_no_task_config_or_agent_cli(tmp_path: Path, monkeypatch) -> None:
-    settings = Settings(database_url=f"sqlite:///{tmp_path / 'chat.sqlite3'}")
+    settings = Settings(
+        database_url=f"sqlite:///{tmp_path / 'chat.sqlite3'}",
+        standalone_chat_workspace_root=tmp_path / "chat-workspaces",
+        standalone_chat_runtime_root=tmp_path / "chat-runtime",
+    )
     monkeypatch.setattr(cli, "get_settings", lambda: settings)
     monkeypatch.setattr(cli.shutil, "which", lambda _name: None)
     monkeypatch.delenv("KIMI_MODEL_API_KEY", raising=False)
@@ -116,6 +126,8 @@ def test_explicit_deepseek_reviewer_binding_requires_key(tmp_path: Path, monkeyp
         database_url=f"sqlite:///{tmp_path / 'tasks.sqlite3'}",
         artifact_root=tmp_path / "artifacts",
         worktree_root=tmp_path / "worktrees",
+        standalone_chat_workspace_root=tmp_path / "chat-workspaces",
+        standalone_chat_runtime_root=tmp_path / "chat-runtime",
     )
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     with pytest.raises(ValueError, match="DEEPSEEK_API_KEY"):
@@ -138,6 +150,8 @@ def test_explicit_kimi_implementer_binding_requires_key_and_sandbox(
         database_url=f"sqlite:///{tmp_path / 'tasks.sqlite3'}",
         artifact_root=tmp_path / "artifacts",
         worktree_root=tmp_path / "worktrees",
+        standalone_chat_workspace_root=tmp_path / "chat-workspaces",
+        standalone_chat_runtime_root=tmp_path / "chat-runtime",
     )
     monkeypatch.delenv("KIMI_MODEL_API_KEY", raising=False)
     with pytest.raises(ValueError, match="KIMI_MODEL_API_KEY"):

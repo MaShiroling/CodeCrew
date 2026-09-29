@@ -22,6 +22,8 @@ from app.agents import (
     PermissionMode,
 )
 from app.api.runtime import build_task_runtime
+from app.chat.agents import build_standalone_chat_agent_runtime
+from app.chat.dispatch import StandaloneChatDispatcher
 from app.chat.service import StandaloneChatService
 from app.chat.store import StandaloneChatStore
 from app.config import Settings, get_settings
@@ -64,8 +66,13 @@ def _build_chat_service(settings: Settings) -> StandaloneChatService:
 
 
 def build_chat_app(*, settings: Settings) -> FastAPI:
-    """Chat-only local app: no task runtime, Agent registry or provider credentials."""
-    return create_app(chat_service=_build_chat_service(settings))
+    """Chat-only app: no task runtime or startup provider credential checks."""
+    service = _build_chat_service(settings)
+    dispatcher = StandaloneChatDispatcher(
+        service.store, build_standalone_chat_agent_runtime(settings),
+        timeout_seconds=min(settings.agent_timeout_seconds, 180),
+    )
+    return create_app(chat_service=service, chat_dispatcher=dispatcher)
 
 
 def build_server_app(config: ServerConfig, *, settings: Settings) -> FastAPI:
@@ -131,7 +138,13 @@ def build_server_app(config: ServerConfig, *, settings: Settings) -> FastAPI:
         permission_policy=config.permission_policy,
         command_policy=config.command_policy,
     )
-    return create_app(runtime=runtime, chat_service=_build_chat_service(settings))
+    chat_service = _build_chat_service(settings)
+    chat_dispatcher = StandaloneChatDispatcher(
+        chat_service.store, build_standalone_chat_agent_runtime(settings),
+        timeout_seconds=min(settings.agent_timeout_seconds, 180),
+    )
+    return create_app(runtime=runtime, chat_service=chat_service,
+                      chat_dispatcher=chat_dispatcher)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -140,7 +153,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     serve = commands.add_parser("serve", help="start a configured local task API")
     serve.add_argument("--config", type=Path, required=True, help="JSON server policy file")
     serve.add_argument("--port", type=int, default=8000, help="local HTTP port")
-    chat_serve = commands.add_parser("chat-serve", help="start local chat API without Agents")
+    chat_serve = commands.add_parser("chat-serve", help="start local read-only team chat")
     chat_serve.add_argument("--port", type=int, default=8000, help="local HTTP port")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:

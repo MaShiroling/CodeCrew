@@ -1,11 +1,11 @@
-"""HTTP contracts for independent, non-executing team chat."""
+"""HTTP contracts for independent, read-only team chat."""
 
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.chat.models import StandaloneChatRoom, StoredStandaloneChatMessage
+from app.chat.models import StandaloneChatRoom, StandaloneChatTurn, StoredStandaloneChatMessage
 from app.team.models import MAX_CHAT_CONTENT_CHARS
 
 
@@ -41,11 +41,20 @@ class ChatMessagePage(BaseModel):
 
 
 class ChatMessageReceipt(BaseModel):
-    """Persistence confirmation only; no Agent wakeup or coding authority."""
+    """Persistence and queue confirmation; never grants coding authority."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     scope: Literal["standalone_chat"] = "standalone_chat"
     message: StoredStandaloneChatMessage
     execution_authorized: Literal[False] = False
+    # Legacy synchronous-dispatch indicator. Use `turns` for async Agent status.
     agent_dispatched: Literal[False] = False
+    discussion_queued: bool = False
+    turns: tuple[StandaloneChatTurn, ...] = ()
+
+
+class ChatTurnPage(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    items: tuple[StandaloneChatTurn, ...]

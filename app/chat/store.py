@@ -6,8 +6,10 @@ import sqlite3
 from uuid import UUID
 
 from app.chat.models import (
+    ChatTurnStatus,
     StandaloneChatMessage,
     StandaloneChatRoom,
+    StandaloneChatTurn,
     StoredStandaloneChatMessage,
 )
 from app.orchestration.models import utc_now
@@ -100,6 +102,32 @@ STANDALONE_CHAT_MIGRATIONS = (
              "ON standalone_chat_messages(room_id, sequence)"),
             ("CREATE INDEX standalone_chat_delivery_pending_idx "
              "ON standalone_chat_deliveries(recipient_id, status, message_id)"),
+        ),
+    ),
+    Migration(
+        version=16,
+        name="create_standalone_chat_turns",
+        statements=(
+            """
+            CREATE TABLE standalone_chat_turns (
+                turn_id TEXT PRIMARY KEY,
+                room_id TEXT NOT NULL REFERENCES standalone_chat_rooms(room_id),
+                message_id TEXT NOT NULL REFERENCES standalone_chat_messages(message_id),
+                recipient_id TEXT NOT NULL REFERENCES standalone_chat_members(member_id),
+                correlation_id TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN (
+                    'queued', 'running', 'succeeded', 'failed', 'cancelled',
+                    'interrupted', 'budget_exhausted'
+                )),
+                session_id TEXT,
+                error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(message_id, recipient_id)
+            )
+            """,
+            "CREATE INDEX standalone_chat_turn_room_idx ON standalone_chat_turns(room_id, created_at)",
+            "CREATE INDEX standalone_chat_turn_correlation_idx ON standalone_chat_turns(correlation_id)",
         ),
     ),
 )
@@ -309,6 +337,106 @@ class StandaloneChatStore:
             ).fetchone() is None:
                 raise StandaloneChatMemberNotFoundError("chat message was not sent to member")
             return self._get_message(connection, message_id)
+
+    def claim_turn(
+        self, message_id: UUID, recipient_id: UUID, *, max_turns: int,
+    ) -> tuple[StandaloneChatTurn, bool]:
+        """Atomically reserve one delivery; never reclaim a terminal/unknown turn."""
+        from uuid import uuid5
+
+        if max_turns < 1:
+            raise ValueError("max_turns must be positive")
+        with self.database.transaction() as connection:
+            message = self._get_message(connection, message_id).message
+            if recipient_id not in message.recipient_ids:
+                raise StandaloneChatMemberNotFoundError("chat message was not sent to member")
+            member = connection.execute(
+                "SELECT role FROM standalone_chat_members WHERE member_id = ? AND room_id = ?",
+                (str(recipient_id), str(message.room_id)),
+            ).fetchone()
+            if member is None or member["role"] not in {"planner", "implementer", "reviewer"}:
+                raise StandaloneChatConflictError("chat turn recipient must be an Agent")
+            row = connection.execute(
+                "SELECT * FROM standalone_chat_turns WHERE message_id = ? AND recipient_id = ?",
+                (str(message_id), str(recipient_id)),
+            ).fetchone()
+            if row is not None:
+                return self._turn(row), False
+            count = connection.execute(
+                "SELECT COUNT(*) FROM standalone_chat_turns WHERE correlation_id = ?",
+                (str(message.correlation_id),),
+            ).fetchone()[0]
+            status = (
+                ChatTurnStatus.QUEUED if count < max_turns else ChatTurnStatus.BUDGET_EXHAUSTED
+            )
+            now = utc_now().isoformat()
+            turn_id = uuid5(message_id, str(recipient_id))
+            connection.execute(
+                """INSERT INTO standalone_chat_turns (
+                    turn_id, room_id, message_id, recipient_id, correlation_id,
+                    status, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (str(turn_id), str(message.room_id), str(message_id), str(recipient_id),
+                 str(message.correlation_id), status.value, now, now),
+            )
+            if status is ChatTurnStatus.BUDGET_EXHAUSTED:
+                connection.execute(
+                    """UPDATE standalone_chat_deliveries
+                    SET status = 'acknowledged', acknowledged_at = ?
+                    WHERE message_id = ? AND recipient_id = ?""",
+                    (now, str(message_id), str(recipient_id)),
+                )
+            return self._turn(connection.execute(
+                "SELECT * FROM standalone_chat_turns WHERE turn_id = ?", (str(turn_id),),
+            ).fetchone()), status is ChatTurnStatus.QUEUED
+
+    def get_turn(self, turn_id: UUID) -> StandaloneChatTurn:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM standalone_chat_turns WHERE turn_id = ?", (str(turn_id),),
+            ).fetchone()
+            if row is None:
+                raise StandaloneChatMessageNotFoundError("chat turn not found")
+            return self._turn(row)
+
+    def list_turns(self, room_id: UUID) -> tuple[StandaloneChatTurn, ...]:
+        with self.database.connect() as connection:
+            self._get_room(connection, room_id)
+            rows = connection.execute(
+                """SELECT * FROM standalone_chat_turns WHERE room_id = ?
+                ORDER BY created_at, turn_id""", (str(room_id),),
+            ).fetchall()
+            return tuple(self._turn(row) for row in rows)
+
+    def transition_turn(
+        self, turn_id: UUID, *, from_status: ChatTurnStatus,
+        to_status: ChatTurnStatus, session_id: UUID | None = None,
+        error: str | None = None,
+    ) -> bool:
+        with self.database.transaction() as connection:
+            changed = connection.execute(
+                """UPDATE standalone_chat_turns SET status = ?, session_id = COALESCE(?, session_id),
+                error = ?, updated_at = ? WHERE turn_id = ? AND status = ?""",
+                (to_status.value, str(session_id) if session_id else None,
+                 error[:500] if error else None, utc_now().isoformat(), str(turn_id),
+                 from_status.value),
+            )
+            return changed.rowcount == 1
+
+    def interrupt_unfinished_turns(self) -> int:
+        """Startup fence: never launch queued or possibly-running old work."""
+        with self.database.transaction() as connection:
+            changed = connection.execute(
+                """UPDATE standalone_chat_turns SET status = 'interrupted',
+                error = 'process stopped before a confirmed turn result', updated_at = ?
+                WHERE status IN ('queued', 'running')""",
+                (utc_now().isoformat(),),
+            )
+            return changed.rowcount
+
+    @staticmethod
+    def _turn(row: sqlite3.Row) -> StandaloneChatTurn:
+        return StandaloneChatTurn.model_validate(dict(row))
 
     @staticmethod
     def _get_room(connection: sqlite3.Connection, room_id: UUID) -> StandaloneChatRoom:
