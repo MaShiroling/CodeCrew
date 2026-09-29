@@ -21,6 +21,12 @@ class Settings(BaseSettings):
     database_url: str = "sqlite:///./codecrew.db"
     artifact_root: Path = Path(".codecrew/artifacts")
     worktree_root: Path = Path(".codecrew/worktrees")
+    standalone_chat_workspace_root: Path = Field(
+        default_factory=lambda: Path.home() / ".codecrew/chat-workspaces"
+    )
+    standalone_chat_runtime_root: Path = Field(
+        default_factory=lambda: Path.home() / ".codecrew/chat-runtime"
+    )
     max_rework_rounds: int = Field(default=2, ge=0, le=10)
     agent_timeout_seconds: int = Field(default=900, gt=0)
     reviewer_structured_output: bool = False

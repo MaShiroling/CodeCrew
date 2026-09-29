@@ -99,6 +99,10 @@ class AgentRequest(BaseModel):
     # Set only by a trusted controller/caller, never inferred from Agent prose.
     clarification_only: bool = False
     discussion_only: bool = False
+    # Internal chat execution context. task_id remains an adapter execution namespace,
+    # not a persisted Task ID, when this field is set.
+    standalone_chat_room_id: UUID | None = None
+    runtime_directory: Path | None = None
 
     @model_validator(mode="after")
     def validate_artifact_inputs(self) -> "AgentRequest":
@@ -111,6 +115,21 @@ class AgentRequest(BaseModel):
             self.clarification_only or self.permission_mode is not PermissionMode.READ_ONLY
         ):
             raise ValueError("discussion-only requests require read-only permission")
+        if self.standalone_chat_room_id is not None:
+            if (
+                not self.discussion_only
+                or self.permission_mode is not PermissionMode.READ_ONLY
+                or self.artifact_inputs
+                or self.resume_from_session_id is not None
+                or self.runtime_directory is None
+                or not self.runtime_directory.is_absolute()
+                or self.runtime_directory == self.working_directory
+            ):
+                raise ValueError(
+                    "standalone chat requires a fresh read-only discussion and private runtime"
+                )
+        elif self.runtime_directory is not None:
+            raise ValueError("runtime_directory is reserved for standalone chat")
         if any(
             item.task_id != self.task_id or item.trace_id != self.trace_id
             for item in self.artifact_inputs

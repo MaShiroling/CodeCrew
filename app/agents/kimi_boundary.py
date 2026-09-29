@@ -57,8 +57,11 @@ class KimiWriteBoundary:
         ):
             raise KimiBoundaryError("runtime directory must be separate from the worktree")
 
-        self.allowed_directories = tuple(
-            self._allowed_directory(rule) for rule in policy.allowed_paths
+        # A read-only chat workspace needs no configured write roots; checking
+        # for task-specific directories such as src/ would reject an empty room.
+        self.allowed_directories = (
+            () if worktree_read_only else
+            tuple(self._allowed_directory(rule) for rule in policy.allowed_paths)
         )
         self.denied_paths = tuple(self.worktree / rule for rule in policy.denied_paths)
 

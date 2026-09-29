@@ -6,13 +6,21 @@
 
 ## 最新验收与当前阻塞
 
+- 独立聊天室路线 8.4c **定向离线已验收**：三位真实 CLI 的内部无仓库只读启动边界
+  已接好，逐回合私有目录不在 Git 仓库内；Codex 可跳过仓库检查、Kimi 保持 Seatbelt
+  与只读工具白名单、DeepSeek/Claude 使用私有运行 HOME/TMPDIR。94 项适配器/独立
+  聊天测试、56 项既有任务/讨论回归和宿主授权环境的 2 项 Seatbelt/Kimi CLI 测试通过；
+  全量离线检查在本任务沙箱内仍有既存的 9 项 continuation 失败和 7 项 Seatbelt
+  权限失败，不能标为全量通过。没有调用模型，HTTP 消息仍不会自动
+  唤醒 Agent，也没有独立聊天 UI。下一步 8.4d 为消息驱动调度。详见
+  [无仓库只读 Agent 运行边界](standalone-chat-agents.md)。
 - 独立聊天室路线 8.4b **定向离线已验收**：本地 HTTP 支持房间创建、列表、详情、
   消息读取、Human @成员讨论和对 Agent 消息的关联回复。创建和消息都有 UUID 幂等键；
   重放不重复入库，跨房间回复被拒绝。创建/发消息不创建 Task、Worktree，也不启动 Agent；
   可用 `chat-serve` 无 Agent/模型密钥启动；29 项定向 HTTP/存储/任务 API/UI 回归
   与 Ruff 通过，未运行真实模型或全量套件。
-  当前 UI 尚无独立入口，消息 `pending` 不代表 Agent 已回复。下一步 8.4c 是无仓库
-  只读 Agent 适配器。详见[独立聊天室数据契约与 API](standalone-chat.md)。
+  当前 UI 尚无独立入口，消息 `pending` 不代表 Agent 已回复。详见
+  [独立聊天室数据契约与 API](standalone-chat.md)。
 - 独立聊天室路线 8.4a **离线已验收**：新增与编码 Task/Worktree 完全分开的 Room、
   四成员与定向讨论消息模型，以及 SQLite Migration 15。消息、回复链、投递 ACK、
   幂等和关闭状态可跨重启读取；与既有任务表并存，但不创建 Task 或触发工作流。

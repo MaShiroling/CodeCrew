@@ -90,6 +90,11 @@ class ClaudeCodeAdapter(AgentAdapter):
         )
 
     async def start(self, request: AgentRequest) -> AgentSession:
+        if request.standalone_chat_room_id is not None:
+            try:
+                request = AgentRequest.model_validate(request.model_dump())
+            except ValueError as exc:
+                raise AgentAdapterError("invalid standalone chat request") from exc
         if request.permission_mode is not PermissionMode.READ_ONLY:
             raise AgentAdapterError("Claude Code adapter currently accepts read-only requests only")
 
@@ -432,4 +437,7 @@ class DeepSeekClaudeReviewerAdapter(ClaudeCodeAdapter):
         )
         if request.output_schema is not None:
             environment["MAX_STRUCTURED_OUTPUT_RETRIES"] = "1"
+        if request.standalone_chat_room_id is not None:
+            environment["HOME"] = str(request.runtime_directory / "home")
+            environment["TMPDIR"] = str(request.runtime_directory / "tmp")
         return environment

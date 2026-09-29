@@ -51,6 +51,31 @@ def test_clarification_profile_has_no_worktree_write_exception(tmp_path):
 
 
 @pytest.mark.skipif(platform.system() != "Darwin", reason="Seatbelt is macOS-only")
+def test_empty_standalone_chat_workspace_is_readonly_under_seatbelt(tmp_path: Path) -> None:
+    workspace = tmp_path / "empty-chat"
+    workspace.mkdir()
+    runtime = tmp_path / "private-runtime"
+    runtime.mkdir()
+    boundary = KimiWriteBoundary(
+        worktree=workspace, runtime_directory=runtime,
+        policy=PermissionPolicy(allowed_paths=("src",)), worktree_read_only=True,
+    )
+    for target, allowed in (
+        (workspace / "blocked.txt", False),
+        (runtime / "allowed.txt", True),
+    ):
+        result = subprocess.run(
+            boundary.wrap([
+                "/usr/bin/python3", "-c",
+                "from pathlib import Path; import sys; Path(sys.argv[1]).write_text('probe')",
+                str(target),
+            ]),
+            cwd=workspace, capture_output=True, text=True, timeout=10, check=False,
+        )
+        assert (result.returncode == 0) is allowed, result.stderr
+
+
+@pytest.mark.skipif(platform.system() != "Darwin", reason="Seatbelt is macOS-only")
 def test_seatbelt_clarification_can_read_and_write_runtime_but_cannot_mutate_worktree(tmp_path):
     boundary = make_boundary(tmp_path, allowed_paths=(".",))
     boundary.worktree_read_only = True

@@ -82,6 +82,13 @@ tools:
   - Grep
   - Glob
 subagents: []"""
+_STANDALONE_CHAT_FRONTMATTER = """name: codecrew-standalone-chat
+description: Discuss in a repository-free CodeCrew room without editing or commands
+tools:
+  - Read
+  - Grep
+  - Glob
+subagents: []"""
 
 
 @dataclass(slots=True)
@@ -135,6 +142,7 @@ class KimiCodeAdapter(AgentAdapter):
         env_source: Mapping[str, str] | None = None,
         boundary_factory: Callable[..., KimiWriteBoundary] = KimiWriteBoundary,
         max_steps_per_turn: int | None = None,
+        allow_standalone_chat: bool = False,
     ) -> None:
         if not executable:
             raise ValueError("executable must not be empty")
@@ -148,11 +156,13 @@ class KimiCodeAdapter(AgentAdapter):
         self._env_source = os.environ if env_source is None else env_source
         self._boundary_factory = boundary_factory
         self._max_steps_per_turn = max_steps_per_turn
+        self._allow_standalone_chat = allow_standalone_chat
         self._agent_file = (
             Path(__file__).resolve().parent / "assets" / "kimi_restricted_implementer.md"
         )
         self._clarification_file = self._agent_file.with_name("kimi_readonly_clarifier.md")
         self._discussion_file = self._agent_file.with_name("kimi_readonly_discussion.md")
+        self._standalone_chat_file = self._agent_file.with_name("kimi_standalone_chat.md")
         self._sessions: dict[UUID, _KimiSessionState] = {}
 
     @property
@@ -170,6 +180,13 @@ class KimiCodeAdapter(AgentAdapter):
         )
 
     async def start(self, request: AgentRequest) -> AgentSession:
+        if request.standalone_chat_room_id is not None:
+            if not self._allow_standalone_chat:
+                raise AgentAdapterError("this Kimi adapter is not bound to standalone chat")
+            try:
+                request = AgentRequest.model_validate(request.model_dump())
+            except ValueError as exc:
+                raise AgentAdapterError("invalid standalone chat request") from exc
         if request.role is not AgentRole.IMPLEMENTER:
             raise AgentAdapterError("Kimi Code adapter accepts implementer requests only")
         expected_permission = (
@@ -205,7 +222,8 @@ class KimiCodeAdapter(AgentAdapter):
         agent_file = self._agent_file_for(request)
         self._validate_agent_file(
             agent_file,
-            (_DISCUSSION_FRONTMATTER if request.discussion_only else
+            (_STANDALONE_CHAT_FRONTMATTER if request.standalone_chat_room_id else
+             _DISCUSSION_FRONTMATTER if request.discussion_only else
              _CLARIFICATION_FRONTMATTER if request.clarification_only else _AGENT_FRONTMATTER),
         )
         try:
@@ -256,6 +274,8 @@ class KimiCodeAdapter(AgentAdapter):
         ]
 
     def _agent_file_for(self, request: AgentRequest) -> Path:
+        if request.standalone_chat_room_id is not None:
+            return self._standalone_chat_file
         if request.discussion_only:
             return self._discussion_file
         return self._clarification_file if request.clarification_only else self._agent_file
@@ -286,14 +306,21 @@ class KimiCodeAdapter(AgentAdapter):
 
     def _validate_worktree(self, request: AgentRequest) -> Path:
         expected = self._worktree_root / str(request.task_id)
-        if expected.is_symlink() or not expected.is_dir() or not (expected / ".git").exists():
+        if expected.is_symlink() or not expected.is_dir():
+            raise AgentAdapterError("request does not name a managed execution directory")
+        git_marker = expected / ".git"
+        if request.standalone_chat_room_id is not None:
+            if git_marker.exists() or git_marker.is_symlink():
+                raise AgentAdapterError("standalone chat cannot run in a Git worktree")
+        elif not git_marker.exists():
             raise AgentAdapterError("request does not name a managed Git worktree")
         worktree = expected.resolve(strict=True)
         if (
             worktree.parent != self._worktree_root
             or request.working_directory.resolve() != worktree
         ):
-            raise AgentAdapterError("request escaped its task-owned worktree")
+            label = "managed chat directory" if request.standalone_chat_room_id else "task-owned worktree"
+            raise AgentAdapterError(f"request escaped its {label}")
         return worktree
 
     def _prepare_runtime(self, task_id: UUID, session_id: UUID) -> Path:

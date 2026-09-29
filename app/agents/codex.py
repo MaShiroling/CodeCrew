@@ -1,5 +1,6 @@
 import asyncio
 import json
+import os
 from collections.abc import AsyncIterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -60,6 +61,13 @@ class _CodexSessionState:
 class CodexCliAdapter(AgentAdapter):
     """Codex CLI adapter using non-interactive JSONL execution."""
 
+    _CHAT_PASSTHROUGH_ENV = (
+        "PATH", "HOME", "CODEX_HOME", "OPENAI_API_KEY", "OPENAI_BASE_URL",
+        "OPENAI_ORGANIZATION", "OPENAI_PROJECT", "LANG", "LC_ALL", "USER",
+        "TERM", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "NODE_EXTRA_CA_CERTS",
+        "SSL_CERT_FILE",
+    )
+
     def __init__(
         self,
         *,
@@ -89,11 +97,17 @@ class CodexCliAdapter(AgentAdapter):
         )
 
     async def start(self, request: AgentRequest) -> AgentSession:
+        if request.standalone_chat_room_id is not None:
+            try:
+                request = AgentRequest.model_validate(request.model_dump())
+            except ValueError as exc:
+                raise AgentAdapterError("invalid standalone chat request") from exc
         try:
             process = await self._runner.start(
                 self.build_command(request),
                 cwd=request.working_directory,
                 timeout_seconds=request.timeout_seconds,
+                env=self.build_process_env(request),
             )
         except ProcessStartError as exc:
             raise AgentAdapterError(str(exc)) from exc
@@ -150,8 +164,21 @@ class CodexCliAdapter(AgentAdapter):
         ]
         if request.resume_from_session_id is not None:
             command.extend(["resume", request.resume_from_session_id])
+        if request.standalone_chat_room_id is not None:
+            command.append("--skip-git-repo-check")
         command.extend(["--json", "--ignore-user-config", "--ignore-rules", request.prompt])
         return command
+
+    def build_process_env(self, request: AgentRequest) -> Mapping[str, str] | None:
+        if request.standalone_chat_room_id is None:
+            return None
+        # Keep Codex's existing auth store, without passing unrelated secrets.
+        environment = {
+            name: value for name in self._CHAT_PASSTHROUGH_ENV
+            if (value := os.environ.get(name)) is not None
+        }
+        environment["TMPDIR"] = str(request.runtime_directory / "tmp")
+        return environment
 
     async def _stream(self, session_id: UUID) -> AsyncIterator[AgentEvent]:
         state = self._get_state(session_id)
