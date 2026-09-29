@@ -352,11 +352,15 @@ class TeamRoomStore:
         after_sequence: int = 0,
         limit: int = 100,
         exclude_discussion: bool = False,
+        only_discussion: bool = False,
+        correlation_id: UUID | None = None,
     ) -> tuple[StoredChatMessage, ...]:
         if after_sequence < 0:
             raise ValueError("after_sequence cannot be negative")
         if limit <= 0:
             raise ValueError("limit must be positive")
+        if exclude_discussion and only_discussion:
+            raise ValueError("discussion filters cannot be combined")
         with self.database.connect() as connection:
             if connection.execute(
                 "SELECT 1 FROM room_members WHERE member_id = ?", (str(member_id),)
@@ -368,6 +372,8 @@ class TeamRoomStore:
                 JOIN chat_deliveries d ON d.message_id = m.message_id
                 WHERE d.recipient_id = ? AND d.status = ? AND m.sequence > ?
                   AND (? = 0 OR m.message_type != ?)
+                  AND (? = 0 OR m.message_type = ?)
+                  AND (? IS NULL OR m.correlation_id = ?)
                 ORDER BY m.sequence LIMIT ?
                 """,
                 (
@@ -376,12 +382,27 @@ class TeamRoomStore:
                     after_sequence,
                     int(exclude_discussion),
                     MessageType.DISCUSSION.value,
+                    int(only_discussion),
+                    MessageType.DISCUSSION.value,
+                    str(correlation_id) if correlation_id is not None else None,
+                    str(correlation_id) if correlation_id is not None else None,
                     limit,
                 ),
             ).fetchall()
             return tuple(
                 self._get_message(connection, UUID(row["message_id"])) for row in rows
             )
+
+    def find_by_idempotency(
+        self, *, room_id: UUID, sender_id: UUID, idempotency_key: str,
+    ) -> StoredChatMessage | None:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                """SELECT message_id FROM chat_messages
+                WHERE room_id = ? AND sender_id = ? AND idempotency_key = ?""",
+                (str(room_id), str(sender_id), idempotency_key),
+            ).fetchone()
+            return self._get_message(connection, UUID(row["message_id"])) if row else None
 
     def acknowledge(self, message_id: UUID, *, recipient_id: UUID) -> MessageDelivery:
         with self.database.transaction() as connection:

@@ -137,6 +137,7 @@ def build_task_runtime(
         verification_plan=verification_plan,
         agent_names=agent_names,
         personas=catalog,
+        discussion_turns=turns,
     )
     recovery = WorkflowRecoveryCoordinator(
         tasks=tasks,

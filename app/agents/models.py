@@ -98,6 +98,7 @@ class AgentRequest(BaseModel):
     output_schema: dict[str, Any] | None = None
     # Set only by a trusted controller/caller, never inferred from Agent prose.
     clarification_only: bool = False
+    discussion_only: bool = False
 
     @model_validator(mode="after")
     def validate_artifact_inputs(self) -> "AgentRequest":
@@ -106,6 +107,10 @@ class AgentRequest(BaseModel):
             or self.permission_mode is not PermissionMode.READ_ONLY
         ):
             raise ValueError("clarification-only requests require a read-only implementer")
+        if self.discussion_only and (
+            self.clarification_only or self.permission_mode is not PermissionMode.READ_ONLY
+        ):
+            raise ValueError("discussion-only requests require read-only permission")
         if any(
             item.task_id != self.task_id or item.trace_id != self.trace_id
             for item in self.artifact_inputs

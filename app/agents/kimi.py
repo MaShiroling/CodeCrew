@@ -75,6 +75,13 @@ tools:
   - Grep
   - Glob
 subagents: []"""
+_DISCUSSION_FRONTMATTER = """name: codecrew-readonly-discussion
+description: Discuss a CodeCrew task with teammates without editing or executing code
+tools:
+  - Read
+  - Grep
+  - Glob
+subagents: []"""
 
 
 @dataclass(slots=True)
@@ -145,6 +152,7 @@ class KimiCodeAdapter(AgentAdapter):
             Path(__file__).resolve().parent / "assets" / "kimi_restricted_implementer.md"
         )
         self._clarification_file = self._agent_file.with_name("kimi_readonly_clarifier.md")
+        self._discussion_file = self._agent_file.with_name("kimi_readonly_discussion.md")
         self._sessions: dict[UUID, _KimiSessionState] = {}
 
     @property
@@ -165,7 +173,9 @@ class KimiCodeAdapter(AgentAdapter):
         if request.role is not AgentRole.IMPLEMENTER:
             raise AgentAdapterError("Kimi Code adapter accepts implementer requests only")
         expected_permission = (
-            PermissionMode.READ_ONLY if request.clarification_only else PermissionMode.WORKSPACE_WRITE
+            PermissionMode.READ_ONLY
+            if request.clarification_only or request.discussion_only
+            else PermissionMode.WORKSPACE_WRITE
         )
         if request.permission_mode is not expected_permission:
             mode = expected_permission.value.replace("_", "-")
@@ -195,7 +205,8 @@ class KimiCodeAdapter(AgentAdapter):
         agent_file = self._agent_file_for(request)
         self._validate_agent_file(
             agent_file,
-            _CLARIFICATION_FRONTMATTER if request.clarification_only else _AGENT_FRONTMATTER,
+            (_DISCUSSION_FRONTMATTER if request.discussion_only else
+             _CLARIFICATION_FRONTMATTER if request.clarification_only else _AGENT_FRONTMATTER),
         )
         try:
             boundary = self._boundary_factory(
@@ -207,7 +218,7 @@ class KimiCodeAdapter(AgentAdapter):
                     Path(shutil.which(self._executable) or self._executable),
                 ),
                 read_only_files=input_paths,
-                worktree_read_only=request.clarification_only,
+                worktree_read_only=request.clarification_only or request.discussion_only,
             )
             command = boundary.wrap(self.build_command(request))
         except KimiBoundaryError as exc:
@@ -224,7 +235,10 @@ class KimiCodeAdapter(AgentAdapter):
 
         state = _KimiSessionState(
             session=session, process=process, artifact_inputs=request.artifact_inputs,
-            allowed_tools=_READ_ONLY_TOOLS if request.clarification_only else _ALLOWED_TOOLS,
+            allowed_tools=(
+                _READ_ONLY_TOOLS if request.clarification_only or request.discussion_only
+                else _ALLOWED_TOOLS
+            ),
         )
         self._sessions[session.session_id] = state
         state.completion = asyncio.create_task(self._consume(state))
@@ -242,6 +256,8 @@ class KimiCodeAdapter(AgentAdapter):
         ]
 
     def _agent_file_for(self, request: AgentRequest) -> Path:
+        if request.discussion_only:
+            return self._discussion_file
         return self._clarification_file if request.clarification_only else self._agent_file
 
     def build_process_env(self, runtime: Path, key: str) -> dict[str, str]:

@@ -67,6 +67,7 @@ class DiscussionMessageReceipt(BaseModel):
     task_revision: int = Field(ge=1)
     execution_authorized: Literal[False] = False
     agent_dispatched: Literal[False] = False
+    discussion_queued: bool = False
 
 
 class ContinueTaskPreflight(BaseModel):

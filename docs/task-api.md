@@ -40,9 +40,10 @@ Artifact 接口同时校验 `task_id` 与 `trace_id` 归属；其他任务的 Ar
 `preview_unavailable_reason`，不开放任意路径或文件下载。尚无用户身份认证，仍仅适合
 可信本地环境。
 
-讨论消息 API 为 8.1 的独立契约：`@` 三位 Agent 或回复某条 Agent 消息，持久化
-为 `discussion` 类型，并返回明确的非执行回执。它不唤醒 Agent，不改变任务状态，
-也不能用于受控工作流预检/继续；前端输入和讨论调度分别留待 8.3、8.2。
+讨论消息 API 为 8.1～8.2 的独立契约：`@` 三位 Agent 或回复某条 Agent 消息，
+持久化为 `discussion` 类型，并返回明确的非执行回执。在显式装配的单进程服务中，
+新消息排队触发只读讨论回合；`discussion_queued=true` 表示排队，不能证明 Agent
+已经回复。它不改变任务状态，也不能用于受控工作流预检/继续；前端输入留待 8.3。
 详见[讨论消息契约](discussion-contract.md)。
 
 交付摘要只读恢复 Trace 与 Artifact 中最近的完整性校验过的 Verifier、Reviewer、

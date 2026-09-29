@@ -106,6 +106,7 @@ from app.team.store import (
     RoomNotFoundError,
     TeamRoomStore,
 )
+from app.team.turns import AgentTurnRunner
 from app.trace import TraceActorKind, TraceEvent, TraceEventType
 from app.trace.models import StoredTraceEvent
 from app.verification import VerificationPlan
@@ -138,6 +139,7 @@ class PersistentTaskService:
         verification_plan: VerificationPlan,
         agent_names: dict[MemberRole, str],
         personas: TeamPersonaCatalog | None = None,
+        discussion_turns: AgentTurnRunner | None = None,
     ) -> None:
         paths = (tasks.database.path, contexts.database.path, rooms.database.path,
                  router.artifacts.database.path)
@@ -156,7 +158,10 @@ class PersistentTaskService:
         self.verification_plan = verification_plan
         self.agent_names = dict(agent_names)
         self.personas = personas or default_team_personas()
+        self.discussion_turns = discussion_turns
         self._runs: dict[UUID, asyncio.Task[None]] = {}
+        self._discussion_runs: dict[UUID, asyncio.Task[None]] = {}
+        self._discussion_queue: dict[UUID, list[UUID]] = {}
         self._cancelling: set[UUID] = set()
         self._lock = asyncio.Lock()
         self.tasks.initialize()
@@ -370,6 +375,12 @@ class PersistentTaskService:
             } or room.status is not RoomStatus.ACTIVE):
                 raise TaskStateConflict("discussion requires an active, non-final task room")
             message, roles = build_discussion_message(task, room, self.rooms, request)
+            existing = self.rooms.find_by_idempotency(
+                room_id=room.room_id, sender_id=message.sender_id,
+                idempotency_key=message.idempotency_key,
+            )
+            if existing is None and self._discussion_blocked(task, message.correlation_id):
+                raise TaskStateConflict("discussion thread is blocked after failure or turn limit")
             try:
                 stored = self.router.route(message, authenticated_sender_id=message.sender_id)
             except ChatIdempotencyConflictError as exc:
@@ -378,10 +389,162 @@ class PersistentTaskService:
                 raise TaskMessageConflict("task room changed") from exc
             except ConversationRoutingError as exc:
                 raise TaskMessageInvalid("discussion route is not allowed") from exc
+            queued = False
+            if (self.discussion_turns is not None
+                    and stored.message.message_id == message.message_id):
+                self._discussion_queue.setdefault(task_id, []).append(stored.message.correlation_id)
+                if task_id not in self._discussion_runs:
+                    self._discussion_runs[task_id] = asyncio.create_task(
+                        self._run_discussions(task_id), name=f"codecrew-discussion-{task_id}",
+                    )
+                queued = True
             return DiscussionMessageReceipt(
                 message=message_view(stored, room), target_roles=roles,
-                task_revision=snapshot.revision,
+                task_revision=snapshot.revision, discussion_queued=queued,
             )
+
+    async def _run_discussions(self, task_id: UUID) -> None:
+        """Drain bounded, read-only conversation waves; never enter the coding controller."""
+        try:
+            while True:
+                async with self._lock:
+                    queue = self._discussion_queue.get(task_id, [])
+                    if not queue:
+                        self._discussion_runs.pop(task_id, None)
+                        self._discussion_queue.pop(task_id, None)
+                        return
+                    correlation_id = queue.pop(0)
+                task, _room = self._task_room(task_id)
+                if self._discussion_blocked(task, correlation_id):
+                    continue
+                for _ in range(6):
+                    task, room = self._task_room(task_id)
+                    if task.state in {TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED} or room.status is not RoomStatus.ACTIVE:
+                        break
+                    candidates = []
+                    for member in room.members:
+                        if member.kind is MemberKind.AGENT:
+                            candidates.extend(
+                                (item, member) for item in self.rooms.pending_for(
+                                    member.member_id, limit=1, only_discussion=True,
+                                    correlation_id=correlation_id,
+                                )
+                            )
+                    if not candidates:
+                        break
+                    incoming, member = min(candidates, key=lambda pair: pair[0].sequence)
+                    context = self.contexts.get(task_id).context
+                    try:
+                        self.router.trace_store.append(TraceEvent(
+                            task_id=task_id, trace_id=task.trace_id,
+                            type=TraceEventType.AGENT_TURN_STARTED,
+                            actor_kind=TraceActorKind.DETERMINISTIC,
+                            actor_id="discussion_scheduler",
+                            correlation_id=correlation_id,
+                            causation_id=incoming.message.message_id,
+                            idempotency_key=f"discussion-started:{incoming.message.message_id}:{member.member_id}",
+                            payload={"mode": "discussion", "role": member.role.value},
+                        ))
+                        await self.discussion_turns.run(
+                            task, room_id=room.room_id, member_id=member.member_id,
+                            agent_name=self.agent_names[member.role],
+                            working_directory=context.worktree.worktree_path,
+                            input_message_ids=(incoming.message.message_id,),
+                            discussion_only=True,
+                            validate_before_routing=lambda _result, _turn: (
+                                self._validate_discussion_open(task_id)
+                            ),
+                        )
+                        self.router.trace_store.append(TraceEvent(
+                            task_id=task_id, trace_id=task.trace_id,
+                            type=TraceEventType.AGENT_TURN_COMPLETED,
+                            actor_kind=TraceActorKind.DETERMINISTIC,
+                            actor_id="discussion_scheduler",
+                            correlation_id=correlation_id,
+                            causation_id=incoming.message.message_id,
+                            idempotency_key=f"discussion-completed:{incoming.message.message_id}:{member.member_id}",
+                            payload={"mode": "discussion", "role": member.role.value},
+                        ))
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as exc:  # noqa: BLE001 - leave input pending, no automatic retry.
+                        self.router.trace_store.append(TraceEvent(
+                            task_id=task_id, trace_id=task.trace_id,
+                            type=TraceEventType.AGENT_TURN_FAILED,
+                            actor_kind=TraceActorKind.DETERMINISTIC,
+                            actor_id="discussion_scheduler",
+                            correlation_id=correlation_id,
+                            causation_id=incoming.message.message_id,
+                            idempotency_key=f"discussion-failed:{incoming.message.message_id}:{member.member_id}",
+                            payload={"mode": "discussion", "role": member.role.value,
+                                     "error_type": type(exc).__name__},
+                        ))
+                        break
+                else:
+                    self.router.trace_store.append(TraceEvent(
+                        task_id=task_id, trace_id=task.trace_id,
+                        type=TraceEventType.BUDGET_EXCEEDED,
+                        actor_kind=TraceActorKind.DETERMINISTIC,
+                        actor_id="discussion_scheduler",
+                        correlation_id=correlation_id,
+                        idempotency_key=f"discussion-limit:{task_id}:{correlation_id}",
+                        payload={"mode": "discussion", "turn_limit": 6},
+                    ))
+        finally:
+            async with self._lock:
+                if self._discussion_runs.get(task_id) is asyncio.current_task():
+                    self._discussion_runs.pop(task_id, None)
+                    self._discussion_queue.pop(task_id, None)
+
+    def _validate_discussion_open(self, task_id: UUID) -> None:
+        task, room = self._task_room(task_id)
+        if (task.state in {TaskState.COMPLETED, TaskState.FAILED, TaskState.CANCELLED}
+                or task_id in self._cancelling or room.status is not RoomStatus.ACTIVE):
+            raise TaskStateConflict("discussion ended before the Agent reply was routed")
+
+    def _discussion_blocked(self, task: Task, correlation_id: UUID) -> bool:
+        started: set[tuple[UUID | None, str | None]] = set()
+        completed: set[tuple[UUID | None, str | None]] = set()
+        for event_type in (TraceEventType.AGENT_TURN_FAILED, TraceEventType.BUDGET_EXCEEDED):
+            cursor = 0
+            while True:
+                page = self.router.trace_store.list(
+                    task_id=task.id, trace_id=task.trace_id, type=event_type,
+                    after_sequence=cursor, limit=100,
+                )
+                if any(item.event.actor_id == "discussion_scheduler"
+                       and item.event.correlation_id == correlation_id for item in page):
+                    return True
+                if len(page) < 100:
+                    break
+                cursor = page[-1].sequence
+        if task.id in self._discussion_runs:
+            return False
+        for event_type, seen in (
+            (TraceEventType.AGENT_TURN_STARTED, started),
+            (TraceEventType.AGENT_TURN_COMPLETED, completed),
+        ):
+            cursor = 0
+            while True:
+                page = self.router.trace_store.list(
+                    task_id=task.id, trace_id=task.trace_id, type=event_type,
+                    after_sequence=cursor, limit=100,
+                )
+                seen.update(
+                    (item.event.causation_id, item.event.payload.get("role"))
+                    for item in page if item.event.actor_id == "discussion_scheduler"
+                    and item.event.correlation_id == correlation_id
+                )
+                if len(page) < 100:
+                    break
+                cursor = page[-1].sequence
+        return bool(started - completed)
+
+    async def wait_for_discussion(self, task_id: UUID) -> None:
+        async with self._lock:
+            run = self._discussion_runs.get(task_id)
+        if run is not None:
+            await run
 
     async def preflight_continue_task(
         self, task_id: UUID, request: ContinueTaskPreflightRequest,
@@ -749,9 +912,14 @@ class PersistentTaskService:
                 raise TaskStateConflict("terminal task cannot be cancelled")
             self._cancelling.add(task_id)
             run = self._runs.get(task_id)
+            discussion_run = self._discussion_runs.get(task_id)
             if run is not None:
                 run.cancel()
+            if discussion_run is not None:
+                discussion_run.cancel()
         try:
+            if discussion_run is not None:
+                await asyncio.gather(discussion_run, return_exceptions=True)
             if run is not None:
                 try:
                     await run
@@ -830,10 +998,15 @@ class PersistentTaskService:
             await asyncio.gather(*continuations, return_exceptions=True)
         async with self._lock:
             runs = tuple(self._runs.values())
+            discussions = tuple(self._discussion_runs.values())
             for run in runs:
+                run.cancel()
+            for run in discussions:
                 run.cancel()
         if runs:
             await asyncio.gather(*runs, return_exceptions=True)
+        if discussions:
+            await asyncio.gather(*discussions, return_exceptions=True)
 
     async def wait_for(self, task_id: UUID) -> None:
         """Wait for a locally dispatched run; useful for controlled shutdown/tests."""

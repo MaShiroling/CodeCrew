@@ -105,6 +105,55 @@ def clarification_request(request):
     })
 
 
+def discussion_request(request):
+    return AgentRequest.model_validate({
+        **request.model_dump(), "discussion_only": True, "permission_mode": PermissionMode.READ_ONLY,
+    })
+
+
+@pytest.mark.asyncio
+async def test_kimi_discussion_has_separate_readonly_profile_and_boundary(tmp_path):
+    process = StubProcess(
+        [json_chunk({"role": "assistant", "content": "discussion"})],
+        ProcessResult(exit_code=0, duration_ms=1),
+    )
+    adapter, runner, request = make_adapter(tmp_path, process)
+    captured = []
+
+    def boundary(**options):
+        captured.append(options)
+        return StubBoundary(**options)
+
+    adapter._boundary_factory = boundary
+    session = await adapter.start(discussion_request(request))
+    result = await adapter.wait(session.session_id)
+    assert result.reason is AgentExitReason.COMPLETED
+    argv = runner.calls[0]["argv"]
+    profile = Path(argv[argv.index("--agent-file") + 1])
+    assert profile.name == "kimi_readonly_discussion.md"
+    assert "  - Write" not in profile.read_text() and "  - Edit" not in profile.read_text()
+    assert captured[0]["worktree_read_only"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("tool", ["Write", "Edit", "Bash"])
+async def test_kimi_discussion_rejects_write_and_command_tools(tmp_path, tool):
+    process = StubProcess(
+        [json_chunk({"role": "assistant", "tool_calls": [{"function": {"name": tool}}]})],
+        ProcessResult(exit_code=0, duration_ms=1),
+    )
+    adapter, _, request = make_adapter(tmp_path, process)
+    session = await adapter.start(discussion_request(request))
+    result = await adapter.wait(session.session_id)
+    assert result.reason is AgentExitReason.FAILED and process.cancelled
+
+
+def test_discussion_request_cannot_have_write_permission(tmp_path):
+    _, _, request = make_adapter(tmp_path, StubProcess([], ProcessResult(exit_code=0, duration_ms=1)))
+    with pytest.raises(ValueError, match="discussion-only requests require read-only permission"):
+        AgentRequest.model_validate({**request.model_dump(), "discussion_only": True})
+
+
 @pytest.mark.asyncio
 async def test_kimi_clarification_uses_validated_readonly_profile_and_boundary(tmp_path):
     process = StubProcess(
