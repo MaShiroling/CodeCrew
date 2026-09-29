@@ -6,15 +6,18 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from app.api.chats import router as chats_router
 from app.api.models import ApiErrorDetail, ApiErrorResponse, ApiValidationIssue
 from app.api.runtime import TaskRuntime
 from app.api.service import TaskApiServiceError, TaskService
 from app.api.tasks import router as tasks_router
+from app.chat.service import ChatApiError, StandaloneChatService
 from app.config import get_settings
 
 
 def create_app(
-    *, task_service: TaskService | None = None, runtime: TaskRuntime | None = None
+    *, task_service: TaskService | None = None, runtime: TaskRuntime | None = None,
+    chat_service: StandaloneChatService | None = None,
 ) -> FastAPI:
     if task_service is not None and runtime is not None:
         raise ValueError("provide either task_service or runtime, not both")
@@ -34,6 +37,16 @@ def create_app(
         task_service = runtime.service
     if task_service is not None:
         application.state.task_service = task_service
+    if chat_service is not None:
+        application.state.chat_service = chat_service
+
+    @application.exception_handler(ChatApiError)
+    async def chat_service_error(_request: Request, error: ChatApiError) -> JSONResponse:
+        response = ApiErrorResponse(error=ApiErrorDetail(code=error.code, message=str(error)))
+        return JSONResponse(
+            status_code=error.status_code,
+            content=response.model_dump(mode="json", exclude_none=True),
+        )
 
     @application.exception_handler(TaskApiServiceError)
     async def task_service_error(
@@ -76,6 +89,7 @@ def create_app(
         return {"status": "ok", "environment": settings.environment}
 
     application.include_router(tasks_router)
+    application.include_router(chats_router)
     web_root = Path(__file__).resolve().parent / "web"
     application.mount("/ui/assets", StaticFiles(directory=web_root), name="ui-assets")
 

@@ -22,8 +22,11 @@ from app.agents import (
     PermissionMode,
 )
 from app.api.runtime import build_task_runtime
+from app.chat.service import StandaloneChatService
+from app.chat.store import StandaloneChatStore
 from app.config import Settings, get_settings
 from app.main import create_app
+from app.storage import SQLiteDatabase
 from app.team import MemberRole
 from app.verification import VerificationPlan
 from app.workspace import CommandPolicy, PermissionPolicy
@@ -47,6 +50,22 @@ def load_server_config(path: Path) -> ServerConfig:
         return ServerConfig.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, ValidationError) as exc:
         raise ValueError(f"invalid server configuration {path}: {exc}") from exc
+
+
+def _build_chat_service(settings: Settings) -> StandaloneChatService:
+    if not settings.database_url.startswith("sqlite:///"):
+        raise ValueError("only sqlite:/// database URLs are supported")
+    database_path = settings.database_url.removeprefix("sqlite:///")
+    if not database_path:
+        raise ValueError("SQLite database path must not be empty")
+    chat_store = StandaloneChatStore(SQLiteDatabase(Path(database_path)))
+    chat_store.initialize()
+    return StandaloneChatService(chat_store)
+
+
+def build_chat_app(*, settings: Settings) -> FastAPI:
+    """Chat-only local app: no task runtime, Agent registry or provider credentials."""
+    return create_app(chat_service=_build_chat_service(settings))
 
 
 def build_server_app(config: ServerConfig, *, settings: Settings) -> FastAPI:
@@ -112,7 +131,7 @@ def build_server_app(config: ServerConfig, *, settings: Settings) -> FastAPI:
         permission_policy=config.permission_policy,
         command_policy=config.command_policy,
     )
-    return create_app(runtime=runtime)
+    return create_app(runtime=runtime, chat_service=_build_chat_service(settings))
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -121,25 +140,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     serve = commands.add_parser("serve", help="start a configured local task API")
     serve.add_argument("--config", type=Path, required=True, help="JSON server policy file")
     serve.add_argument("--port", type=int, default=8000, help="local HTTP port")
+    chat_serve = commands.add_parser("chat-serve", help="start local chat API without Agents")
+    chat_serve.add_argument("--port", type=int, default=8000, help="local HTTP port")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
     try:
-        config = load_server_config(args.config)
         settings = get_settings()
-        required_executables = {
-            settings.claude_cli_path
-            if config.planner_adapter == "claude-code" or config.reviewer_adapter in {"claude-code", "deepseek-claude-reviewer"}
-            else None,
-            settings.codex_cli_path
-            if config.planner_adapter == "codex-cli" or config.implementer_adapter == "codex-cli"
-            else None,
-            settings.kimi_cli_path if config.implementer_adapter == "kimi-code-cli" else None,
-        }
-        for executable in required_executables - {None}:
-            if shutil.which(executable) is None:
-                raise ValueError(f"required Agent CLI is not available: {executable}")
-        app = build_server_app(config, settings=settings)
+        if args.command == "chat-serve":
+            app = build_chat_app(settings=settings)
+        else:
+            config = load_server_config(args.config)
+            required_executables = {
+                settings.claude_cli_path
+                if config.planner_adapter == "claude-code" or config.reviewer_adapter in {"claude-code", "deepseek-claude-reviewer"}
+                else None,
+                settings.codex_cli_path
+                if config.planner_adapter == "codex-cli" or config.implementer_adapter == "codex-cli"
+                else None,
+                settings.kimi_cli_path if config.implementer_adapter == "kimi-code-cli" else None,
+            }
+            for executable in required_executables - {None}:
+                if shutil.which(executable) is None:
+                    raise ValueError(f"required Agent CLI is not available: {executable}")
+            app = build_server_app(config, settings=settings)
     except ValueError as exc:
         parser.error(str(exc))
     uvicorn.run(app, host="127.0.0.1", port=args.port, workers=1)

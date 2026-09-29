@@ -6,12 +6,18 @@
 
 ## 最新验收与当前阻塞
 
+- 独立聊天室路线 8.4b **定向离线已验收**：本地 HTTP 支持房间创建、列表、详情、
+  消息读取、Human @成员讨论和对 Agent 消息的关联回复。创建和消息都有 UUID 幂等键；
+  重放不重复入库，跨房间回复被拒绝。创建/发消息不创建 Task、Worktree，也不启动 Agent；
+  可用 `chat-serve` 无 Agent/模型密钥启动；29 项定向 HTTP/存储/任务 API/UI 回归
+  与 Ruff 通过，未运行真实模型或全量套件。
+  当前 UI 尚无独立入口，消息 `pending` 不代表 Agent 已回复。下一步 8.4c 是无仓库
+  只读 Agent 适配器。详见[独立聊天室数据契约与 API](standalone-chat.md)。
 - 独立聊天室路线 8.4a **离线已验收**：新增与编码 Task/Worktree 完全分开的 Room、
   四成员与定向讨论消息模型，以及 SQLite Migration 15。消息、回复链、投递 ACK、
   幂等和关闭状态可跨重启读取；与既有任务表并存，但不创建 Task 或触发工作流。
   60 项定向测试与全仓 Ruff 通过；全量离线仍有 9 项既有 continuation 失败和 5 项
-  本任务沙箱下 Seatbelt 权限失败，后者在宿主授权环境单独重跑全部通过。当前没有
-  独立聊天室 API、Agent 调度或 UI；下一步为 8.4b。详见
+  本任务沙箱下 Seatbelt 权限失败，后者在宿主授权环境单独重跑全部通过。详见
   [独立聊天室数据契约](standalone-chat.md)。
 - 统一 15 步路线第 8 步子步骤 4 **部分完成**：完整 Fake 运行时的 HTTP/SQLite/三 Agent
   对话与关联回复自动测试通过；本地浏览器实际操作已看到三位 Fake Agent 经 SSE 接话，

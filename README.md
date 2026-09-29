@@ -25,8 +25,9 @@ Prompt、UI、文档或品牌资源。CodeCrew 聚焦代码开发协作；规划
 > 接入 UI 独立聊天输入、@提及和回复，讨论不会授权改代码。Fake/真实模型 UI 端到端
 > 验收进入 8.4：任务绑定的 Fake 三 Agent 已通过 HTTP/SQLite 和本地浏览器测试，
 > 用户本机的真实三模型 HTTP 只读讨论测试已通过；但任务创建会自动启动编码工作流，
-> 因而不等于独立聊天室 UI 验收。独立聊天室现仅完成无仓库的数据模型与 SQLite
-> 持久化，尚无 API、Agent 调度或 UI 入口；正式评测集也未完成。
+> 因而不等于独立聊天室 UI 验收。独立聊天室已完成无仓库的数据模型、SQLite
+> 持久化及创建/列表/详情/消息/回复 HTTP API；尚无独立 Agent 调度或 UI 入口，
+> 发送消息不会自动唤醒模型；正式评测集也未完成。
 > 第 5～6 步定向测试通过；全量离线测试仍有 9 项已在第 5 步改动前快照复现的 continuation 失败，
 > 不能视为全量通过。
 > 最新验证状态见[项目状态](docs/project-status.md)，后续交付见
@@ -334,6 +335,11 @@ CODECREW_RUN_DISCUSSION_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_dis
 
 默认不会运行该测试；它验收的是旧任务绑定讨论，不代表无仓库独立聊天室已完成。
 
+若只想试无仓库聊天室的 HTTP 创建和发消息（此阶段不会有 Agent 回复），可运行
+`.venv/bin/python -m app.cli chat-serve --port 8000`，再打开
+`http://127.0.0.1:8000/docs`。无需模型密钥或 Git 路径；`/ui/` 的独立聊天室入口
+尚待 8.4e。接口字段与边界见[独立聊天室 API](docs/standalone-chat.md)。
+
 若要在本机 UI 使用这三种真实适配器，可在同一终端设置上述密钥后运行：
 
 ```bash
@@ -508,7 +514,7 @@ docs/                # 架构和 Adapter 文档
 - [x] 统一路线第 8.2 步：只读讨论回合与有界 Agent 接话（定向离线验收；真实模型未验收）
 - [x] 统一路线第 8.3 步：独立聊天 UI、@提及、回复与实时状态（定向离线验收）
 - [ ] 统一路线第 8.4 步：旧任务绑定的 Fake 与真实 HTTP 讨论已验收；无仓库独立聊天室
-  仅完成 8.4a 数据模型与持久化，API、Agent、UI 和独立端到端待验收
+  已完成 8.4a 数据模型/持久化与 8.4b HTTP API；无仓库 Agent、UI 和独立端到端待验收
 - [x] DeepSeek Reviewer 真实冒烟之一：本机 CLI 选项、只读工具装配和密钥隔离预检（无模型调用）
 - [x] DeepSeek Reviewer 真实冒烟之二：真实 Diff/Verifier 证据夹具、模拟 CLI 双会话与错误失败关闭（无模型调用）
 - [x] DeepSeek Reviewer 真实冒烟之三：用户本机在线用例通过（有效证据批准、无 Diff 拒绝、工具/文件状态检查）
