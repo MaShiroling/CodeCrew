@@ -1,7 +1,7 @@
-# 独立聊天室数据契约与 HTTP API（8.4a～8.4b）
+# 独立聊天室数据契约、HTTP API 与 UI
 
 8.4a 提供领域模型和 SQLite 存储；8.4b 开放本地 HTTP API，8.4d 已接入只读 Agent 调度，
-但尚无独立聊天 UI。创建聊天室
+P1 已提供独立聊天 UI。创建聊天室
 不会调用 `PersistentTaskService.create_task`，不需要用户 Git 路径，也不会创建 Worktree、
 调用 Verifier 或进入 CompletionGuard。后续功能必须显式接入，不能把旧任务聊天室
 视作独立入口。
@@ -23,8 +23,10 @@
 在项目根目录运行 `.venv/bin/python -m app.cli chat-serve --port 8000`，启动时无需 Git 仓库、
 验证计划、Agent CLI 或模型密钥；但发送 @消息会尝试启动所提及的真实 Agent，
 因此相应 CLI、凭据和平台边界届时必须可用。访问 `http://127.0.0.1:8000/docs` 可试用 HTTP API。
-现有 `codecrew serve` 也会挂载同一组路由，但仍按编码任务配置启动。当前 `/ui/`
-仍是任务工作台，**不是**独立聊天室界面（该界面属于 8.4e）。路由和
+现有 `codecrew serve` 也会挂载同一组路由，但仍按编码任务配置启动。`/ui/`
+仍是任务工作台；**独立聊天室入口为 `/ui/chat/`**。若不想调用真实模型，运行
+`.venv/bin/python -m app.cli chat-demo --port 8000`，它用三个 Fake Agent 展示完整
+只读接话，并把消息持久化到配置的 SQLite。路由和
 `/api/v1/tasks` 是不同资源；没有 `repository_path`、Task ID 或执行授权字段。
 
 | 方法 | 路径 | 用途 |
@@ -54,4 +56,5 @@
 失败，另有 5 项 macOS Seatbelt 用例在本任务沙箱内受限，宿主授权环境单独重跑
 10 项均通过。因此不宣称全量通过。8.4b 的定向验收见项目状态；8.4c 的内部无仓库
 运行边界见[只读 Agent 文档](standalone-chat-agents.md)。8.4d 已接入有界消息调度，
-失败、取消和重启残留回合不自动重试；独立聊天 UI 属于 8.4e，真实三模型验收属于 8.4f。
+失败、取消和重启残留回合不自动重试；独立聊天 UI 已由 P1 的 Fake 浏览器场景
+验收，真实三模型浏览器验收仍属于 P2。

@@ -18,11 +18,17 @@ from app.agents import (
     ClaudeCodeAdapter,
     CodexCliAdapter,
     DeepSeekClaudeReviewerAdapter,
+    FakeAgentAdapter,
+    FakeAgentScenario,
     KimiCodeAdapter,
     PermissionMode,
 )
 from app.api.runtime import build_task_runtime
-from app.chat.agents import build_standalone_chat_agent_runtime
+from app.chat.agents import (
+    StandaloneChatAgentRuntime,
+    StandaloneChatWorkspaceManager,
+    build_standalone_chat_agent_runtime,
+)
 from app.chat.dispatch import StandaloneChatDispatcher
 from app.chat.service import StandaloneChatService
 from app.chat.store import StandaloneChatStore
@@ -65,11 +71,28 @@ def _build_chat_service(settings: Settings) -> StandaloneChatService:
     return StandaloneChatService(chat_store)
 
 
-def build_chat_app(*, settings: Settings) -> FastAPI:
-    """Chat-only app: no task runtime or startup provider credential checks."""
+def build_chat_app(*, settings: Settings, fake_agents: bool = False) -> FastAPI:
+    """Chat-only app; the explicit demo mode never starts real model CLIs."""
     service = _build_chat_service(settings)
+    if fake_agents:
+        workspaces = StandaloneChatWorkspaceManager(
+            settings.standalone_chat_workspace_root, settings.standalone_chat_runtime_root,
+        )
+        runtime = StandaloneChatAgentRuntime(workspaces, {
+            MemberRole.PLANNER: FakeAgentAdapter(FakeAgentScenario(output={
+                "message": '{"content":"白金：先确认目标和验收边界，我请月见补充实现视角。","handoff_to":["implementer"]}',
+            })),
+            MemberRole.IMPLEMENTER: FakeAgentAdapter(FakeAgentScenario(output={
+                "message": '{"content":"月见：实现时要检查兼容性和边界输入，再请鲸鲸审视风险。","handoff_to":["reviewer"]}',
+            })),
+            MemberRole.REVIEWER: FakeAgentAdapter(FakeAgentScenario(output={
+                "message": '{"content":"鲸鲸：需要可复查的测试证据；讨论本身不能证明代码已改好。","handoff_to":[]}',
+            })),
+        })
+    else:
+        runtime = build_standalone_chat_agent_runtime(settings)
     dispatcher = StandaloneChatDispatcher(
-        service.store, build_standalone_chat_agent_runtime(settings),
+        service.store, runtime,
         timeout_seconds=min(settings.agent_timeout_seconds, 180),
     )
     return create_app(chat_service=service, chat_dispatcher=dispatcher)
@@ -155,13 +178,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     serve.add_argument("--port", type=int, default=8000, help="local HTTP port")
     chat_serve = commands.add_parser("chat-serve", help="start local read-only team chat")
     chat_serve.add_argument("--port", type=int, default=8000, help="local HTTP port")
+    chat_demo = commands.add_parser("chat-demo", help="start chat UI with three fake Agents")
+    chat_demo.add_argument("--port", type=int, default=8000, help="local HTTP port")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
     try:
         settings = get_settings()
-        if args.command == "chat-serve":
-            app = build_chat_app(settings=settings)
+        if args.command in {"chat-serve", "chat-demo"}:
+            app = build_chat_app(settings=settings, fake_agents=args.command == "chat-demo")
         else:
             config = load_server_config(args.config)
             required_executables = {
