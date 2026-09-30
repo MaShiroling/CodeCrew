@@ -338,10 +338,20 @@ class StandaloneChatStore:
                 raise StandaloneChatMemberNotFoundError("chat message was not sent to member")
             return self._get_message(connection, message_id)
 
+    def addressed_agents(self, room_id: UUID, correlation_id: UUID) -> frozenset[UUID]:
+        """Agents already claimed in this discussion, including terminal claims."""
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """SELECT DISTINCT recipient_id FROM standalone_chat_turns
+                WHERE room_id = ? AND correlation_id = ?""",
+                (str(room_id), str(correlation_id)),
+            ).fetchall()
+            return frozenset(UUID(row["recipient_id"]) for row in rows)
+
     def claim_turn(
         self, message_id: UUID, recipient_id: UUID, *, max_turns: int,
-    ) -> tuple[StandaloneChatTurn, bool]:
-        """Atomically reserve one delivery; never reclaim a terminal/unknown turn."""
+    ) -> tuple[StandaloneChatTurn | None, bool]:
+        """Atomically reserve a delivery; suppress repeated Agent handoffs."""
         from uuid import uuid5
 
         if max_turns < 1:
@@ -362,6 +372,24 @@ class StandaloneChatStore:
             ).fetchone()
             if row is not None:
                 return self._turn(row), False
+            sender = connection.execute(
+                "SELECT role FROM standalone_chat_members WHERE member_id = ?",
+                (str(message.sender_id),),
+            ).fetchone()
+            if sender is not None and sender["role"] != "human":
+                already_addressed = connection.execute(
+                    """SELECT 1 FROM standalone_chat_turns
+                    WHERE room_id = ? AND correlation_id = ? AND recipient_id = ? LIMIT 1""",
+                    (str(message.room_id), str(message.correlation_id), str(recipient_id)),
+                ).fetchone()
+                if already_addressed is not None:
+                    connection.execute(
+                        """UPDATE standalone_chat_deliveries
+                        SET status = 'acknowledged', acknowledged_at = ?
+                        WHERE message_id = ? AND recipient_id = ? AND status = 'pending'""",
+                        (utc_now().isoformat(), str(message_id), str(recipient_id)),
+                    )
+                    return None, False
             count = connection.execute(
                 "SELECT COUNT(*) FROM standalone_chat_turns WHERE correlation_id = ?",
                 (str(message.correlation_id),),

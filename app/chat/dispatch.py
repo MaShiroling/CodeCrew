@@ -140,6 +140,8 @@ class StandaloneChatDispatcher:
                 stored.message.message_id, recipient_id,
                 max_turns=self.max_turns_per_thread,
             )
+            if claim is None:
+                continue
             claims.append(claim)
             if created:
                 task = asyncio.create_task(self._execute(claim.turn_id))
@@ -216,9 +218,14 @@ class StandaloneChatDispatcher:
             except (ValueError, TypeError) as exc:
                 raise _ChatReplyInvalid from exc
             human = next(member for member in room.members if member.role is MemberRole.HUMAN)
+            already_addressed = self.store.addressed_agents(
+                room.room_id, stored.message.correlation_id,
+            )
+            agent_ids = {member.role: member.member_id for member in room.members}
             teammate_ids = tuple(
-                next(member.member_id for member in room.members if member.role is role)
+                agent_ids[role]
                 for role in reply.handoff_to
+                if agent_ids[role] not in already_addressed
             )
             response = self.store.append_message(StandaloneChatMessage(
                 room_id=room.room_id, trace_id=room.trace_id,
@@ -287,6 +294,7 @@ class StandaloneChatDispatcher:
             "最终只输出一个 JSON 对象："
             '{"content":"给人的回复","handoff_to":[]}。'
             "handoff_to 可以填其他成员的角色 planner、implementer、reviewer，至多两位；"
-            "仅确需队友回答时使用，不要提及自己。\n"
+            "仅确需队友回答时使用，不要提及自己；如果 Human 已同时点名多位成员，"
+            "默认各自直接回答 Human，不要再次邀请已被点名的成员。\n"
             f"发送者：{sender}\n收到的消息：{content}"
         )

@@ -12,7 +12,7 @@ from httpx import ASGITransport, AsyncClient
 from app.agents import AgentExitReason, FakeAgentAdapter, FakeAgentScenario
 from app.chat.agents import StandaloneChatAgentRuntime, StandaloneChatWorkspaceManager
 from app.chat.dispatch import StandaloneChatDispatcher
-from app.chat.models import ChatTurnStatus
+from app.chat.models import ChatTurnStatus, StandaloneChatMessage
 from app.chat.service import StandaloneChatService
 from app.chat.store import StandaloneChatStore
 from app.main import create_app
@@ -81,6 +81,106 @@ async def test_http_mention_triggers_bounded_agent_chat_without_task(tmp_path: P
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE name = 'tasks'"
         ).fetchone() is None
+
+
+@pytest.mark.asyncio
+async def test_multi_mention_answers_once_per_agent_without_repeated_handoffs(
+    tmp_path: Path,
+) -> None:
+    service, dispatcher, adapters = setup(tmp_path)
+    await dispatcher.startup()
+    room = service.create_room(title="三人讨论", idempotency_key=uuid4())
+    original = service.post_message(
+        room.room_id, content="@白金 @月见 @鲸鲸 各自说说风险",
+        idempotency_key=uuid4(), reply_to=None,
+    )
+    assert len(dispatcher.enqueue(original)) == 3
+    await dispatcher.wait_idle()
+
+    turns = service.store.list_turns(room.room_id)
+    messages = service.store.list_messages(room.room_id)
+    assert len(turns) == 3
+    assert all(turn.status is ChatTurnStatus.SUCCEEDED for turn in turns)
+    assert len(messages) == 4
+    assert all(len(adapter.requests) == 1 for adapter in adapters.values())
+    human_id = next(member.member_id for member in room.members if member.role is MemberRole.HUMAN)
+    assert all(message.message.recipient_ids == (human_id,) for message in messages[1:])
+
+    # A deliberate Human follow-up is not an automatic Agent-to-Agent retry.
+    planner_id = next(member.member_id for member in room.members
+                      if member.role is MemberRole.PLANNER)
+    planner_reply = next(message for message in messages[1:]
+                         if message.message.sender_id == planner_id)
+    follow_up = service.post_message(
+        room.room_id, content="请进一步解释", idempotency_key=uuid4(),
+        reply_to=planner_reply.message.message_id,
+    )
+    assert len(dispatcher.enqueue(follow_up)) == 1
+    await dispatcher.wait_idle()
+    assert len(adapters[MemberRole.PLANNER].requests) == 2
+    assert len(service.store.list_turns(room.room_id)) == 4
+
+
+@pytest.mark.asyncio
+async def test_two_agents_handoff_to_same_teammate_only_runs_once(tmp_path: Path) -> None:
+    invite_reviewer = FakeAgentAdapter(FakeAgentScenario(output={
+        "message": '{"content":"请鲸鲸补充","handoff_to":["reviewer"]}',
+    }))
+    service, dispatcher, adapters = setup(
+        tmp_path, planner=invite_reviewer,
+        implementer=FakeAgentAdapter(FakeAgentScenario(output={
+            "message": '{"content":"也请鲸鲸补充","handoff_to":["reviewer"]}',
+        })),
+    )
+    await dispatcher.startup()
+    room = service.create_room(title="并发接话", idempotency_key=uuid4())
+    original = service.post_message(
+        room.room_id, content="@白金 @月见 请讨论", idempotency_key=uuid4(), reply_to=None,
+    )
+    assert len(dispatcher.enqueue(original)) == 2
+    await dispatcher.wait_idle()
+    turns = service.store.list_turns(room.room_id)
+    assert len(turns) == 3
+    assert all(turn.status is ChatTurnStatus.SUCCEEDED for turn in turns)
+    assert len(adapters[MemberRole.REVIEWER].requests) == 1
+    assert len(service.store.list_messages(room.room_id)) == 4
+    reviewer_id = next(member.member_id for member in room.members
+                       if member.role is MemberRole.REVIEWER)
+    assert reviewer_id in service.store.addressed_agents(room.room_id, original.message.correlation_id)
+    assert not service.store.pending_for(reviewer_id, correlation_id=original.message.correlation_id)
+
+
+def test_persisted_claim_blocks_late_agent_handoff_and_acks_delivery(tmp_path: Path) -> None:
+    service, _, _ = setup(tmp_path)
+    room = service.create_room(title="重复转交", idempotency_key=uuid4())
+    original = service.post_message(
+        room.room_id, content="@白金 @鲸鲸 各自讨论", idempotency_key=uuid4(), reply_to=None,
+    )
+    by_role = {member.role: member.member_id for member in room.members}
+    for role in (MemberRole.PLANNER, MemberRole.REVIEWER):
+        turn, created = service.store.claim_turn(
+            original.message.message_id, by_role[role], max_turns=6,
+        )
+        assert created and turn is not None
+    late = service.store.append_message(StandaloneChatMessage(
+        room_id=room.room_id, trace_id=room.trace_id,
+        sender_id=by_role[MemberRole.PLANNER],
+        recipient_ids=(by_role[MemberRole.HUMAN], by_role[MemberRole.REVIEWER]),
+        content="还请鲸鲸再说一次", reply_to=original.message.message_id,
+        causation_id=original.message.message_id,
+        correlation_id=original.message.correlation_id,
+        idempotency_key="late-handoff",
+    ))
+    assert service.store.claim_turn(
+        late.message.message_id, by_role[MemberRole.REVIEWER], max_turns=6,
+    ) == (None, False)
+    assert service.store.claim_turn(
+        late.message.message_id, by_role[MemberRole.REVIEWER], max_turns=6,
+    ) == (None, False)
+    assert service.store.get_message(late.message.message_id).deliveries[1].status.value == (
+        "acknowledged"
+    )
+    assert len(service.store.list_turns(room.room_id)) == 2
 
 
 @pytest.mark.asyncio
@@ -162,9 +262,12 @@ async def test_missing_key_and_model_exit_have_safe_ui_errors(tmp_path: Path) ->
         other_room.room_id, content="@白金 请讨论", idempotency_key=uuid4(), reply_to=None,
     ))
     await other_dispatcher.wait_idle()
-    assert other.store.list_turns(other_room.room_id)[0].error == (
+    timed_out = other.store.list_turns(other_room.room_id)[0]
+    assert timed_out.status is ChatTurnStatus.FAILED
+    assert timed_out.error == (
         "Agent process ended: timed_out, exit=143"
     )
+    assert len(other.store.list_messages(other_room.room_id)) == 1
 
 
 @pytest.mark.asyncio
