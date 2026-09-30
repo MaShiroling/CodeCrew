@@ -55,6 +55,7 @@ const turns = [];
 const posts = [];
 let nextKey = 1;
 let postMode = 'ok';
+let holdNextTurns = null;
 const response = (status, data) => ({ok: status >= 200 && status < 300, status, json: async () => data});
 const fetch = async (url, options = {}) => {
   if (url.includes('/api/v1/tasks')) throw new Error('chat UI must not call task API');
@@ -72,7 +73,17 @@ const fetch = async (url, options = {}) => {
     const cursor = Number(new URL(url, 'http://local').searchParams.get('after_sequence'));
     return response(200, {items: messages.filter((item) => item.sequence > cursor)});
   }
-  if (url === `/api/v1/chats/${roomId}/turns`) return response(200, {items: [...turns]});
+  if (url === `/api/v1/chats/${roomId}/turns`) {
+    if (holdNextTurns) {
+      const gate = holdNextTurns;
+      holdNextTurns = null;
+      const snapshot = turns.map((turn) => ({...turn}));
+      gate.started();
+      await gate.wait;
+      return response(200, {items: snapshot});
+    }
+    return response(200, {items: [...turns]});
+  }
   if (url === `/api/v1/chats/${roomId}/messages` && options.method === 'POST') {
     const body = JSON.parse(options.body);
     posts.push(body);
@@ -171,6 +182,30 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   await window.poll();
   assert.equal(get('room-status').textContent, '失败');
   assert.match(get('turn-list').children[0].children[2].textContent, /exit=1/);
+
+  let releaseOld;
+  let oldStarted;
+  const started = new Promise((resolve) => { oldStarted = resolve; });
+  turns.at(-1).status = 'running';
+  turns.at(-1).error = null;
+  holdNextTurns = {started: oldStarted, wait: new Promise((resolve) => { releaseOld = resolve; })};
+  const staleRefresh = window.poll();
+  await started;
+  turns.at(-1).status = 'succeeded';
+  EventSource.instances[0].emit('chat_changed');
+  await tick();
+  assert.equal(get('room-status').textContent, '已回复');
+  releaseOld();
+  await staleRefresh;
+  assert.equal(get('room-status').textContent, '已回复', 'old poll must not overwrite SSE state');
+
+  EventSource.instances[0].emit('error');
+  messages.push({sequence: messages.length + 1, message: {message_id: 'fallback-agent',
+    room_id: roomId, sender_id: 'reviewer', content: '轮询也能看到新消息', reply_to: 'human-1',
+    created_at: '2026-09-30T12:03:00Z'}, deliveries: []});
+  const beforeFallback = get('message-list').children.length;
+  await window.poll();
+  assert.equal(get('message-list').children.length, beforeFallback + 1);
 
   const count = get('message-list').children.length;
   await window.poll();

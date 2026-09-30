@@ -75,6 +75,45 @@ async def test_chat_sse_follows_messages_and_turn_transitions(tmp_path: Path) ->
         await anext(stream)
 
 
+@pytest.mark.asyncio
+async def test_chat_sse_reconnect_reads_durable_room_state_only(tmp_path: Path) -> None:
+    service = make_service(tmp_path)
+    room = service.create_room(title="订阅房间", idempotency_key=uuid4())
+    other = service.create_room(title="其它房间", idempotency_key=uuid4())
+    first_request = ConnectedRequest()
+    stream = stream_chat_activity(
+        first_request, service, room.room_id, poll_seconds=0.01,
+    )
+    await anext(stream)  # retry hint
+    assert frame_data(await anext(stream)) == {"message_sequence": 0, "turn_count": 0}
+    waiting = asyncio.create_task(anext(stream))
+    service.post_message(
+        other.room_id, content="@白金 不应出现", idempotency_key=uuid4(), reply_to=None,
+    )
+    await asyncio.sleep(0.03)
+    assert not waiting.done()
+    own = service.post_message(
+        room.room_id, content="@白金 请讨论", idempotency_key=uuid4(), reply_to=None,
+    )
+    assert frame_data(await asyncio.wait_for(waiting, 1)) == {
+        "message_sequence": service.store.get_message(own.message.message_id).sequence,
+        "turn_count": 0,
+    }
+    first_request.disconnected = True
+    with pytest.raises(StopAsyncIteration):
+        await anext(stream)
+
+    reconnected = stream_chat_activity(
+        ConnectedRequest(), service, room.room_id, poll_seconds=0.01,
+    )
+    await anext(reconnected)
+    assert frame_data(await anext(reconnected)) == {
+        "message_sequence": service.store.get_message(own.message.message_id).sequence,
+        "turn_count": 0,
+    }
+    await reconnected.aclose()
+
+
 def test_chat_sse_rejects_missing_room_before_streaming(tmp_path: Path) -> None:
     service = make_service(tmp_path)
     with TestClient(create_app(chat_service=service)) as client:

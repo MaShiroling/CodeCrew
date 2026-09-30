@@ -1,7 +1,7 @@
 const chatState = {
   rooms: [], room: null, members: new Map(), messages: new Map(), lastSequence: 0,
   replyTo: null, requestId: 0, pendingCreateKey: null, pendingSend: null,
-  creating: false, sending: false, eventSource: null,
+  creating: false, sending: false, eventSource: null, refreshId: 0,
 };
 
 const byId = (id) => document.getElementById(id);
@@ -157,7 +157,7 @@ async function selectRoom(room) {
   byId('empty-room').hidden = true;
   byId('active-room').hidden = false;
   byId('conversation-title').textContent = room.title;
-  byId('room-status').textContent = room.status === 'active' ? '聊天中' : '已关闭';
+  byId('room-status').textContent = room.status === 'active' ? '可开始聊天' : '已关闭';
   byId('message-content').disabled = room.status !== 'active';
   byId('send-button').disabled = room.status !== 'active';
   renderMembers();
@@ -241,13 +241,17 @@ function renderMessage(stored) {
   return row;
 }
 
-async function loadMessages(requestId) {
+function isCurrentRefresh(requestId, refreshId) {
+  return requestId === chatState.requestId && refreshId === chatState.refreshId;
+}
+
+async function loadMessages(requestId, refreshId) {
   const roomId = chatState.room.room_id;
   let cursor = chatState.lastSequence;
   let added = 0;
   while (true) {
     const page = await chatRequest(`${CHAT_API}/${encodeURIComponent(roomId)}/messages?after_sequence=${cursor}&limit=100`);
-    if (requestId !== chatState.requestId) return;
+    if (!isCurrentRefresh(requestId, refreshId)) return;
     const list = byId('message-list');
     for (const stored of page.items) {
       if (stored.sequence <= chatState.lastSequence) continue;
@@ -307,10 +311,10 @@ function renderTurn(turn) {
   return item;
 }
 
-async function loadTurns(requestId) {
+async function loadTurns(requestId, refreshId) {
   const roomId = chatState.room.room_id;
   const page = await chatRequest(`${CHAT_API}/${encodeURIComponent(roomId)}/turns`);
-  if (requestId !== chatState.requestId) return;
+  if (!isCurrentRefresh(requestId, refreshId)) return;
   const list = byId('turn-list');
   const active = page.items.filter((turn) => turn.status === 'queued' || turn.status === 'running');
   const latest = page.items.at(-1);
@@ -321,7 +325,8 @@ async function loadTurns(requestId) {
     byId('room-status').textContent = TURN_LABELS[latest.status];
     if (byId('send-error').hidden) byId('send-status').textContent = '此回合未成功；可查看团队动态并重新提问。';
   } else {
-    byId('room-status').textContent = chatState.room.status === 'active' ? '聊天中' : '已关闭';
+    byId('room-status').textContent = chatState.room.status !== 'active' ? '已关闭'
+      : latest?.status === 'succeeded' ? '已回复' : '可开始聊天';
     if (latest?.status === 'succeeded' && byId('send-status').textContent.includes('等待 Agent')) {
       byId('send-status').textContent = 'Agent 已回复，可以继续讨论。';
     }
@@ -338,12 +343,13 @@ async function loadTurns(requestId) {
 
 async function refreshSelected(requestId = chatState.requestId) {
   if (!chatState.room) return;
+  const refreshId = ++chatState.refreshId;
   try {
-    await loadMessages(requestId);
-    if (requestId === chatState.requestId) await loadTurns(requestId);
-    if (requestId === chatState.requestId) clearError('conversation-error');
+    await loadMessages(requestId, refreshId);
+    if (isCurrentRefresh(requestId, refreshId)) await loadTurns(requestId, refreshId);
+    if (isCurrentRefresh(requestId, refreshId)) clearError('conversation-error');
   } catch (error) {
-    if (requestId === chatState.requestId) showError('conversation-error', error);
+    if (isCurrentRefresh(requestId, refreshId)) showError('conversation-error', error);
   }
 }
 
