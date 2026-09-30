@@ -96,16 +96,23 @@ const fetch = async (url, options = {}) => {
 const location = {href: 'http://local/ui/chat/', search: ''};
 const window = {location, history: {replaceState(_state, _title, next) {
   location.href = String(next); location.search = new URL(location.href).search;
-}}, setInterval(callback, delay) { this.poll = callback; this.pollDelay = delay; }};
+}}, setInterval(callback, delay) { this.poll = callback; this.pollDelay = delay; }, addEventListener() {}};
+class EventSource {
+  constructor(url) { this.url = url; this.listeners = new Map(); this.closed = false; EventSource.instances.push(this); }
+  addEventListener(type, callback) { this.listeners.set(type, callback); }
+  emit(type) { return this.listeners.get(type)?.(); }
+  close() { this.closed = true; }
+}
+EventSource.instances = [];
 const context = vm.createContext({document, window, fetch, crypto: {randomUUID: () => `key-${nextKey++}`},
-  URL, URLSearchParams, Intl, Date, console});
+  URL, URLSearchParams, Intl, Date, EventSource, console});
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/web/chat.js'), 'utf8'), context);
 const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve)); };
 
 (async () => {
   await tick();
   assert.match(get('room-list').children[0].textContent, /还没有房间/);
-  assert.equal(window.pollDelay, 2000);
+  assert.equal(window.pollDelay, 10000);
 
   get('room-title').value = '输入校验讨论';
   await get('create-room-form').dispatch('submit', {preventDefault() {}});
@@ -113,6 +120,13 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   assert.equal(get('empty-room').hidden, true);
   assert.match(location.search, /room=room-1/);
   assert.equal(get('member-list').children.length, 3);
+  assert.match(EventSource.instances[0].url, /room-1\/events$/);
+  EventSource.instances[0].emit('open');
+  assert.match(get('room-subtitle').textContent, /实时连接中/);
+  EventSource.instances[0].emit('error');
+  assert.match(get('room-subtitle').textContent, /低频轮询/);
+  EventSource.instances[0].emit('open');
+  assert.match(get('room-subtitle').textContent, /实时连接中/);
 
   mentionButtons[0].dispatch('click');
   get('message-content').value += '讨论兼容性';
@@ -127,7 +141,8 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
     sender_id: 'planner', content: '白金：先确定边界。', reply_to: 'human-1',
     created_at: '2026-09-30T12:01:00Z'}, deliveries: []});
   turns[0].status = 'succeeded';
-  await window.poll();
+  EventSource.instances[0].emit('chat_changed');
+  await tick();
   assert.equal(get('message-list').children.length, 2);
   assert.match(get('message-list').children[1].children[1].children[2].textContent, /白金/);
   get('message-list').children[1].children[1].children.at(-1).dispatch('click');
@@ -150,6 +165,13 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   assert.equal(turns.at(-1).status, 'cancelled');
   assert.match(get('turn-list').children[0].children[0].children[1].textContent, /已取消/);
 
+  turns.forEach((turn) => { turn.status = 'succeeded'; });
+  turns.at(-1).status = 'failed';
+  turns.at(-1).error = 'Agent process ended: failed, exit=1';
+  await window.poll();
+  assert.equal(get('room-status').textContent, '失败');
+  assert.match(get('turn-list').children[0].children[2].textContent, /exit=1/);
+
   const count = get('message-list').children.length;
   await window.poll();
   assert.equal(get('message-list').children.length, count);
@@ -158,6 +180,8 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   rooms.push({...rooms[0], room_id: 'room-2', title: '另一个房间'});
   await get('refresh-rooms').dispatch('click');
   await get('room-list').children[1].dispatch('click');
+  assert.equal(EventSource.instances[0].closed, true);
+  assert.match(EventSource.instances[1].url, /room-2\/events$/);
   assert.equal(get('conversation-title').textContent, '另一个房间');
   assert.match(get('message-list').children[0].textContent, /还没有消息/);
   await get('room-list').children[0].dispatch('click');

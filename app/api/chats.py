@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
+from app.api.chat_events import stream_chat_activity
 from app.api.chat_models import (
     ChatMessagePage,
     ChatMessageReceipt,
@@ -13,6 +14,7 @@ from app.api.chat_models import (
     CreateChatRequest,
     PostChatMessageRequest,
 )
+from app.api.events import EventStreamResponse
 from app.api.models import ApiErrorResponse
 from app.chat.dispatch import StandaloneChatDispatcher
 from app.chat.models import StandaloneChatRoom, StandaloneChatTurn
@@ -82,6 +84,18 @@ def list_chat_messages(
 def list_chat_turns(room_id: UUID, service: ChatServiceDependency) -> ChatTurnPage:
     service.get_room(room_id)
     return ChatTurnPage(items=service.store.list_turns(room_id))
+
+
+@router.get("/{room_id}/events", response_class=EventStreamResponse,
+            responses=ERROR_RESPONSES)
+def chat_events(
+    room_id: UUID, request: Request, service: ChatServiceDependency,
+) -> EventStreamResponse:
+    service.get_room(room_id)  # Return a real 404 before opening the stream.
+    return EventStreamResponse(
+        stream_chat_activity(request, service, room_id),
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.post("/{room_id}/turns/{turn_id}/cancel", response_model=StandaloneChatTurn,

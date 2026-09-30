@@ -9,7 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
-from app.agents import FakeAgentAdapter, FakeAgentScenario
+from app.agents import AgentExitReason, FakeAgentAdapter, FakeAgentScenario
 from app.chat.agents import StandaloneChatAgentRuntime, StandaloneChatWorkspaceManager
 from app.chat.dispatch import StandaloneChatDispatcher
 from app.chat.models import ChatTurnStatus
@@ -113,7 +113,10 @@ async def test_failed_and_invalid_outputs_are_not_retried(tmp_path: Path) -> Non
     )
     dispatcher.enqueue(stored)
     await dispatcher.wait_idle()
-    assert service.store.list_turns(room.room_id)[0].status is ChatTurnStatus.INTERRUPTED
+    first_turn = service.store.list_turns(room.room_id)[0]
+    assert first_turn.status is ChatTurnStatus.INTERRUPTED
+    assert first_turn.error == "Agent adapter could not start; check CLI and sandbox configuration"
+    assert "provider unavailable" not in first_turn.error
     dispatcher.enqueue(stored)
     await dispatcher.wait_idle()
     assert planner.requests == []
@@ -129,8 +132,39 @@ async def test_failed_and_invalid_outputs_are_not_retried(tmp_path: Path) -> Non
         other_room.room_id, content="@白金 请分析", idempotency_key=uuid4(), reply_to=None,
     ))
     await other_dispatcher.wait_idle()
-    assert other.store.list_turns(other_room.room_id)[0].status is ChatTurnStatus.FAILED
+    invalid_turn = other.store.list_turns(other_room.room_id)[0]
+    assert invalid_turn.status is ChatTurnStatus.FAILED
+    assert invalid_turn.error == "Agent reply format was invalid"
     assert len(other.store.list_messages(other_room.room_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_missing_key_and_model_exit_have_safe_ui_errors(tmp_path: Path) -> None:
+    missing_key = FakeAgentAdapter(FakeAgentScenario(
+        start_error="KIMI_MODEL_API_KEY is required; secret details must not appear",
+    ))
+    service, dispatcher, _ = setup(tmp_path, planner=missing_key)
+    await dispatcher.startup()
+    room = service.create_room(title="配置错误", idempotency_key=uuid4())
+    dispatcher.enqueue(service.post_message(
+        room.room_id, content="@白金 请讨论", idempotency_key=uuid4(), reply_to=None,
+    ))
+    await dispatcher.wait_idle()
+    error = service.store.list_turns(room.room_id)[0].error
+    assert error == "KIMI_MODEL_API_KEY is missing in the server environment"
+    assert "secret details" not in error
+
+    failed = FakeAgentAdapter(FakeAgentScenario(reason=AgentExitReason.TIMED_OUT, exit_code=143))
+    other, other_dispatcher, _ = setup(tmp_path / "other", planner=failed)
+    await other_dispatcher.startup()
+    other_room = other.create_room(title="超时", idempotency_key=uuid4())
+    other_dispatcher.enqueue(other.post_message(
+        other_room.room_id, content="@白金 请讨论", idempotency_key=uuid4(), reply_to=None,
+    ))
+    await other_dispatcher.wait_idle()
+    assert other.store.list_turns(other_room.room_id)[0].error == (
+        "Agent process ended: timed_out, exit=143"
+    )
 
 
 @pytest.mark.asyncio

@@ -7,7 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from app.agents import AgentExitReason
+from app.agents import AgentAdapterError, AgentExitReason
 from app.chat.agents import StandaloneChatAgentRuntime
 from app.chat.models import (
     ChatTurnStatus,
@@ -25,6 +25,36 @@ _CHAT_RESPONSIBILITIES = {
     MemberRole.IMPLEMENTER: "讨论实现可行性、兼容性和测试边界",
     MemberRole.REVIEWER: "讨论潜在风险、证据缺口和验证建议",
 }
+
+
+class _ChatAgentExited(RuntimeError):
+    def __init__(self, reason: AgentExitReason, exit_code: int | None) -> None:
+        self.reason = reason
+        self.exit_code = exit_code
+        super().__init__(reason.value)
+
+
+class _ChatReplyInvalid(RuntimeError):
+    pass
+
+
+def _safe_turn_error(exc: Exception) -> str:
+    """Give the UI actionable categories without storing provider output/secrets."""
+    if isinstance(exc, _ChatAgentExited):
+        code = f", exit={exc.exit_code}" if exc.exit_code is not None else ""
+        return f"Agent process ended: {exc.reason.value}{code}"
+    if isinstance(exc, FileNotFoundError):
+        return "Agent CLI not found; check the configured CLI path"
+    if isinstance(exc, AgentAdapterError):
+        detail = str(exc)
+        if "KIMI_MODEL_API_KEY" in detail:
+            return "KIMI_MODEL_API_KEY is missing in the server environment"
+        if "DEEPSEEK_API_KEY" in detail:
+            return "DEEPSEEK_API_KEY is missing in the server environment"
+        return "Agent adapter could not start; check CLI and sandbox configuration"
+    if isinstance(exc, _ChatReplyInvalid):
+        return "Agent reply format was invalid"
+    return f"Chat turn failed at {type(exc).__name__}"
 
 
 class _ChatReply(BaseModel):
@@ -180,8 +210,11 @@ class StandaloneChatDispatcher:
             self._sessions.pop(turn_id, None)
             session_id = None
             if result.reason is not AgentExitReason.COMPLETED or result.exit_code not in {0, None}:
-                raise RuntimeError(f"Agent turn ended: {result.reason.value}")
-            reply = _normalize_reply(result.output, own_role=recipient.role)
+                raise _ChatAgentExited(result.reason, result.exit_code)
+            try:
+                reply = _normalize_reply(result.output, own_role=recipient.role)
+            except (ValueError, TypeError) as exc:
+                raise _ChatReplyInvalid from exc
             human = next(member for member in room.members if member.role is MemberRole.HUMAN)
             teammate_ids = tuple(
                 next(member.member_id for member in room.members if member.role is role)
@@ -237,7 +270,7 @@ class StandaloneChatDispatcher:
                     terminal = ChatTurnStatus.FAILED
             self.store.transition_turn(
                 turn_id, from_status=ChatTurnStatus.RUNNING,
-                to_status=terminal, error=f"chat turn failed at {type(exc).__name__}",
+                to_status=terminal, error=_safe_turn_error(exc),
             )
         finally:
             self._sessions.pop(turn_id, None)

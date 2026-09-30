@@ -1,7 +1,7 @@
 const chatState = {
   rooms: [], room: null, members: new Map(), messages: new Map(), lastSequence: 0,
   replyTo: null, requestId: 0, pendingCreateKey: null, pendingSend: null,
-  creating: false, sending: false,
+  creating: false, sending: false, eventSource: null,
 };
 
 const byId = (id) => document.getElementById(id);
@@ -142,6 +142,7 @@ function setReply(message) {
 
 async function selectRoom(room) {
   if (!room) return;
+  disconnectRoom();
   const requestId = ++chatState.requestId;
   chatState.room = room;
   chatState.members = new Map(room.members.map((member) => [member.member_id, member]));
@@ -167,6 +168,32 @@ async function selectRoom(room) {
   next.searchParams.set('room', room.room_id);
   window.history.replaceState(null, '', next);
   await refreshSelected(requestId);
+  if (requestId === chatState.requestId) connectRoom(room.room_id, requestId);
+}
+
+function disconnectRoom() {
+  if (chatState.eventSource) chatState.eventSource.close();
+  chatState.eventSource = null;
+}
+
+function connectRoom(roomId, requestId) {
+  if (typeof EventSource === 'undefined') {
+    byId('room-subtitle').textContent = '只读讨论 · 每 10 秒检查新消息';
+    return;
+  }
+  const source = new EventSource(`${CHAT_API}/${encodeURIComponent(roomId)}/events`);
+  chatState.eventSource = source;
+  source.addEventListener('open', () => {
+    if (requestId === chatState.requestId) byId('room-subtitle').textContent = '实时连接中 · 只读讨论';
+  });
+  source.addEventListener('chat_changed', () => {
+    if (requestId === chatState.requestId) refreshSelected(requestId);
+  });
+  source.addEventListener('error', () => {
+    if (requestId === chatState.requestId) {
+      byId('room-subtitle').textContent = '实时连接中断，低频轮询仍在运行';
+    }
+  });
 }
 
 function renderMessage(stored) {
@@ -285,6 +312,20 @@ async function loadTurns(requestId) {
   const page = await chatRequest(`${CHAT_API}/${encodeURIComponent(roomId)}/turns`);
   if (requestId !== chatState.requestId) return;
   const list = byId('turn-list');
+  const active = page.items.filter((turn) => turn.status === 'queued' || turn.status === 'running');
+  const latest = page.items.at(-1);
+  if (active.length) {
+    byId('room-status').textContent = `${memberFor(active[0].recipient_id).name}正在回复`;
+    if (byId('send-error').hidden) byId('send-status').textContent = 'Agent 正在处理，只读讨论不会改代码。';
+  } else if (latest && ['failed', 'interrupted', 'budget_exhausted', 'cancelled'].includes(latest.status)) {
+    byId('room-status').textContent = TURN_LABELS[latest.status];
+    if (byId('send-error').hidden) byId('send-status').textContent = '此回合未成功；可查看团队动态并重新提问。';
+  } else {
+    byId('room-status').textContent = chatState.room.status === 'active' ? '聊天中' : '已关闭';
+    if (latest?.status === 'succeeded' && byId('send-status').textContent.includes('等待 Agent')) {
+      byId('send-status').textContent = 'Agent 已回复，可以继续讨论。';
+    }
+  }
   if (!page.items.length) {
     const hint = document.createElement('p');
     hint.className = 'empty-hint';
@@ -371,7 +412,8 @@ function initializeChat() {
     button.addEventListener('click', () => insertMention(button.dataset.mention));
   });
   refreshRooms({selectInitial: true});
-  window.setInterval(() => refreshSelected(), 2000);
+  window.setInterval(() => refreshSelected(), 10000);
+  window.addEventListener('beforeunload', disconnectRoom);
 }
 
 initializeChat();
