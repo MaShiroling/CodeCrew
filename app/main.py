@@ -108,6 +108,11 @@ def create_app(
     def task_ui() -> FileResponse:
         return FileResponse(web_root / "index.html")
 
+    @application.get("/ui/chat", include_in_schema=False)
+    @application.get("/ui/chat/", include_in_schema=False)
+    def chat_ui() -> FileResponse:
+        return FileResponse(web_root / "chat.html")
+
     return application
 
 

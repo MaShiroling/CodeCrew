@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>CodeCrew · 团队聊天室</title>
+  <link rel="stylesheet" href="/ui/assets/chat.css">
+  <script src="/ui/assets/chat.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#chat-main">跳到聊天室</a>
+  <div class="chat-shell">
+    <header class="site-header">
+      <a class="brand" href="/ui/chat/" aria-label="CodeCrew 聊天室首页"><span class="brand-mark">C·C</span><span><strong>CodeCrew</strong><small>TEAM CHAT</small></span></a>
+      <nav aria-label="主导航"><a class="nav-current" href="/ui/chat/" aria-current="page">聊天室</a><a href="/ui/">编码任务 ↗</a></nav>
+      <span class="local-label">LOCAL · READ ONLY</span>
+    </header>
+
+    <div class="chat-layout" id="chat-main">
+      <aside class="room-sidebar" aria-labelledby="rooms-title">
+        <div class="side-head"><div><span class="kicker">01 / ROOMS</span><h1 id="rooms-title">团队房间</h1></div><button id="refresh-rooms" class="icon-button" type="button" aria-label="刷新房间">↻</button></div>
+        <form id="create-room-form" class="create-room-form" novalidate>
+          <label for="room-title">新建一个话题</label>
+          <div class="create-row"><input id="room-title" name="title" maxlength="200" placeholder="例如：讨论输入校验方案" required><button id="create-room-button" type="submit">创建</button></div>
+          <p id="create-room-error" class="form-error" role="alert" hidden></p>
+        </form>
+        <div id="room-list" class="room-list" aria-live="polite"><p class="empty-hint">正在加载房间…</p></div>
+        <p class="sidebar-note">这里不关联 Git 仓库。聊天只会讨论，不能授权修改代码。</p>
+      </aside>
+
+      <main class="conversation" aria-labelledby="conversation-title">
+        <div id="empty-room" class="room-empty"><span class="empty-icon">✦</span><span class="kicker">WELCOME TO CODECREW</span><h2>开一个房间，叫上队友。</h2><p>白金讨论方案、月见补充实现视角、鲸鲸检查风险。先聊清楚，再决定是否需要改代码。</p></div>
+        <div id="active-room" class="active-room" hidden>
+          <header class="conversation-head"><div><span class="kicker">02 / CONVERSATION</span><h2 id="conversation-title"></h2><p id="room-subtitle">独立聊天室 · 只读讨论</p></div><span id="room-status" class="status-pill">聊天中</span></header>
+          <div id="member-list" class="members" aria-label="房间成员"></div>
+          <div id="conversation-error" class="conversation-error" role="alert" hidden></div>
+          <div id="message-list" class="timeline" role="log" aria-live="polite" aria-relevant="additions"><p class="empty-hint">还没有消息。试试提及一位成员。</p></div>
+          <div id="reply-preview" class="reply-preview" hidden><span id="reply-label"></span><button id="clear-reply" type="button" aria-label="取消关联回复">×</button></div>
+          <form id="message-form" class="message-form" novalidate>
+            <div class="mention-row" role="group" aria-label="提及成员"><span>提及成员</span><button type="button" data-mention="@白金">@白金</button><button type="button" data-mention="@月见">@月见</button><button type="button" data-mention="@鲸鲸">@鲸鲸</button></div>
+            <label class="visually-hidden" for="message-content">消息内容</label><textarea id="message-content" rows="3" maxlength="16000" placeholder="@白金 请和月见聊聊这个方案…（不填写密钥）"></textarea>
+            <div class="composer-bottom"><p id="send-error" class="form-error" role="alert" hidden></p><p id="send-status" class="send-status" role="status">提及 Agent 或回复其消息即可开始对话</p><button id="send-button" type="submit">发送消息 ↗</button></div>
+          </form>
+        </div>
+      </main>
+
+      <aside class="activity-sidebar" aria-labelledby="activity-title">
+        <div class="side-head"><div><span class="kicker">03 / ACTIVITY</span><h2 id="activity-title">团队动态</h2></div></div>
+        <div class="read-only-card"><span class="read-only-icon">◇</span><div><strong>只读讨论模式</strong><p>Agent 在独立环境接话。任何聊天消息都不会启动编码任务或获得写权限。</p></div></div>
+        <section class="activity-section" aria-labelledby="turn-title"><div class="activity-head"><h3 id="turn-title">Agent 回合</h3><button id="refresh-chat" type="button">刷新</button></div><div id="turn-list" aria-live="polite"><p class="empty-hint">选择房间后显示回合状态。</p></div></section>
+        <p class="activity-footnote">状态每 2 秒更新。运行中可请求取消；取消未确认时会显示中断，不会假装成功。</p>
+      </aside>
+    </div>
+  </div>
+</body>
+</html>
