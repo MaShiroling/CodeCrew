@@ -358,7 +358,8 @@ CODECREW_RUN_DISCUSSION_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_dis
 真实模型的独立聊天室服务使用
 `.venv/bin/python -m app.cli chat-serve --port 8000`，页面地址相同。
 服务本身无需模型密钥即可启动，但真实 Agent 回合需要本机 CLI 和相应凭据；
-这一浏览器链路属于 P2，**尚未在线验收**。页面已支持 SSE 实时状态通知和断线
+这一浏览器链路属于 P2：用户本机已经看到真实三模型接话，也发现额外交接超时；
+后续去重与有限上下文修复仍待真实浏览器复测，不能宣称 P2 完成。页面已支持 SSE 实时状态通知和断线
 轮询兜底；详细准备、在线测试与安全检查见[独立聊天室在线验收](docs/standalone-chat-live.md)。
 接口字段与边界见[独立聊天室 API](docs/standalone-chat.md)。
 

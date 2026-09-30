@@ -295,6 +295,32 @@ class StandaloneChatStore:
             ).fetchall()
             return tuple(self._get_message(connection, UUID(row["message_id"])) for row in rows)
 
+    def recent_messages_before(
+        self, room_id: UUID, *, before_sequence: int,
+        correlation_id: UUID | None = None, limit: int = 6,
+    ) -> tuple[StoredStandaloneChatMessage, ...]:
+        """Return a bounded, chronological context window before one message."""
+        if before_sequence < 1 or not 1 <= limit <= 20:
+            raise ValueError("invalid chat context window")
+        with self.database.connect() as connection:
+            self._get_room(connection, room_id)
+            rows = connection.execute(
+                """SELECT message_id FROM standalone_chat_messages
+                WHERE room_id = ? AND sequence < ?
+                AND (? IS NULL OR correlation_id = ?)
+                ORDER BY sequence DESC LIMIT ?""",
+                (
+                    str(room_id), before_sequence,
+                    str(correlation_id) if correlation_id else None,
+                    str(correlation_id) if correlation_id else None,
+                    limit,
+                ),
+            ).fetchall()
+            return tuple(
+                self._get_message(connection, UUID(row["message_id"]))
+                for row in reversed(rows)
+            )
+
     def pending_for(
         self, member_id: UUID, *, correlation_id: UUID | None = None, limit: int = 100,
     ) -> tuple[StoredStandaloneChatMessage, ...]:

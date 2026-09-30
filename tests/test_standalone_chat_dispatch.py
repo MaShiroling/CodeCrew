@@ -1,6 +1,7 @@
 """Fake-agent acceptance for repository-free chat dispatch and safe replay."""
 
 import asyncio
+import json
 import time
 from pathlib import Path
 from uuid import UUID, uuid4
@@ -18,6 +19,12 @@ from app.chat.store import StandaloneChatStore
 from app.main import create_app
 from app.storage import SQLiteDatabase
 from app.team.models import MemberRole
+
+
+def prompt_context(prompt: str) -> dict:
+    prefix = "上下文摘录（JSON）："
+    line = next(line for line in prompt.splitlines() if line.startswith(prefix))
+    return json.loads(line[len(prefix):])
 
 
 def setup(tmp_path: Path, *, planner=None, implementer=None, reviewer=None, max_turns=6):
@@ -69,6 +76,20 @@ async def test_http_mention_triggers_bounded_agent_chat_without_task(tmp_path: P
         assert {message["message"]["correlation_id"] for message in messages} == {
             messages[0]["message"]["correlation_id"]
         }
+        planner_context = prompt_context(adapters[MemberRole.PLANNER].requests[0].prompt)
+        implementer_context = prompt_context(adapters[MemberRole.IMPLEMENTER].requests[0].prompt)
+        reviewer_context = prompt_context(adapters[MemberRole.REVIEWER].requests[0].prompt)
+        assert planner_context["history"] == []
+        assert planner_context["scope"] == "none"
+        assert implementer_context["scope"] == "same_discussion"
+        assert [item["excerpt"] for item in implementer_context["history"]] == [
+            payload["content"]
+        ]
+        assert [item["role"] for item in reviewer_context["history"]] == [
+            "human", "planner"
+        ]
+        assert reviewer_context["reply_to"] == messages[1]["message"]["message_id"]
+        assert "发送者：月见（implementer）" in adapters[MemberRole.REVIEWER].requests[0].prompt
         await client.post(f"/api/v1/chats/{room_id}/messages", json=payload)
         await dispatcher.wait_idle()
         assert len((await client.get(f"/api/v1/chats/{room_id}/messages")).json()["items"]) == 4
@@ -81,6 +102,85 @@ async def test_http_mention_triggers_bounded_agent_chat_without_task(tmp_path: P
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE name = 'tasks'"
         ).fetchone() is None
+
+
+@pytest.mark.asyncio
+async def test_context_is_bounded_persisted_and_room_scoped(tmp_path: Path) -> None:
+    planner = FakeAgentAdapter(FakeAgentScenario(output={
+        "message": '{"content":"已了解","handoff_to":[]}',
+    }))
+    service, dispatcher, _ = setup(tmp_path, planner=planner)
+    await dispatcher.startup()
+    room = service.create_room(title="当前房间", idempotency_key=uuid4())
+    other = service.create_room(title="其它房间", idempotency_key=uuid4())
+    service.post_message(
+        other.room_id, content="@白金 PRIVATE_OTHER_ROOM", idempotency_key=uuid4(),
+        reply_to=None,
+    )
+    for index in range(8):
+        content = f"@白金 历史消息{index} " + ("x" * 600)
+        if index == 7:
+            content = '@白金 历史消息7 "quoted"\n第二行 ' + ("x" * 600)
+        service.post_message(
+            room.room_id, content=content,
+            idempotency_key=uuid4(), reply_to=None,
+        )
+
+    reopened, restarted, adapters = setup(tmp_path, planner=FakeAgentAdapter(
+        FakeAgentScenario(output={"message": '{"content":"收到","handoff_to":[]}'}),
+    ))
+    await restarted.startup()
+    current = reopened.post_message(
+        room.room_id, content="@白金 新话题", idempotency_key=uuid4(), reply_to=None,
+    )
+    restarted.enqueue(current)
+    await restarted.wait_idle()
+    prompt = adapters[MemberRole.PLANNER].requests[0].prompt
+    context = prompt_context(prompt)
+    assert context["scope"] == "room_recent_other_discussions"
+    assert context["room_title"] == "当前房间"
+    assert [item["sequence"] for item in context["history"]] == [7, 8, 9]
+    assert all(len(item["excerpt"]) <= 241 for item in context["history"])
+    assert "PRIVATE_OTHER_ROOM" not in prompt
+    assert "历史消息0" not in prompt
+    assert len(prompt) < 5000
+
+
+@pytest.mark.asyncio
+async def test_direct_reply_keeps_old_parent_reference_within_context_window(
+    tmp_path: Path,
+) -> None:
+    planner = FakeAgentAdapter(FakeAgentScenario(output={
+        "message": '{"content":"先确认边界","handoff_to":[]}',
+    }))
+    service, dispatcher, adapters = setup(tmp_path, planner=planner)
+    await dispatcher.startup()
+    room = service.create_room(title="关联追问", idempotency_key=uuid4())
+    root = service.post_message(
+        room.room_id, content="@白金 最初需求", idempotency_key=uuid4(), reply_to=None,
+    )
+    dispatcher.enqueue(root)
+    await dispatcher.wait_idle()
+    parent = service.store.list_messages(room.room_id)[1]
+    for index in range(8):
+        service.post_message(
+            room.room_id, content=f"中间追问{index}", idempotency_key=uuid4(),
+            reply_to=parent.message.message_id,
+        )
+    current = service.post_message(
+        room.room_id, content="请接着最初的回答说", idempotency_key=uuid4(),
+        reply_to=parent.message.message_id,
+    )
+    dispatcher.enqueue(current)
+    await dispatcher.wait_idle()
+    context = prompt_context(adapters[MemberRole.PLANNER].requests[-1].prompt)
+    assert context["scope"] == "same_discussion"
+    assert len(context["history"]) == 6
+    assert context["history"][0]["message_id"] == str(parent.message.message_id)
+    assert context["history"][0]["excerpt"] == "先确认边界"
+    assert context["reply_to"] == str(parent.message.message_id)
+    assert all(item["message_id"] != str(current.message.message_id)
+               for item in context["history"])
 
 
 @pytest.mark.asyncio
