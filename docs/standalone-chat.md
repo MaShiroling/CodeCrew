@@ -37,6 +37,7 @@ P1 已提供独立聊天 UI。创建聊天室
 | `GET` | `/api/v1/chats/{room_id}/messages?after_sequence=0&limit=50` | 按序读取消息与投递状态 |
 | `POST` | `/api/v1/chats/{room_id}/messages` | Human 发 @消息或关联回复；请求含 UUID `idempotency_key`、`content` 和可选 `reply_to` |
 | `GET` | `/api/v1/chats/{room_id}/turns` | 查看 Agent 回合的持久状态 |
+| `GET` | `/api/v1/chats/{room_id}/events` | SSE 变更通知；连接后立即推送当前快照，断线可重连 |
 | `POST` | `/api/v1/chats/{room_id}/turns/{turn_id}/cancel` | 取消本房间回合；未知或跨房间 ID 拒绝 |
 
 发送新讨论必须提及至少一位 Agent，例如 `@白金 请讨论边界`；回复 Agent 消息时可省略
@@ -49,6 +50,10 @@ P1 已提供独立聊天 UI。创建聊天室
 创建与发消息不会创建编码 Task 或 Git Worktree。Agent 回复写回本聊天室，
 `pending` 仍仅表示消息投递状态，**不是 Agent 已接话**。仅在可信
 本机使用：当前没有多用户认证或公网部署保护。
+
+SSE 只传消息序号和回合数量等失效提示，不传模型逐 Token 文本，也不是成功证据。
+浏览器收到提示后重新读取 SQLite 支撑的消息与回合接口；若事件流断开，10 秒轮询
+继续同步。真实 Agent 失败只在回合中显示安全类别或退出状态，不保存原始 CLI 错误。
 
 测试见 `tests/test_standalone_chat_store.py` 与 `tests/test_standalone_chat_api.py`。当前没有对话运行时 Trace 事件或跨进程
 派发；数据中的 `trace_id` 为下一阶段事件记录提供关联键，并不代表这两项已实现。
