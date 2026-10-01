@@ -64,6 +64,7 @@ class StandaloneChatMessage(BaseModel):
     recipient_ids: tuple[UUID, ...] = Field(min_length=1, max_length=3)
     content: str = Field(min_length=1, max_length=MAX_CHAT_CONTENT_CHARS)
     reply_to: UUID | None = None
+    context_anchor_id: UUID | None = None
     correlation_id: UUID = Field(default_factory=uuid4)
     causation_id: UUID | None = None
     idempotency_key: str = Field(min_length=1, max_length=255)
@@ -77,8 +78,8 @@ class StandaloneChatMessage(BaseModel):
             raise ValueError("chat recipients must be unique")
         if self.sender_id in self.recipient_ids:
             raise ValueError("chat sender cannot address itself")
-        if self.reply_to == self.message_id or self.causation_id == self.message_id:
-            raise ValueError("chat message cannot reply to or cause itself")
+        if self.message_id in {self.reply_to, self.causation_id, self.context_anchor_id}:
+            raise ValueError("chat message cannot reference itself")
         return self
 
 

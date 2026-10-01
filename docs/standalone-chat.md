@@ -35,7 +35,7 @@ P1 已提供独立聊天 UI。创建聊天室
 | `GET` | `/api/v1/chats?limit=50&offset=0` | 列表，按创建时间倒序 |
 | `GET` | `/api/v1/chats/{room_id}` | 房间详情与四位成员 |
 | `GET` | `/api/v1/chats/{room_id}/messages?after_sequence=0&limit=50` | 按序读取消息与投递状态 |
-| `POST` | `/api/v1/chats/{room_id}/messages` | Human 发 @消息或关联回复；请求含 UUID `idempotency_key`、`content` 和可选 `reply_to` |
+| `POST` | `/api/v1/chats/{room_id}/messages` | Human 发 @消息或关联回复；请求含 UUID `idempotency_key`、`content`，可选 `reply_to` 或 `context_anchor_id` |
 | `GET` | `/api/v1/chats/{room_id}/turns` | 查看 Agent 回合的持久状态 |
 | `GET` | `/api/v1/chats/{room_id}/events` | SSE 变更通知；连接后立即推送当前快照，断线可重连 |
 | `POST` | `/api/v1/chats/{room_id}/turns/{turn_id}/cancel` | 取消本房间回合；未知或跨房间 ID 拒绝 |
@@ -55,14 +55,17 @@ SSE 只传消息序号和回合数量等失效提示，不传模型逐 Token 文
 浏览器收到提示后重新读取 SQLite 支撑的消息与回合接口；若事件流断开，10 秒轮询
 继续同步。真实 Agent 失败只在回合中显示安全类别或退出状态，不保存原始 CLI 错误。
 
-## 有限房间上下文（P2.2）
+## 有界话题上下文（P2.4.2）
 
 每次 Agent 回合仍启动独立只读会话，不复用其它 Agent 的会话。调度器读取当前消息
-之前、同一 `correlation_id` 的最多 6 条消息；如果这是新讨论，则改取同房间最近
-3 条并标记为“其它讨论背景，可能无关”。每条仅传最多 240 字符的确定性摘录，
-附消息 ID、顺序、发送者和角色；关联回复会保留被回复消息作为来源，即使它较早。
-当前消息完整传入。上下文仅辅助理解，不是完整聊天历史或语义摘要，也不改变只读
-权限；同时点名的并发 Agent 不保证看见彼此尚未完成的回答。不能跨房间读取上下文。
+之前、同一 `correlation_id` 的最多 6 条消息。新讨论默认不带旧话题；如需接续，
+点击旧 Human 消息的“以此为背景继续”，发送请求会携带 `context_anchor_id`，只引用
+这条同房间 Human 消息的最多 240 字符摘录。该显式引用会沿本轮 Agent 接话传递；
+直接回复此轮 Agent 消息时也会继承。普通关联回复仍保留被回复消息作为来源，
+即使它较早。选择背景和直接回复互斥。跨房间、非 Human 或不存在的背景 ID 会被拒绝。
+当前消息完整传入。背景摘录不是已确认事实或语义摘要，也不改变只读权限；
+同时点名的并发 Agent 不保证看见彼此尚未完成的回答。P2.4.3 仍需真实浏览器
+长聊验收。
 
 测试见 `tests/test_standalone_chat_store.py` 与 `tests/test_standalone_chat_api.py`。当前没有对话运行时 Trace 事件或跨进程
 派发；数据中的 `trace_id` 为下一阶段事件记录提供关联键，并不代表这两项已实现。

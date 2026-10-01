@@ -118,6 +118,61 @@ def test_reply_addresses_agent_author_and_keeps_correlation(tmp_path: Path) -> N
     }).status_code == 404
 
 
+def test_explicit_context_anchor_is_human_same_room_and_idempotent(tmp_path: Path) -> None:
+    client, store = make_client(tmp_path)
+    room = client.post("/api/v1/chats", json={
+        "title": "当前房间", "idempotency_key": str(uuid4()),
+    }).json()
+    other = client.post("/api/v1/chats", json={
+        "title": "另一个房间", "idempotency_key": str(uuid4()),
+    }).json()
+    path = f"/api/v1/chats/{room['room_id']}/messages"
+    original = client.post(path, json={
+        "content": "@白金 最初目标", "idempotency_key": str(uuid4()),
+    }).json()["message"]["message"]
+    key = str(uuid4())
+    payload = {"content": "@月见 继续目标", "idempotency_key": key,
+               "context_anchor_id": original["message_id"]}
+    response = client.post(path, json=payload)
+    assert response.status_code == 201
+    anchored = response.json()["message"]["message"]
+    assert anchored["context_anchor_id"] == original["message_id"]
+    assert anchored["correlation_id"] != original["correlation_id"]
+    assert client.post(path, json=payload).json() == response.json()
+    assert client.post(path, json={**payload, "context_anchor_id": None}).status_code == 409
+    assert client.post(f"/api/v1/chats/{other['room_id']}/messages", json={
+        **payload, "idempotency_key": str(uuid4()),
+    }).status_code == 404
+    assert client.post(path, json={
+        **payload, "idempotency_key": str(uuid4()),
+        "context_anchor_id": str(uuid4()),
+    }).status_code == 404
+    planner = next(member for member in room["members"] if member["role"] == "planner")
+    human = next(member for member in room["members"] if member["role"] == "human")
+    agent = store.append_message(StandaloneChatMessage(
+        room_id=UUID(room["room_id"]), trace_id=UUID(room["trace_id"]),
+        sender_id=UUID(planner["member_id"]), recipient_ids=(UUID(human["member_id"]),),
+        content="Agent 答复", reply_to=UUID(original["message_id"]),
+        context_anchor_id=UUID(original["message_id"]),
+        correlation_id=UUID(original["correlation_id"]), idempotency_key="agent-anchor-test",
+    )).message
+    reply = client.post(path, json={
+        "content": "继续解释", "reply_to": str(agent.message_id),
+        "idempotency_key": str(uuid4()),
+    })
+    assert reply.status_code == 201
+    assert reply.json()["message"]["message"]["context_anchor_id"] == original["message_id"]
+    assert client.post(path, json={
+        "content": "@月见 不能同时引用", "reply_to": str(agent.message_id),
+        "context_anchor_id": original["message_id"],
+        "idempotency_key": str(uuid4()),
+    }).status_code == 422
+    assert client.post(path, json={
+        **payload, "idempotency_key": str(uuid4()),
+        "context_anchor_id": str(agent.message_id),
+    }).status_code == 422
+
+
 def test_chat_api_is_unavailable_without_a_chat_service() -> None:
     client = TestClient(create_app())
     assert client.get("/api/v1/chats").status_code == 503

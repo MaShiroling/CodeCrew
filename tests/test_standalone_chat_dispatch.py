@@ -137,13 +137,58 @@ async def test_context_is_bounded_persisted_and_room_scoped(tmp_path: Path) -> N
     await restarted.wait_idle()
     prompt = adapters[MemberRole.PLANNER].requests[0].prompt
     context = prompt_context(prompt)
-    assert context["scope"] == "room_recent_other_discussions"
+    assert context["scope"] == "none"
     assert context["room_title"] == "当前房间"
-    assert [item["sequence"] for item in context["history"]] == [7, 8, 9]
-    assert all(len(item["excerpt"]) <= 241 for item in context["history"])
+    assert context["history"] == []
+    assert context["topic_anchor"] is None
     assert "PRIVATE_OTHER_ROOM" not in prompt
     assert "历史消息0" not in prompt
     assert len(prompt) < 5000
+
+
+@pytest.mark.asyncio
+async def test_explicit_human_anchor_is_bounded_and_follows_agent_handoff(
+    tmp_path: Path,
+) -> None:
+    service, _, _ = setup(tmp_path)
+    room = service.create_room(title="长聊", idempotency_key=uuid4())
+    other = service.create_room(title="别的房间", idempotency_key=uuid4())
+    service.post_message(
+        other.room_id, content="@白金 PRIVATE_OTHER_ROOM", idempotency_key=uuid4(),
+        reply_to=None,
+    )
+    original = service.post_message(
+        room.room_id, content="@白金 原始目标：讨论兼容性 " + "A" * 600,
+        idempotency_key=uuid4(), reply_to=None,
+    )
+    service.post_message(
+        room.room_id, content="@白金 另一话题 PRIVATE_SAME_ROOM",
+        idempotency_key=uuid4(), reply_to=None,
+    )
+
+    reopened, dispatcher, adapters = setup(tmp_path)
+    await dispatcher.startup()
+    current = reopened.post_message(
+        room.room_id, content="@白金 继续原始目标", idempotency_key=uuid4(),
+        reply_to=None, context_anchor_id=original.message.message_id,
+    )
+    assert current.message.correlation_id != original.message.correlation_id
+    dispatcher.enqueue(current)
+    await dispatcher.wait_idle()
+    planner_context = prompt_context(adapters[MemberRole.PLANNER].requests[0].prompt)
+    assert planner_context["scope"] == "anchored_new_discussion"
+    assert planner_context["history"] == []
+    assert planner_context["topic_anchor"]["message_id"] == str(original.message.message_id)
+    assert len(planner_context["topic_anchor"]["excerpt"]) <= 241
+    assert "PRIVATE_SAME_ROOM" not in adapters[MemberRole.PLANNER].requests[0].prompt
+    assert "PRIVATE_OTHER_ROOM" not in adapters[MemberRole.PLANNER].requests[0].prompt
+    reviewer_context = prompt_context(adapters[MemberRole.REVIEWER].requests[0].prompt)
+    assert reviewer_context["topic_anchor"]["message_id"] == str(original.message.message_id)
+    assert reviewer_context["scope"] == "same_discussion"
+    assert [item["role"] for item in reviewer_context["history"]] == ["human", "planner"]
+    messages = reopened.store.list_messages(room.room_id)
+    assert all(item.message.context_anchor_id == original.message.message_id
+               for item in messages[3:])
 
 
 @pytest.mark.asyncio

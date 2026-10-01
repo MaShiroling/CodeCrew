@@ -1,6 +1,6 @@
 const chatState = {
   rooms: [], room: null, members: new Map(), messages: new Map(), lastSequence: 0,
-  replyTo: null, requestId: 0, pendingCreateKey: null, pendingSend: null,
+  replyTo: null, contextAnchorId: null, requestId: 0, pendingCreateKey: null, pendingSend: null,
   creating: false, sending: false, eventSource: null, refreshId: 0,
 };
 
@@ -131,9 +131,25 @@ function clearReply() {
   byId('reply-label').textContent = '';
 }
 
+function clearContextAnchor() {
+  chatState.contextAnchorId = null;
+  byId('context-preview').hidden = true;
+  byId('context-label').textContent = '';
+}
+
+function setContextAnchor(message) {
+  if (memberFor(message.sender_id).role !== 'human') return;
+  clearReply();
+  chatState.contextAnchorId = message.message_id;
+  byId('context-label').textContent = `以这条 Human 消息为背景：${message.content.slice(0, 80)}`;
+  byId('context-preview').hidden = false;
+  byId('message-content').focus();
+}
+
 function setReply(message) {
   const author = memberFor(message.sender_id);
   if (author.role === 'human') return;
+  clearContextAnchor();
   chatState.replyTo = message.message_id;
   byId('reply-label').textContent = `回复 ${author.name}：${message.content.slice(0, 80)}`;
   byId('reply-preview').hidden = false;
@@ -151,6 +167,7 @@ async function selectRoom(room) {
   chatState.pendingSend = null;
   byId('message-content').value = '';
   clearReply();
+  clearContextAnchor();
   clearError('conversation-error');
   clearError('send-error');
   byId('send-status').textContent = '提及 Agent 或回复其消息即可开始对话';
@@ -225,11 +242,25 @@ function renderMessage(stored) {
     context.textContent = parent ? `↳ ${memberFor(parent.sender_id).name}：${parent.content.slice(0, 60)}` : '↳ 关联上一条消息';
     body.append(context);
   }
+  if (message.context_anchor_id) {
+    const background = document.createElement('div');
+    background.className = 'reply-context';
+    const anchor = chatState.messages.get(message.context_anchor_id)?.message;
+    background.textContent = anchor ? `背景 · 我：${anchor.content.slice(0, 60)}` : '背景 · 已引用 Human 消息';
+    body.append(background);
+  }
   const bubble = document.createElement('div');
   bubble.className = 'bubble';
   bubble.textContent = message.content;
   body.append(bubble);
-  if (!human) {
+  if (human) {
+    const anchor = document.createElement('button');
+    anchor.type = 'button';
+    anchor.className = 'reply-action';
+    anchor.textContent = '以此为背景继续 ↗';
+    anchor.addEventListener('click', () => setContextAnchor(message));
+    body.append(anchor);
+  } else {
     const reply = document.createElement('button');
     reply.type = 'button';
     reply.className = 'reply-action';
@@ -367,6 +398,7 @@ async function sendMessage(event) {
   const roomId = chatState.room.room_id;
   const content = byId('message-content').value.trim();
   const replyTo = chatState.replyTo;
+  const contextAnchorId = chatState.contextAnchorId;
   if (!content) { showError('send-error', new Error('请先输入消息。')); return; }
   if (!/@[\w\u4e00-\u9fff]+/u.test(content) && !replyTo) {
     showError('send-error', new Error('请提及一位 Agent，或回复一条 Agent 消息。'));
@@ -374,20 +406,23 @@ async function sendMessage(event) {
   }
   clearError('send-error');
   const pending = chatState.pendingSend;
-  const key = pending && pending.roomId === roomId && pending.content === content && pending.replyTo === replyTo
+  const key = pending && pending.roomId === roomId && pending.content === content
+    && pending.replyTo === replyTo && pending.contextAnchorId === contextAnchorId
     ? pending.key : crypto.randomUUID();
-  chatState.pendingSend = {roomId, content, replyTo, key};
+  chatState.pendingSend = {roomId, content, replyTo, contextAnchorId, key};
   chatState.sending = true;
   byId('send-button').disabled = true;
   byId('send-status').textContent = '正在发送…';
   try {
     const receipt = await chatRequest(`${CHAT_API}/${encodeURIComponent(roomId)}/messages`, {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({content, reply_to: replyTo, idempotency_key: key}),
+      body: JSON.stringify({content, reply_to: replyTo, context_anchor_id: contextAnchorId,
+        idempotency_key: key}),
     });
     if (chatState.room?.room_id === roomId) {
       byId('message-content').value = '';
       clearReply();
+      clearContextAnchor();
       byId('send-status').textContent = receipt.discussion_queued ? '消息已送达，等待 Agent 回复。' : '消息已保存。';
       await refreshSelected(chatState.requestId);
     }
@@ -414,6 +449,7 @@ function initializeChat() {
   });
   byId('message-content').addEventListener('input', () => clearError('send-error'));
   byId('clear-reply').addEventListener('click', clearReply);
+  byId('clear-context').addEventListener('click', clearContextAnchor);
   document.querySelectorAll('[data-mention]').forEach((button) => {
     button.addEventListener('click', () => insertMention(button.dataset.mention));
   });

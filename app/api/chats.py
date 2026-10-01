@@ -125,7 +125,7 @@ async def post_chat_message(
 ) -> ChatMessageReceipt:
     message = service.post_message(
         room_id, content=request.content, idempotency_key=request.idempotency_key,
-        reply_to=request.reply_to,
+        reply_to=request.reply_to, context_anchor_id=request.context_anchor_id,
     )
     turns = dispatcher.enqueue(message) if dispatcher is not None else ()
     return ChatMessageReceipt(

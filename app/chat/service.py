@@ -113,9 +113,11 @@ class StandaloneChatService:
 
     def post_message(
         self, room_id: UUID, *, content: str, idempotency_key: UUID,
-        reply_to: UUID | None,
+        reply_to: UUID | None, context_anchor_id: UUID | None = None,
     ) -> StoredStandaloneChatMessage:
         room = self.get_room(room_id)
+        if reply_to is not None and context_anchor_id is not None:
+            raise ChatInvalid("choose a reply or an explicit context anchor, not both")
         human = next(member for member in room.members if member.role is MemberRole.HUMAN)
         aliases = {
             alias.casefold(): profile.role
@@ -145,6 +147,17 @@ class StandaloneChatService:
             roles = tuple(dict.fromkeys((author.role, *roles)))
         if not roles:
             raise ChatInvalid("chat requires an Agent @mention or an Agent reply target")
+        if context_anchor_id is not None:
+            try:
+                anchor = self.store.get_message(context_anchor_id).message
+            except StandaloneChatMessageNotFoundError as exc:
+                raise ChatMessageNotFound("context anchor is not in this chat room") from exc
+            if anchor.room_id != room_id:
+                raise ChatMessageNotFound("context anchor is not in this chat room")
+            if anchor.sender_id != human.member_id:
+                raise ChatInvalid("context anchor must be a Human message")
+        elif parent is not None:
+            context_anchor_id = parent.context_anchor_id
         recipients = tuple(
             next(member.member_id for member in room.members if member.role is role)
             for role in roles
@@ -152,7 +165,7 @@ class StandaloneChatService:
         message = StandaloneChatMessage(
             room_id=room_id, trace_id=room.trace_id, sender_id=human.member_id,
             recipient_ids=recipients, content=content,
-            reply_to=reply_to,
+            reply_to=reply_to, context_anchor_id=context_anchor_id,
             correlation_id=(parent.correlation_id if parent else
                             uuid5(room_id, f"human-chat:{idempotency_key}")),
             causation_id=reply_to,

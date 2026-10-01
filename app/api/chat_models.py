@@ -22,6 +22,7 @@ class PostChatMessageRequest(BaseModel):
     idempotency_key: UUID
     content: str = Field(min_length=1, max_length=MAX_CHAT_CONTENT_CHARS)
     reply_to: UUID | None = None
+    context_anchor_id: UUID | None = None
 
 
 class ChatRoomPage(BaseModel):

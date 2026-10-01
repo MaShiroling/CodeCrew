@@ -30,6 +30,7 @@ const get = (id) => {
 };
 get('active-room').hidden = true;
 get('reply-preview').hidden = true;
+get('context-preview').hidden = true;
 get('create-room-error').hidden = true;
 get('conversation-error').hidden = true;
 get('send-error').hidden = true;
@@ -90,6 +91,7 @@ const fetch = async (url, options = {}) => {
     if (postMode === 'network') throw new TypeError('connection reset');
     const message = {message_id: `human-${messages.length + 1}`, room_id: roomId,
       sender_id: 'human', content: body.content, reply_to: body.reply_to,
+      context_anchor_id: body.context_anchor_id,
       created_at: '2026-09-30T12:00:00Z'};
     messages.push({sequence: messages.length + 1, message, deliveries: []});
     turns.push({turn_id: `turn-${turns.length + 1}`, room_id: roomId,
@@ -161,6 +163,16 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   get('message-content').value = '再解释一下';
   await get('message-form').dispatch('submit', {preventDefault() {}});
   assert.equal(posts[1].reply_to, 'agent-1');
+
+  get('message-list').children[0].children[1].children.at(-1).dispatch('click');
+  assert.equal(get('context-preview').hidden, false);
+  assert.equal(get('reply-preview').hidden, true);
+  get('message-content').value = '@月见 接着最初的目标讨论';
+  await get('message-form').dispatch('submit', {preventDefault() {}});
+  assert.equal(posts[2].context_anchor_id, 'human-1');
+  assert.equal(posts[2].reply_to, null);
+  assert.equal(get('context-preview').hidden, true);
+  assert.match(get('message-list').children.at(-1).children[1].children[1].textContent, /背景/);
 
   get('message-content').value = '@月见 请补充测试边界';
   postMode = 'network';

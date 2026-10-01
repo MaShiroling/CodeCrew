@@ -232,6 +232,19 @@ class StandaloneChatStore:
                 return self._get_message(connection, UUID(existing["message_id"]))
             if room.status is RoomStatus.CLOSED:
                 raise StandaloneChatConflictError("cannot append a message to a closed chat")
+            if message.context_anchor_id is not None:
+                anchor = connection.execute(
+                    """SELECT m.room_id, member.role FROM standalone_chat_messages AS m
+                    JOIN standalone_chat_members AS member ON member.member_id = m.sender_id
+                    WHERE m.message_id = ?""",
+                    (str(message.context_anchor_id),),
+                ).fetchone()
+                if anchor is None or anchor["room_id"] != str(message.room_id):
+                    raise StandaloneChatMessageNotFoundError(
+                        "context anchor is not in this room"
+                    )
+                if anchor["role"] != "human":
+                    raise StandaloneChatConflictError("context anchor must be a Human message")
             for reference_id in (message.reply_to, message.causation_id):
                 if reference_id is None:
                     continue
@@ -542,6 +555,9 @@ class StandaloneChatStore:
 
 
 def _fingerprint(message: StandaloneChatMessage) -> str:
-    content = message.model_dump(mode="json", exclude={"message_id", "created_at"})
+    excluded = {"message_id", "created_at"}
+    if message.context_anchor_id is None:
+        excluded.add("context_anchor_id")  # Preserve fingerprints for pre-upgrade messages.
+    content = message.model_dump(mode="json", exclude=excluded)
     encoded = json.dumps(content, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
