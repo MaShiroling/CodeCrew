@@ -109,6 +109,8 @@ class ChatCodingCapability(BaseModel):
 
     available: bool
     allowed_paths: tuple[str, ...] = ()
+    demo_repository_path: str | None = None
+    demo_issue: str | None = None
 
 
 def preflight_coding_task(

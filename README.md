@@ -358,6 +358,21 @@ CODECREW_RUN_DISCUSSION_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_dis
 `chat-demo` 不调用真实模型，也不创建编码任务。它把 SQLite 数据写入当前配置的
 `CODECREW_DATABASE_URL`（默认 `./codecrew.db`），不会在退出时自动清空。
 
+如果要演示“先聊天、再由 Human 明确授权一次改代码”的完整 Fake 闭环，运行：
+
+```bash
+.venv/bin/python -m app.cli demo-serve --port 8000
+```
+
+打开 `http://127.0.0.1:8000/ui/chat/`。创建房间，发送
+`@白金 请讨论只修改 src/app.py，把 value 从 1 改为 2`；等三位 Fake 成员接话后，
+在这条 Human 消息旁选择“以此发起受控编码任务”。仓库路径会自动填入临时示例仓库；
+目标填“只修改 src/app.py，把 value 从 1 改为 2”，先预检，核对路径、范围与 Git
+基线，再勾选确认并授权。点击任务链接，在工作台看 Diff、验证证据与 Patch。
+此入口不需要模型密钥，只允许临时示例仓库，Fake 实现只执行上述固定修改；
+不是任意需求的 AI 编码，也不代表真实模型验收。服务停止后临时数据会删除。
+详细步骤与边界见[一键 Fake 演示](docs/fake-chat-to-code-demo.md)。
+
 真实模型的独立聊天室服务使用
 `.venv/bin/python -m app.cli chat-serve --port 8000`，页面地址相同。
 服务本身无需模型密钥即可启动，但真实 Agent 回合需要本机 CLI 和相应凭据；

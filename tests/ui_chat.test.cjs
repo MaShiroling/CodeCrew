@@ -68,7 +68,8 @@ const response = (status, data) => ({ok: status >= 200 && status < 300, status, 
 const fetch = async (url, options = {}) => {
   if (url.includes('/api/v1/tasks')) throw new Error('chat UI must not call task API');
   if (url === '/api/v1/chats/coding-capability') {
-    return response(200, {available: true, allowed_paths: ['src']});
+    return response(200, {available: true, allowed_paths: ['src'],
+      demo_repository_path: '/tmp/example-repo', demo_issue: 'Set value to two'});
   }
   if (url === `/api/v1/chats/${roomId}/coding-task-preflight` && options.method === 'POST') {
     const body = JSON.parse(options.body);
@@ -182,6 +183,8 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   codingAction.dispatch('click');
   assert.equal(get('coding-panel').hidden, false);
   assert.equal(get('coding-scope').value, 'src');
+  assert.equal(get('coding-repository').value, '/tmp/example-repo');
+  assert.equal(get('coding-issue').value, 'Set value to two');
   get('coding-repository').value = '/tmp/example-repo';
   get('coding-issue').value = 'Set value to two';
   get('coding-issue').dispatch('input');

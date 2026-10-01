@@ -23,6 +23,9 @@ def create_app(
     chat_service: StandaloneChatService | None = None,
     chat_dispatcher: StandaloneChatDispatcher | None = None,
     chat_coding_policy: PermissionPolicy | None = None,
+    chat_coding_repository_bound: Path | None = None,
+    chat_coding_issue_bound: str | None = None,
+    disable_direct_task_creation: bool = False,
 ) -> FastAPI:
     if task_service is not None and runtime is not None:
         raise ValueError("provide either task_service or runtime, not both")
@@ -35,6 +38,10 @@ def create_app(
         configured_task_service = runtime.service if runtime is not None else task_service
         if getattr(configured_task_service, "permission_policy", None) != chat_coding_policy:
             raise ValueError("chat coding policy must match the task runtime policy")
+    if chat_coding_repository_bound is not None and chat_coding_policy is None:
+        raise ValueError("repository-bound coding requires a chat coding policy")
+    if chat_coding_issue_bound is not None and chat_coding_repository_bound is None:
+        raise ValueError("issue-bound coding requires a repository bound")
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
@@ -51,6 +58,7 @@ def create_app(
                 await chat_dispatcher.shutdown()
 
     application = FastAPI(title="CodeCrew", version="0.1.0", lifespan=lifespan)
+    application.state.disable_direct_task_creation = disable_direct_task_creation
     if runtime is not None:
         task_service = runtime.service
     if task_service is not None:
@@ -62,6 +70,8 @@ def create_app(
     if chat_coding_policy is not None:
         application.state.chat_coding_service = ChatCodingAuthorizationService(
             chat_service, task_service, chat_coding_policy,
+            repository_bound=chat_coding_repository_bound,
+            issue_bound=chat_coding_issue_bound,
         )
 
     @application.exception_handler(ChatApiError)

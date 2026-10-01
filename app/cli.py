@@ -6,6 +6,7 @@ import platform
 import shutil
 from collections.abc import Sequence
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Literal
 
 import uvicorn
@@ -71,14 +72,11 @@ def _build_chat_service(settings: Settings) -> StandaloneChatService:
     return StandaloneChatService(chat_store)
 
 
-def build_chat_app(*, settings: Settings, fake_agents: bool = False) -> FastAPI:
-    """Chat-only app; the explicit demo mode never starts real model CLIs."""
-    service = _build_chat_service(settings)
-    if fake_agents:
-        workspaces = StandaloneChatWorkspaceManager(
-            settings.standalone_chat_workspace_root, settings.standalone_chat_runtime_root,
-        )
-        runtime = StandaloneChatAgentRuntime(workspaces, {
+def _build_fake_chat_runtime(settings: Settings) -> StandaloneChatAgentRuntime:
+    workspaces = StandaloneChatWorkspaceManager(
+        settings.standalone_chat_workspace_root, settings.standalone_chat_runtime_root,
+    )
+    return StandaloneChatAgentRuntime(workspaces, {
             MemberRole.PLANNER: FakeAgentAdapter(FakeAgentScenario(output={
                 "message": '{"content":"白金：先确认目标和验收边界，我请月见补充实现视角。","handoff_to":["implementer"]}',
             })),
@@ -88,9 +86,14 @@ def build_chat_app(*, settings: Settings, fake_agents: bool = False) -> FastAPI:
             MemberRole.REVIEWER: FakeAgentAdapter(FakeAgentScenario(output={
                 "message": '{"content":"鲸鲸：需要可复查的测试证据；讨论本身不能证明代码已改好。","handoff_to":[]}',
             })),
-        })
-    else:
-        runtime = build_standalone_chat_agent_runtime(settings)
+    })
+
+
+def build_chat_app(*, settings: Settings, fake_agents: bool = False) -> FastAPI:
+    """Chat-only app; the explicit demo mode never starts real model CLIs."""
+    service = _build_chat_service(settings)
+    runtime = (_build_fake_chat_runtime(settings) if fake_agents
+               else build_standalone_chat_agent_runtime(settings))
     dispatcher = StandaloneChatDispatcher(
         service.store, runtime,
         timeout_seconds=min(settings.agent_timeout_seconds, 180),
@@ -181,9 +184,24 @@ def main(argv: Sequence[str] | None = None) -> int:
     chat_serve.add_argument("--port", type=int, default=8000, help="local HTTP port")
     chat_demo = commands.add_parser("chat-demo", help="start chat UI with three fake Agents")
     chat_demo.add_argument("--port", type=int, default=8000, help="local HTTP port")
+    full_demo = commands.add_parser(
+        "demo-serve", help="start disposable Fake chat-to-code walkthrough (no model keys)"
+    )
+    full_demo.add_argument("--port", type=int, default=8000, help="local HTTP port")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
+    if args.command == "demo-serve":
+        from app.demo import build_demo_app
+
+        with TemporaryDirectory(prefix="codecrew-demo-") as directory:
+            app, repository = build_demo_app(Path(directory).resolve())
+            print(f"Fake 演示仓库：{repository}", flush=True)
+            print("只支持演示任务：只修改 src/app.py，把 value 从 1 改为 2。", flush=True)
+            print(f"打开 http://127.0.0.1:{args.port}/ui/chat/", flush=True)
+            print("停止服务后临时演示仓库、Worktree 与证据将被删除。", flush=True)
+            uvicorn.run(app, host="127.0.0.1", port=args.port, workers=1)
+        return 0
     try:
         settings = get_settings()
         if args.command in {"chat-serve", "chat-demo"}:

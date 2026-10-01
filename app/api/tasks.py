@@ -68,7 +68,11 @@ TaskServiceDependency = Annotated[TaskService, Depends(get_task_service)]
         503: ERROR_RESPONSES[503],
     },
 )
-async def create_task(request: CreateTaskRequest, service: TaskServiceDependency) -> TaskView:
+async def create_task(
+    request: CreateTaskRequest, service: TaskServiceDependency, http_request: Request,
+) -> TaskView:
+    if getattr(http_request.app.state, "disable_direct_task_creation", False):
+        raise TaskServiceUnavailable("direct task creation is disabled in demo mode")
     return await service.create_task(request)
 
 

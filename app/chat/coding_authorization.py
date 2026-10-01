@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from pathlib import Path
 from uuid import UUID
 
 from app.api.models import CreateTaskRequest
@@ -9,6 +10,8 @@ from app.api.service import TaskService
 from app.chat.coding_intent import (
     AuthorizeChatCodingTaskRequest,
     AuthorizedCodingTask,
+    CodingTaskDraft,
+    CodingTaskPreflight,
     preflight_coding_task,
 )
 from app.chat.service import ChatApiError, ChatConflict, StandaloneChatService
@@ -52,12 +55,23 @@ class ChatCodingAuthorizationService:
     def __init__(
         self, chat: StandaloneChatService, tasks: TaskService,
         policy: PermissionPolicy,
+        *, repository_bound: Path | None = None, issue_bound: str | None = None,
     ) -> None:
         self.chat = chat
         self.tasks = tasks
         self.policy = policy
+        self.repository_bound = repository_bound.resolve() if repository_bound else None
+        self.issue_bound = issue_bound
         self.database: SQLiteDatabase = chat.store.database
         self.database.initialize((_MIGRATION,))
+
+    def preflight(self, room_id: UUID, draft: CodingTaskDraft) -> CodingTaskPreflight:
+        if self.issue_bound is not None and draft.issue != self.issue_bound:
+            raise ChatConflict("demo coding only supports its displayed fixed task")
+        if (self.repository_bound is not None
+                and Path(draft.repository_path).resolve() != self.repository_bound):
+            raise ChatConflict("demo coding is limited to its generated example repository")
+        return preflight_coding_task(self.chat, room_id, draft)
 
     async def authorize(
         self, room_id: UUID, command: AuthorizeChatCodingTaskRequest,
@@ -79,7 +93,7 @@ class ChatCodingAuthorizationService:
         # that a narrower Human selection constrains an otherwise broader runtime.
         if set(command.allowed_paths) != set(self.policy.allowed_paths):
             raise ChatConflict("selected write scope must equal the configured task policy")
-        preview = preflight_coding_task(self.chat, room_id, command)
+        preview = self.preflight(room_id, command)
         if preview.base_commit != command.expected_base_commit:
             raise ChatConflict("Git baseline changed; run preflight again")
         with self.database.transaction() as connection:

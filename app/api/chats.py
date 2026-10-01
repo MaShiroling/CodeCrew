@@ -61,17 +61,27 @@ def get_chat_coding_service(request: Request) -> ChatCodingAuthorizationService:
     return service
 
 
+def get_optional_chat_coding_service(
+    request: Request,
+) -> ChatCodingAuthorizationService | None:
+    return getattr(request.app.state, "chat_coding_service", None)
+
+
 ChatCodingDependency = Annotated[
     ChatCodingAuthorizationService, Depends(get_chat_coding_service),
 ]
 
 
-@router.get("/coding-capability", response_model=ChatCodingCapability)
+@router.get("/coding-capability", response_model=ChatCodingCapability,
+            response_model_exclude_none=True)
 def coding_capability(request: Request) -> ChatCodingCapability:
     service = getattr(request.app.state, "chat_coding_service", None)
     return ChatCodingCapability(
         available=service is not None,
         allowed_paths=service.policy.allowed_paths if service is not None else (),
+        demo_repository_path=(str(service.repository_bound)
+                              if service is not None and service.repository_bound else None),
+        demo_issue=service.issue_bound if service is not None else None,
     )
 
 
@@ -100,8 +110,12 @@ def get_chat(room_id: UUID, service: ChatServiceDependency) -> StandaloneChatRoo
              responses=ERROR_RESPONSES)
 def preflight_chat_coding_task(
     room_id: UUID, request: CodingTaskDraft, service: ChatServiceDependency,
+    authorization: Annotated[ChatCodingAuthorizationService | None,
+                             Depends(get_optional_chat_coding_service)],
 ) -> CodingTaskPreflight:
     """Read-only Human review snapshot; never creates or authorizes a coding Task."""
+    if authorization is not None:
+        return authorization.preflight(room_id, request)
     return preflight_coding_task(service, room_id, request)
 
 

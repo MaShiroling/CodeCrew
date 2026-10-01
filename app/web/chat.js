@@ -184,8 +184,9 @@ function chooseCodingSource(message) {
   chatState.codingSource = message;
   resetCodingPreview();
   byId('coding-source').textContent = `来源：本房间 Human 消息 #${message.message_id.slice(0, 8)}。这条聊天消息不是授权。`;
-  byId('coding-issue').value = message.content;
+  byId('coding-issue').value = chatState.codingCapability.demo_issue || message.content;
   byId('coding-scope').value = chatState.codingCapability.allowed_paths.join(', ');
+  byId('coding-repository').value = chatState.codingCapability.demo_repository_path || '';
   byId('coding-repository').disabled = false;
   byId('coding-issue').disabled = false;
   byId('coding-preflight').disabled = false;
