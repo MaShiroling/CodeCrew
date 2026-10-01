@@ -373,6 +373,10 @@ CODECREW_RUN_DISCUSSION_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_dis
 不是任意需求的 AI 编码，也不代表真实模型验收。服务停止后临时数据会删除。
 详细步骤与边界见[一键 Fake 演示](docs/fake-chat-to-code-demo.md)。
 
+真实三 Agent 的一次性小修复验收见
+[P3.5 操作指南](docs/real-chat-to-code-acceptance.md)。它使用独立的临时仓库与显式
+运行开关；当前环境未提供 Kimi/DeepSeek 密钥，不能把验收工具就绪写成真实模型已通过。
+
 真实模型的独立聊天室服务使用
 `.venv/bin/python -m app.cli chat-serve --port 8000`，页面地址相同。
 服务本身无需模型密钥即可启动，但真实 Agent 回合需要本机 CLI 和相应凭据；

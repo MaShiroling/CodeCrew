@@ -101,7 +101,12 @@ def build_chat_app(*, settings: Settings, fake_agents: bool = False) -> FastAPI:
     return create_app(chat_service=service, chat_dispatcher=dispatcher)
 
 
-def build_server_app(config: ServerConfig, *, settings: Settings) -> FastAPI:
+def build_server_app(
+    config: ServerConfig, *, settings: Settings,
+    repository_bound: Path | None = None, issue_bound: str | None = None,
+    disable_direct_task_creation: bool = False,
+    reviewer_home: Path | None = None,
+) -> FastAPI:
     if config.reviewer_adapter == "deepseek-claude-reviewer" and not os.environ.get(
         "DEEPSEEK_API_KEY", ""
     ).strip():
@@ -127,8 +132,14 @@ def build_server_app(config: ServerConfig, *, settings: Settings) -> FastAPI:
             permission_modes={PermissionMode.READ_ONLY},
         )
     if config.reviewer_adapter == "deepseek-claude-reviewer":
+        if reviewer_home is not None:
+            reviewer_home.mkdir(mode=0o700, parents=True, exist_ok=False)
         registry.register(
-            DeepSeekClaudeReviewerAdapter(executable=settings.claude_cli_path),
+            DeepSeekClaudeReviewerAdapter(
+                executable=settings.claude_cli_path,
+                env_source=({**os.environ, "HOME": str(reviewer_home)}
+                            if reviewer_home is not None else None),
+            ),
             roles={AgentRole.REVIEWER},
             permission_modes={PermissionMode.READ_ONLY},
         )
@@ -171,7 +182,26 @@ def build_server_app(config: ServerConfig, *, settings: Settings) -> FastAPI:
     )
     return create_app(runtime=runtime, chat_service=chat_service,
                       chat_dispatcher=chat_dispatcher,
-                      chat_coding_policy=config.permission_policy)
+                      chat_coding_policy=config.permission_policy,
+                      chat_coding_repository_bound=repository_bound,
+                      chat_coding_issue_bound=issue_bound,
+                      disable_direct_task_creation=disable_direct_task_creation)
+
+
+def _require_clis(config: ServerConfig, settings: Settings) -> None:
+    required_executables = {
+        settings.claude_cli_path
+        if config.planner_adapter == "claude-code" or config.reviewer_adapter in {
+            "claude-code", "deepseek-claude-reviewer"
+        } else None,
+        settings.codex_cli_path
+        if config.planner_adapter == "codex-cli" or config.implementer_adapter == "codex-cli"
+        else None,
+        settings.kimi_cli_path if config.implementer_adapter == "kimi-code-cli" else None,
+    }
+    for executable in required_executables - {None}:
+        if shutil.which(executable) is None:
+            raise ValueError(f"required Agent CLI is not available: {executable}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -188,6 +218,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "demo-serve", help="start disposable Fake chat-to-code walkthrough (no model keys)"
     )
     full_demo.add_argument("--port", type=int, default=8000, help="local HTTP port")
+    live_demo = commands.add_parser(
+        "live-demo", help="start disposable real three-Agent chat-to-code acceptance"
+    )
+    live_demo.add_argument("--port", type=int, default=8000, help="local HTTP port")
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("port must be between 1 and 65535")
@@ -202,24 +236,44 @@ def main(argv: Sequence[str] | None = None) -> int:
             print("停止服务后临时演示仓库、Worktree 与证据将被删除。", flush=True)
             uvicorn.run(app, host="127.0.0.1", port=args.port, workers=1)
         return 0
+    if args.command == "live-demo":
+        from scripts.chat_to_code_live_fixture import ISSUE, build_config, create_repository
+
+        try:
+            config = build_config()
+            base_settings = Settings(_env_file=None)
+            _require_clis(config, base_settings)
+            with TemporaryDirectory(prefix="codecrew-live-demo-") as directory:
+                root = Path(directory).resolve()
+                repository = create_repository(root)
+                settings = base_settings.model_copy(update={
+                    "database_url": f"sqlite:///{root / 'task.sqlite3'}",
+                    "artifact_root": root / "artifacts",
+                    "worktree_root": root / "worktrees",
+                    "standalone_chat_workspace_root": root / "chat-workspaces",
+                    "standalone_chat_runtime_root": root / "chat-runtime",
+                    "planner_timeout_seconds": base_settings.planner_timeout_seconds or 360,
+                })
+                app = build_server_app(
+                    config, settings=settings, repository_bound=repository,
+                    issue_bound=ISSUE, disable_direct_task_creation=True,
+                    reviewer_home=root / "reviewer-home",
+                )
+                print(f"真实模型临时演示仓库：{repository}", flush=True)
+                print("目标已在授权面板预填；仅允许这个仓库和固定小修复。", flush=True)
+                print(f"打开 http://127.0.0.1:{args.port}/ui/chat/", flush=True)
+                print("停止服务后临时仓库、Worktree 和证据将被删除。", flush=True)
+                uvicorn.run(app, host="127.0.0.1", port=args.port, workers=1)
+            return 0
+        except ValueError as exc:
+            parser.error(str(exc))
     try:
         settings = get_settings()
         if args.command in {"chat-serve", "chat-demo"}:
             app = build_chat_app(settings=settings, fake_agents=args.command == "chat-demo")
         else:
             config = load_server_config(args.config)
-            required_executables = {
-                settings.claude_cli_path
-                if config.planner_adapter == "claude-code" or config.reviewer_adapter in {"claude-code", "deepseek-claude-reviewer"}
-                else None,
-                settings.codex_cli_path
-                if config.planner_adapter == "codex-cli" or config.implementer_adapter == "codex-cli"
-                else None,
-                settings.kimi_cli_path if config.implementer_adapter == "kimi-code-cli" else None,
-            }
-            for executable in required_executables - {None}:
-                if shutil.which(executable) is None:
-                    raise ValueError(f"required Agent CLI is not available: {executable}")
+            _require_clis(config, settings)
             app = build_server_app(config, settings=settings)
     except ValueError as exc:
         parser.error(str(exc))
