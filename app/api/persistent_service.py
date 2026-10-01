@@ -116,7 +116,7 @@ from app.verification.completion import (
     ReviewVerdict,
 )
 from app.verification.verifier import VerificationCheckKind
-from app.workspace import WorktreeError, WorktreeManager
+from app.workspace import PermissionPolicy, WorktreeError, WorktreeManager
 
 
 class PersistentTaskService:
@@ -138,6 +138,7 @@ class PersistentTaskService:
         event_loop: WorkflowEventLoop,
         verification_plan: VerificationPlan,
         agent_names: dict[MemberRole, str],
+        permission_policy: PermissionPolicy | None = None,
         personas: TeamPersonaCatalog | None = None,
         discussion_turns: AgentTurnRunner | None = None,
     ) -> None:
@@ -157,6 +158,7 @@ class PersistentTaskService:
         self.event_loop = event_loop
         self.verification_plan = verification_plan
         self.agent_names = dict(agent_names)
+        self.permission_policy = permission_policy
         self.personas = personas or default_team_personas()
         self.discussion_turns = discussion_turns
         self._runs: dict[UUID, asyncio.Task[None]] = {}
@@ -185,7 +187,8 @@ class PersistentTaskService:
         task = Task(issue=request.issue, repository_path=request.repository_path)
         try:
             worktree = await self.worktrees.create(
-                task_id=task.id, repository=Path(request.repository_path)
+                task_id=task.id, repository=Path(request.repository_path),
+                base_revision=request.expected_base_commit or "HEAD",
             )
         except WorktreeError as exc:
             raise TaskInvalidRepository(str(exc)) from exc

@@ -16,7 +16,14 @@ from app.api.chat_models import (
 )
 from app.api.events import EventStreamResponse
 from app.api.models import ApiErrorResponse
-from app.chat.coding_intent import CodingTaskDraft, CodingTaskPreflight, preflight_coding_task
+from app.chat.coding_authorization import ChatCodingAuthorizationService, ChatCodingUnavailable
+from app.chat.coding_intent import (
+    AuthorizeChatCodingTaskRequest,
+    AuthorizedCodingTask,
+    CodingTaskDraft,
+    CodingTaskPreflight,
+    preflight_coding_task,
+)
 from app.chat.dispatch import StandaloneChatDispatcher
 from app.chat.models import StandaloneChatRoom, StandaloneChatTurn
 from app.chat.service import ChatMessageNotFound, ChatServiceUnavailable, StandaloneChatService
@@ -44,6 +51,18 @@ def get_chat_dispatcher(request: Request) -> StandaloneChatDispatcher | None:
 
 ChatServiceDependency = Annotated[StandaloneChatService, Depends(get_chat_service)]
 ChatDispatcherDependency = Annotated[StandaloneChatDispatcher | None, Depends(get_chat_dispatcher)]
+
+
+def get_chat_coding_service(request: Request) -> ChatCodingAuthorizationService:
+    service = getattr(request.app.state, "chat_coding_service", None)
+    if service is None:
+        raise ChatCodingUnavailable("chat-to-code authorization is not configured")
+    return service
+
+
+ChatCodingDependency = Annotated[
+    ChatCodingAuthorizationService, Depends(get_chat_coding_service),
+]
 
 
 @router.post("", response_model=StandaloneChatRoom, status_code=status.HTTP_201_CREATED,
@@ -74,6 +93,16 @@ def preflight_chat_coding_task(
 ) -> CodingTaskPreflight:
     """Read-only Human review snapshot; never creates or authorizes a coding Task."""
     return preflight_coding_task(service, room_id, request)
+
+
+@router.post("/{room_id}/coding-tasks", response_model=AuthorizedCodingTask,
+             status_code=status.HTTP_201_CREATED, responses=ERROR_RESPONSES)
+async def authorize_chat_coding_task(
+    room_id: UUID, request: AuthorizeChatCodingTaskRequest,
+    service: ChatCodingDependency,
+) -> AuthorizedCodingTask:
+    """Explicit Human command; chat messages and preflight never invoke it."""
+    return await service.authorize(room_id, request)
 
 
 @router.get("/{room_id}/messages", response_model=ChatMessagePage,

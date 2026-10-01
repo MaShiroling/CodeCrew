@@ -17,6 +17,7 @@ class CreateTaskRequest(BaseModel):
 
     issue: str = Field(min_length=1, max_length=16_000)
     repository_path: str = Field(min_length=1, max_length=4_096)
+    expected_base_commit: str | None = Field(default=None, pattern=r"^[0-9a-f]{40,64}$")
 
 
 class CancelTaskRequest(BaseModel):

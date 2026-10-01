@@ -85,6 +85,23 @@ class CodingTaskPreflight(BaseModel):
     task_created: Literal[False] = False
 
 
+class AuthorizedCodingTask(BaseModel):
+    """Durable link from one Human authorization to one coding Task."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    room_id: UUID
+    source_message_id: UUID
+    idempotency_key: UUID
+    task_id: UUID
+    task_trace_id: UUID
+    repository_path: str
+    base_commit: str = Field(pattern=r"^[0-9a-f]{40,64}$")
+    allowed_paths: tuple[str, ...]
+    execution_authorized: Literal[True] = True
+    task_created: Literal[True] = True
+
+
 def preflight_coding_task(
     service: StandaloneChatService, room_id: UUID, draft: CodingTaskDraft,
 ) -> CodingTaskPreflight:

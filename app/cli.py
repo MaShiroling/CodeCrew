@@ -167,7 +167,8 @@ def build_server_app(config: ServerConfig, *, settings: Settings) -> FastAPI:
         timeout_seconds=min(settings.agent_timeout_seconds, 180),
     )
     return create_app(runtime=runtime, chat_service=chat_service,
-                      chat_dispatcher=chat_dispatcher)
+                      chat_dispatcher=chat_dispatcher,
+                      chat_coding_policy=config.permission_policy)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

@@ -11,20 +11,30 @@ from app.api.models import ApiErrorDetail, ApiErrorResponse, ApiValidationIssue
 from app.api.runtime import TaskRuntime
 from app.api.service import TaskApiServiceError, TaskService
 from app.api.tasks import router as tasks_router
+from app.chat.coding_authorization import ChatCodingAuthorizationService
 from app.chat.dispatch import StandaloneChatDispatcher
 from app.chat.service import ChatApiError, StandaloneChatService
 from app.config import get_settings
+from app.workspace import PermissionPolicy
 
 
 def create_app(
     *, task_service: TaskService | None = None, runtime: TaskRuntime | None = None,
     chat_service: StandaloneChatService | None = None,
     chat_dispatcher: StandaloneChatDispatcher | None = None,
+    chat_coding_policy: PermissionPolicy | None = None,
 ) -> FastAPI:
     if task_service is not None and runtime is not None:
         raise ValueError("provide either task_service or runtime, not both")
     if chat_dispatcher is not None and chat_service is None:
         raise ValueError("chat dispatcher requires a chat service")
+    if chat_coding_policy is not None and (chat_service is None or
+                                           (task_service is None and runtime is None)):
+        raise ValueError("chat coding authorization requires chat and task services")
+    if chat_coding_policy is not None:
+        configured_task_service = runtime.service if runtime is not None else task_service
+        if getattr(configured_task_service, "permission_policy", None) != chat_coding_policy:
+            raise ValueError("chat coding policy must match the task runtime policy")
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
@@ -49,6 +59,10 @@ def create_app(
         application.state.chat_service = chat_service
     if chat_dispatcher is not None:
         application.state.chat_dispatcher = chat_dispatcher
+    if chat_coding_policy is not None:
+        application.state.chat_coding_service = ChatCodingAuthorizationService(
+            chat_service, task_service, chat_coding_policy,
+        )
 
     @application.exception_handler(ChatApiError)
     async def chat_service_error(_request: Request, error: ChatApiError) -> JSONResponse:

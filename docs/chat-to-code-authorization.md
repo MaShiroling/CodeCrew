@@ -1,6 +1,6 @@
 # P3 聊天转编码：授权边界
 
-当前只实现 **P3.1 只读预检**，尚未实现从聊天室创建编码任务。聊天室中的 `@Agent` 消息、Agent 的建议和预检结果都不授予写入权限。
+P3.1 的只读预检与 P3.2 的独立授权端点已实现。聊天室中的 `@Agent` 消息、Agent 的建议和预检结果都不授予写入权限；只有 Human 显式提交确认命令，且服务器已装配任务运行时和权限策略，才会创建一个 Task。
 
 ## P3.1 合同
 
@@ -22,6 +22,25 @@ Content-Type: application/json
 
 这一步只适用于可信本机部署；当前独立聊天室没有用户身份认证，不能作为对外暴露的多用户授权接口。预检时看到的 HEAD 和干净状态只是**快照**，不是执行期保证。
 
-## P3.2 的执行门槛（未实现）
+## P3.2 一次性授权与建任务
 
-后续若实现“授权一次编码任务”，必须由 Human 在单独操作中提交 `idempotency_key`、预检得到的 `expected_base_commit` 和精确确认值 `authorize_one_coding_task`。服务端必须重新验证来源、仓库 HEAD/干净状态及路径解析，并把 Human 选择的范围与服务端权限策略取交集；不允许 Agent 或聊天文本代替 Human 发起。只有所有检查通过，才可创建一个受控 Task，随后按现有 Worktree/Verifier/Reviewer 流程执行。P3.1 只定义该请求模型，没有开放执行端点，也没有承诺 UI 流程已完成。
+仅在显式配置的 `serve --config ...` 服务中可用；`chat-serve` 和 `chat-demo` 仍返回 503。Human 在单独 HTTP 操作中提交：
+
+```http
+POST /api/v1/chats/{room_id}/coding-tasks
+Content-Type: application/json
+
+{
+  "source_message_id": "<本房间 Human 消息 UUID>",
+  "repository_path": "/absolute/path/to/example-repo",
+  "issue": "只修改 src/app.py，将 value 改为 2，并运行测试",
+  "allowed_paths": ["src"],
+  "idempotency_key": "<新 UUID>",
+  "expected_base_commit": "<预检响应的 Git SHA>",
+  "confirmation": "authorize_one_coding_task"
+}
+```
+
+服务端重新预检来源、Git HEAD、工作区干净状态和路径解析，并要求本次写入范围**与服务端配置的 PermissionPolicy 允许范围完全一致**。这是当前运行时只支持全局策略时的保守限制：不会把 Human 选择的更窄范围伪装成已经生效。所有检查通过后先在 SQLite 写入单次授权占位，再以指定 SHA 创建 Worktree/Task 并启动既有受控流程。响应包含 `task_id`、`task_trace_id`、Git 基线和允许路径。同一幂等键/相同请求返回同一任务；同一 Human 来源不能用另一键再次授权。若创建途中进程崩溃或失败，占位保留为 `pending`，自动重试返回 409，需人工核查，避免重复执行。
+
+当前还没有 UI 授权按钮，也没有验证真实模型从聊天室到代码交付的在线演示。预检与授权都只适用于可信本机服务：**没有用户身份认证**；HTTP 的调用方被视为本机 Human，不能直接对外公开。仓库在预检与 Worktree 创建之间由外部进程改变的极端竞态尚未提供跨进程锁；Worktree 仍固定在 Human 确认的 SHA，而不是漂移到新 HEAD。下一步是 UI 确认与端到端交付验收。

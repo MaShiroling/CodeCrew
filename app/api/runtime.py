@@ -136,6 +136,7 @@ def build_task_runtime(
         event_loop=event_loop,
         verification_plan=verification_plan,
         agent_names=agent_names,
+        permission_policy=permission_policy,
         personas=catalog,
         discussion_turns=turns,
     )
