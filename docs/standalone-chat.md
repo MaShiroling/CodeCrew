@@ -64,8 +64,8 @@ SSE 只传消息序号和回合数量等失效提示，不传模型逐 Token 文
 直接回复此轮 Agent 消息时也会继承。普通关联回复仍保留被回复消息作为来源，
 即使它较早。选择背景和直接回复互斥。跨房间、非 Human 或不存在的背景 ID 会被拒绝。
 当前消息完整传入。背景摘录不是已确认事实或语义摘要，也不改变只读权限；
-同时点名的并发 Agent 不保证看见彼此尚未完成的回答。P2.4.3 仍需真实浏览器
-长聊验收。
+同时点名的并发 Agent 不保证看见彼此尚未完成的回答。P2.4.3 的 Fake/真实 Planner
+长聊验收见[记录](chat-context-acceptance.md)；三模型真实长聊未在该步复测。
 
 测试见 `tests/test_standalone_chat_store.py` 与 `tests/test_standalone_chat_api.py`。当前没有对话运行时 Trace 事件或跨进程
 派发；数据中的 `trace_id` 为下一阶段事件记录提供关联键，并不代表这两项已实现。

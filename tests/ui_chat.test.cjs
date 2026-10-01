@@ -157,6 +157,7 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   EventSource.instances[0].emit('chat_changed');
   await tick();
   assert.equal(get('message-list').children.length, 2);
+  assert.equal(get('send-status').textContent, 'Agent 已回复，可以继续讨论。');
   assert.match(get('message-list').children[1].children[1].children[2].textContent, /白金/);
   get('message-list').children[1].children[1].children.at(-1).dispatch('click');
   assert.equal(get('reply-preview').hidden, false);

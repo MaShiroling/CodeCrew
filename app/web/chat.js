@@ -358,7 +358,7 @@ async function loadTurns(requestId, refreshId) {
   } else {
     byId('room-status').textContent = chatState.room.status !== 'active' ? '已关闭'
       : latest?.status === 'succeeded' ? '已回复' : '可开始聊天';
-    if (latest?.status === 'succeeded' && byId('send-status').textContent.includes('等待 Agent')) {
+    if (latest?.status === 'succeeded' && byId('send-error').hidden) {
       byId('send-status').textContent = 'Agent 已回复，可以继续讨论。';
     }
   }
