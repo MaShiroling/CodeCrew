@@ -16,6 +16,7 @@ from app.api.chat_models import (
 )
 from app.api.events import EventStreamResponse
 from app.api.models import ApiErrorResponse
+from app.chat.coding_intent import CodingTaskDraft, CodingTaskPreflight, preflight_coding_task
 from app.chat.dispatch import StandaloneChatDispatcher
 from app.chat.models import StandaloneChatRoom, StandaloneChatTurn
 from app.chat.service import ChatMessageNotFound, ChatServiceUnavailable, StandaloneChatService
@@ -64,6 +65,15 @@ def list_chats(
 @router.get("/{room_id}", response_model=StandaloneChatRoom, responses=ERROR_RESPONSES)
 def get_chat(room_id: UUID, service: ChatServiceDependency) -> StandaloneChatRoom:
     return service.get_room(room_id)
+
+
+@router.post("/{room_id}/coding-task-preflight", response_model=CodingTaskPreflight,
+             responses=ERROR_RESPONSES)
+def preflight_chat_coding_task(
+    room_id: UUID, request: CodingTaskDraft, service: ChatServiceDependency,
+) -> CodingTaskPreflight:
+    """Read-only Human review snapshot; never creates or authorizes a coding Task."""
+    return preflight_coding_task(service, room_id, request)
 
 
 @router.get("/{room_id}/messages", response_model=ChatMessagePage,
