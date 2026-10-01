@@ -46,6 +46,9 @@ def test_human_authorizes_one_pinned_task_and_retries_are_idempotent(tmp_path: P
     app = create_app(runtime=runtime, chat_service=chat,
                      chat_coding_policy=PermissionPolicy(allowed_paths=("src",)))
     with TestClient(app) as client:
+        assert client.get("/api/v1/chats/coding-capability").json() == {
+            "available": True, "allowed_paths": ["src"],
+        }
         room_id, draft = _room_and_draft(client, repository)
         preview = client.post(f"/api/v1/chats/{room_id}/coding-task-preflight", json=draft)
         assert preview.status_code == 200
@@ -78,6 +81,16 @@ def test_human_authorizes_one_pinned_task_and_retries_are_idempotent(tmp_path: P
             time.sleep(0.02)
         else:
             pytest.fail("authorized task did not settle")
+        assert state == "completed"
+        delivery = client.get(f"/api/v1/tasks/{task_id}/delivery")
+        assert delivery.status_code == 200
+        assert delivery.json()["delivery_ready"] is True
+        assert delivery.json()["verification"]["passed"] is True
+        assert delivery.json()["completion"]["passed"] is True
+        patch_id = delivery.json()["patch"]["artifact_id"]
+        patch = client.get(f"/api/v1/tasks/{task_id}/delivery/patch/{patch_id}")
+        assert patch.status_code == 200
+        assert b"value = 2" in patch.content
 
 
 def test_authorization_rejects_scope_or_stale_baseline_without_task(tmp_path: Path) -> None:
@@ -119,6 +132,9 @@ def test_chat_only_app_keeps_coding_disabled(tmp_path: Path) -> None:
     repository = make_repository(tmp_path)
     chat = _chat_service(tmp_path)
     with TestClient(create_app(chat_service=chat)) as client:
+        assert client.get("/api/v1/chats/coding-capability").json() == {
+            "available": False, "allowed_paths": [],
+        }
         room_id, draft = _room_and_draft(client, repository)
         command = {
             **draft, "idempotency_key": str(uuid4()), "expected_base_commit": "0" * 40,

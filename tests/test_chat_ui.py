@@ -27,7 +27,9 @@ def test_standalone_chat_ui_is_separate_from_task_workspace() -> None:
         assert 'data-mention="@鲸鲸"' in page.text
         assert 'id="turn-list"' in page.text
         assert 'id="reply-preview"' in page.text
-        assert "repository_path" not in page.text
+        assert 'id="coding-panel"' in page.text
+        assert 'id="coding-confirm"' in page.text
+        assert 'id="coding-task-link"' in page.text
         assert "create-repository" not in page.text
         assert client.get("/ui/chat").status_code == 200
         assert 'href="/ui/chat/"' in client.get("/ui/").text
@@ -35,6 +37,8 @@ def test_standalone_chat_ui_is_separate_from_task_workspace() -> None:
         assert javascript.status_code == 200
         assert "/api/v1/chats" in javascript.text
         assert "/api/v1/tasks" not in javascript.text
+        assert "/coding-task-preflight" in javascript.text
+        assert "/coding-tasks" in javascript.text
         stylesheet = client.get("/ui/assets/chat.css")
         assert stylesheet.status_code == 200
         assert "@media(max-width:700px)" in stylesheet.text

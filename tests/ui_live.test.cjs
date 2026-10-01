@@ -53,8 +53,8 @@ const fetch = async (url) => {
   return { ok: true, json: async () => data };
 };
 const context = vm.createContext({
-  document, window: { addEventListener() {} }, fetch, EventSource: FakeEventSource,
-  Intl, Date, URL, encodeURIComponent, console,
+  document, window: { addEventListener() {}, location: {search: ''} }, fetch, EventSource: FakeEventSource,
+  Intl, Date, URL, URLSearchParams, encodeURIComponent, console,
   setTimeout(callback) { timers.push(callback); return timers.length; },
   clearTimeout() {},
 });
@@ -107,4 +107,10 @@ const runTimers = async () => { while (timers.length) { timers.shift()(); await 
   assert.equal(get('empty-detail').querySelector('h2').textContent, '任务详情暂不可用');
   assert.match(get('notice').textContent, /Room unavailable/);
   assert.equal(streams.length, 3);
+
+  // The chat authorization link selects its exact Task, not merely the first card.
+  vm.runInContext('state.selectedId = null', context);
+  context.window.location.search = '?task=task-a';
+  assert.equal(await vm.runInContext('loadTasks()', context), true);
+  assert.equal(get('detail-title').textContent, 'Issue task-a');
 })().catch((error) => { console.error(error); process.exitCode = 1; });

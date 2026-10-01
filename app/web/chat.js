@@ -2,6 +2,8 @@ const chatState = {
   rooms: [], room: null, members: new Map(), messages: new Map(), lastSequence: 0,
   replyTo: null, contextAnchorId: null, requestId: 0, pendingCreateKey: null, pendingSend: null,
   creating: false, sending: false, eventSource: null, refreshId: 0,
+  codingCapability: {available: false, allowed_paths: []}, codingSource: null,
+  codingPreview: null, codingCommand: null, codingBusy: false, codingVersion: 0,
 };
 
 const byId = (id) => document.getElementById(id);
@@ -21,7 +23,11 @@ async function chatRequest(path, options = {}) {
   }
   let data;
   try { data = await response.json(); } catch (_) { data = null; }
-  if (!response.ok) throw new Error(data?.error?.message || `请求失败（${response.status}）`);
+  if (!response.ok) {
+    const error = new Error(data?.error?.message || `请求失败（${response.status}）`);
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 
@@ -156,6 +162,128 @@ function setReply(message) {
   byId('message-content').focus();
 }
 
+function resetCodingPreview() {
+  chatState.codingVersion++;
+  chatState.codingPreview = null;
+  chatState.codingCommand = null;
+  byId('coding-preview').hidden = true;
+  byId('coding-confirm').checked = false;
+  byId('coding-authorize').disabled = true;
+  byId('coding-result').hidden = true;
+  clearError('coding-error');
+}
+
+function closeCodingPanel() {
+  chatState.codingSource = null;
+  resetCodingPreview();
+  byId('coding-panel').hidden = true;
+}
+
+function chooseCodingSource(message) {
+  if (!chatState.codingCapability.available || memberFor(message.sender_id).role !== 'human') return;
+  chatState.codingSource = message;
+  resetCodingPreview();
+  byId('coding-source').textContent = `来源：本房间 Human 消息 #${message.message_id.slice(0, 8)}。这条聊天消息不是授权。`;
+  byId('coding-issue').value = message.content;
+  byId('coding-scope').value = chatState.codingCapability.allowed_paths.join(', ');
+  byId('coding-repository').disabled = false;
+  byId('coding-issue').disabled = false;
+  byId('coding-preflight').disabled = false;
+  byId('coding-panel').hidden = false;
+  byId('coding-repository').focus();
+}
+
+async function loadCodingCapability() {
+  try {
+    const result = await chatRequest(`${CHAT_API}/coding-capability`);
+    chatState.codingCapability = result.available ? result : {available: false, allowed_paths: []};
+  } catch (_) {
+    chatState.codingCapability = {available: false, allowed_paths: []};
+  }
+}
+
+async function preflightCoding(event) {
+  event?.preventDefault();
+  if (!chatState.room || !chatState.codingSource || chatState.codingBusy) return;
+  const roomId = chatState.room.room_id;
+  const sourceId = chatState.codingSource.message_id;
+  resetCodingPreview();
+  const version = chatState.codingVersion;
+  const draft = {
+    source_message_id: sourceId,
+    repository_path: byId('coding-repository').value.trim(),
+    issue: byId('coding-issue').value.trim(),
+    allowed_paths: chatState.codingCapability.allowed_paths,
+  };
+  if (!draft.repository_path || !draft.issue) {
+    showError('coding-error', new Error('请填写仓库绝对路径和本次变更目标。'));
+    return;
+  }
+  chatState.codingBusy = true;
+  byId('coding-preflight').disabled = true;
+  try {
+    const preview = await chatRequest(`${CHAT_API}/${encodeURIComponent(roomId)}/coding-task-preflight`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(draft),
+    });
+    if (roomId !== chatState.room?.room_id || sourceId !== chatState.codingSource?.message_id
+        || version !== chatState.codingVersion) return;
+    if (preview.execution_authorized !== false || preview.task_created !== false) {
+      throw new Error('预检返回了异常的授权状态，已停止操作。');
+    }
+    chatState.codingPreview = preview;
+    byId('coding-summary').textContent = `仓库：${preview.repository_path}\n目标：${preview.issue}\n允许写入：${preview.allowed_paths.join(', ')}\nGit 基线：${preview.base_commit}\n预检通过，但尚未创建任务。`;
+    byId('coding-preview').hidden = false;
+  } catch (error) {
+    if (roomId === chatState.room?.room_id) showError('coding-error', error);
+  } finally {
+    chatState.codingBusy = false;
+    if (roomId === chatState.room?.room_id) byId('coding-preflight').disabled = false;
+  }
+}
+
+async function authorizeCoding() {
+  const preview = chatState.codingPreview;
+  if (!preview || !byId('coding-confirm').checked || chatState.codingBusy) return;
+  const roomId = chatState.room?.room_id;
+  const sourceId = chatState.codingSource?.message_id;
+  if (!roomId || preview.room_id !== roomId || preview.source_message_id !== sourceId) return;
+  clearError('coding-error');
+  chatState.codingCommand ||= {
+    source_message_id: sourceId, repository_path: preview.repository_path,
+    issue: preview.issue, allowed_paths: preview.allowed_paths,
+    expected_base_commit: preview.base_commit,
+    idempotency_key: crypto.randomUUID(), confirmation: 'authorize_one_coding_task',
+  };
+  chatState.codingBusy = true;
+  byId('coding-authorize').disabled = true;
+  byId('coding-preflight').disabled = true;
+  byId('coding-repository').disabled = true;
+  byId('coding-issue').disabled = true;
+  try {
+    const result = await chatRequest(`${CHAT_API}/${encodeURIComponent(roomId)}/coding-tasks`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(chatState.codingCommand),
+    });
+    if (roomId !== chatState.room?.room_id || sourceId !== chatState.codingSource?.message_id) return;
+    if (result.execution_authorized !== true || result.task_created !== true) {
+      throw new Error('服务端未确认任务创建，不能显示成功。');
+    }
+    byId('coding-result-text').textContent = `已创建受控任务 #${result.task_id.slice(0, 8)}；这不代表代码已完成。请到任务工作台查看测试、Review 和交付证据。`;
+    byId('coding-task-link').href = `/ui/?task=${encodeURIComponent(result.task_id)}`;
+    byId('coding-result').hidden = false;
+    byId('coding-preview').hidden = true;
+  } catch (error) {
+    if (roomId === chatState.room?.room_id) {
+      showError('coding-error', new Error(`${error.message}。结果不确定时请保持本面板不变，使用同一授权重试；不要重新创建授权。`));
+    }
+  } finally {
+    chatState.codingBusy = false;
+    if (roomId === chatState.room?.room_id && byId('coding-result').hidden) {
+      byId('coding-authorize').disabled = false;
+    }
+  }
+}
+
 async function selectRoom(room) {
   if (!room) return;
   disconnectRoom();
@@ -171,6 +299,7 @@ async function selectRoom(room) {
   clearError('conversation-error');
   clearError('send-error');
   byId('send-status').textContent = '提及 Agent 或回复其消息即可开始对话';
+  closeCodingPanel();
   byId('empty-room').hidden = true;
   byId('active-room').hidden = false;
   byId('conversation-title').textContent = room.title;
@@ -254,6 +383,14 @@ function renderMessage(stored) {
   bubble.textContent = message.content;
   body.append(bubble);
   if (human) {
+    if (chatState.codingCapability.available) {
+      const coding = document.createElement('button');
+      coding.type = 'button';
+      coding.className = 'reply-action coding-action';
+      coding.textContent = '以此发起受控编码任务 ↗';
+      coding.addEventListener('click', () => chooseCodingSource(message));
+      body.append(coding);
+    }
     const anchor = document.createElement('button');
     anchor.type = 'button';
     anchor.className = 'reply-action';
@@ -439,6 +576,15 @@ async function sendMessage(event) {
 }
 
 function initializeChat() {
+  byId('coding-close').addEventListener('click', closeCodingPanel);
+  byId('coding-form').addEventListener('submit', preflightCoding);
+  byId('coding-confirm').addEventListener('change', () => {
+    byId('coding-authorize').disabled = !byId('coding-confirm').checked || chatState.codingBusy;
+  });
+  byId('coding-authorize').addEventListener('click', authorizeCoding);
+  for (const id of ['coding-repository', 'coding-issue']) {
+    byId(id).addEventListener('input', resetCodingPreview);
+  }
   byId('create-room-form').addEventListener('submit', createRoom);
   byId('room-title').addEventListener('input', () => { chatState.pendingCreateKey = null; clearError('create-room-error'); });
   byId('refresh-rooms').addEventListener('click', () => refreshRooms());
@@ -453,7 +599,7 @@ function initializeChat() {
   document.querySelectorAll('[data-mention]').forEach((button) => {
     button.addEventListener('click', () => insertMention(button.dataset.mention));
   });
-  refreshRooms({selectInitial: true});
+  void loadCodingCapability().then(() => refreshRooms({selectInitial: true}));
   window.setInterval(() => refreshSelected(), 10000);
   window.addEventListener('beforeunload', disconnectRoom);
 }

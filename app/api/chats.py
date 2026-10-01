@@ -20,6 +20,7 @@ from app.chat.coding_authorization import ChatCodingAuthorizationService, ChatCo
 from app.chat.coding_intent import (
     AuthorizeChatCodingTaskRequest,
     AuthorizedCodingTask,
+    ChatCodingCapability,
     CodingTaskDraft,
     CodingTaskPreflight,
     preflight_coding_task,
@@ -63,6 +64,15 @@ def get_chat_coding_service(request: Request) -> ChatCodingAuthorizationService:
 ChatCodingDependency = Annotated[
     ChatCodingAuthorizationService, Depends(get_chat_coding_service),
 ]
+
+
+@router.get("/coding-capability", response_model=ChatCodingCapability)
+def coding_capability(request: Request) -> ChatCodingCapability:
+    service = getattr(request.app.state, "chat_coding_service", None)
+    return ChatCodingCapability(
+        available=service is not None,
+        allowed_paths=service.policy.allowed_paths if service is not None else (),
+    )
 
 
 @router.post("", response_model=StandaloneChatRoom, status_code=status.HTTP_201_CREATED,

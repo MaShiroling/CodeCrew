@@ -896,7 +896,12 @@ async function loadTasks(more = false) {
     state.nextOffset = page.next_offset;
     renderTasks();
     notice('');
-    if (!state.selectedId && state.tasks.length) await selectTask(state.tasks[0].task_id);
+    if (!state.selectedId) {
+      const requested = window.location?.search
+        ? new URLSearchParams(window.location.search).get('task') : null;
+      if (requested) await selectTask(requested);
+      else if (state.tasks.length) await selectTask(state.tasks[0].task_id);
+    }
     return true;
   } catch (error) {
     notice(`任务列表读取失败：${error.message}`);

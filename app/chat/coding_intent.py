@@ -102,6 +102,15 @@ class AuthorizedCodingTask(BaseModel):
     task_created: Literal[True] = True
 
 
+class ChatCodingCapability(BaseModel):
+    """Public local-UI hint; neither a grant nor a substitute for server checks."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    available: bool
+    allowed_paths: tuple[str, ...] = ()
+
+
 def preflight_coding_task(
     service: StandaloneChatService, room_id: UUID, draft: CodingTaskDraft,
 ) -> CodingTaskPreflight:

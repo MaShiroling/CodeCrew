@@ -34,6 +34,10 @@ get('context-preview').hidden = true;
 get('create-room-error').hidden = true;
 get('conversation-error').hidden = true;
 get('send-error').hidden = true;
+get('coding-panel').hidden = true;
+get('coding-preview').hidden = true;
+get('coding-result').hidden = true;
+get('coding-error').hidden = true;
 const mentionButtons = ['@白金', '@月见', '@鲸鲸'].map((mention) => {
   const button = new Element('button'); button.dataset.mention = mention; return button;
 });
@@ -54,12 +58,33 @@ const rooms = [];
 const messages = [];
 const turns = [];
 const posts = [];
+const preflightPosts = [];
+const authorizationPosts = [];
 let nextKey = 1;
 let postMode = 'ok';
+let authorizationMode = 'ok';
 let holdNextTurns = null;
 const response = (status, data) => ({ok: status >= 200 && status < 300, status, json: async () => data});
 const fetch = async (url, options = {}) => {
   if (url.includes('/api/v1/tasks')) throw new Error('chat UI must not call task API');
+  if (url === '/api/v1/chats/coding-capability') {
+    return response(200, {available: true, allowed_paths: ['src']});
+  }
+  if (url === `/api/v1/chats/${roomId}/coding-task-preflight` && options.method === 'POST') {
+    const body = JSON.parse(options.body);
+    preflightPosts.push(body);
+    return response(200, {room_id: roomId, trace_id: 'trace-1', ...body,
+      base_commit: 'a'.repeat(40), execution_authorized: false, task_created: false});
+  }
+  if (url === `/api/v1/chats/${roomId}/coding-tasks` && options.method === 'POST') {
+    const body = JSON.parse(options.body);
+    authorizationPosts.push(body);
+    if (authorizationMode === 'network') throw new TypeError('connection reset');
+    return response(201, {room_id: roomId, source_message_id: body.source_message_id,
+      task_id: 'task-123', task_trace_id: 'task-trace', repository_path: body.repository_path,
+      base_commit: body.expected_base_commit, allowed_paths: body.allowed_paths,
+      execution_authorized: true, task_created: true});
+  }
   if (url === '/api/v1/chats?limit=100&offset=0') return response(200, {items: [...rooms]});
   if (url === '/api/v1/chats' && options.method === 'POST') {
     const body = JSON.parse(options.body);
@@ -133,6 +158,7 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   assert.equal(get('empty-room').hidden, true);
   assert.match(location.search, /room=room-1/);
   assert.equal(get('member-list').children.length, 3);
+  assert.equal(authorizationPosts.length, 0);
   assert.match(EventSource.instances[0].url, /room-1\/events$/);
   EventSource.instances[0].emit('open');
   assert.match(get('room-subtitle').textContent, /实时连接中/);
@@ -149,6 +175,39 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   assert.equal(get('message-list').children.length, 1);
   assert.match(get('turn-list').children[0].children[0].children[1].textContent, /正在回复/);
   assert.equal(get('message-content').value, '');
+  assert.equal(authorizationPosts.length, 0, 'chat message must not authorize code');
+
+  const codingAction = get('message-list').children[0].children[1].children[2];
+  assert.match(codingAction.textContent, /受控编码任务/);
+  codingAction.dispatch('click');
+  assert.equal(get('coding-panel').hidden, false);
+  assert.equal(get('coding-scope').value, 'src');
+  get('coding-repository').value = '/tmp/example-repo';
+  get('coding-issue').value = 'Set value to two';
+  get('coding-issue').dispatch('input');
+  await get('coding-form').dispatch('submit', {preventDefault() {}});
+  assert.equal(preflightPosts.length, 1);
+  assert.equal(preflightPosts[0].source_message_id, 'human-1');
+  assert.equal(get('coding-preview').hidden, false);
+  assert.equal(get('coding-authorize').disabled, true);
+  assert.equal(authorizationPosts.length, 0);
+  get('coding-issue').value = 'Set value to two and verify';
+  get('coding-issue').dispatch('input');
+  assert.equal(get('coding-preview').hidden, true, 'editing the goal invalidates preflight');
+  await get('coding-form').dispatch('submit', {preventDefault() {}});
+  assert.equal(preflightPosts.length, 2);
+  get('coding-confirm').checked = true;
+  get('coding-confirm').dispatch('change');
+  authorizationMode = 'network';
+  await get('coding-authorize').dispatch('click');
+  assert.match(get('coding-error').textContent, /同一授权重试/);
+  const authorizationKey = authorizationPosts[0].idempotency_key;
+  authorizationMode = 'ok';
+  await get('coding-authorize').dispatch('click');
+  assert.equal(authorizationPosts[1].idempotency_key, authorizationKey);
+  assert.equal(get('coding-result').hidden, false);
+  assert.equal(get('coding-task-link').href, '/ui/?task=task-123');
+  assert.match(get('coding-result-text').textContent, /不代表代码已完成/);
 
   messages.push({sequence: 2, message: {message_id: 'agent-1', room_id: roomId,
     sender_id: 'planner', content: '白金：先确定边界。', reply_to: 'human-1',
