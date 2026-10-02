@@ -27,6 +27,7 @@ python3.11 -m venv .venv
 ```
 
 打开 [http://127.0.0.1:8000/ui/chat/](http://127.0.0.1:8000/ui/chat/)，创建房间并发送 `@白金 请和月见、鲸鲸讨论输入校验方案；只讨论，不修改文件`。三位 Fake Agent 会接话；可继续回复并刷新查看历史。此入口不调用真实模型，也不创建编码任务。`chat-demo` 的 SQLite 数据默认保存在本地 `./codecrew.db`，退出服务不会自动清空。
+[完整现场步骤与截图清单](docs/demo-guide.md)将只读聊天、受控编码和真实模型入口分开说明。
 
 想看“聊天后由 Human 授权一次修复”的完整 Fake 流程，先停止上一个服务，再运行：
 
@@ -62,6 +63,7 @@ python3.11 -m venv .venv
 
 ## 文档
 
+- [本地演示指南与截图清单](docs/demo-guide.md) · [当前架构图](docs/architecture.md)
 - [当前路线和进度](docs/portfolio-roadmap.md) · [项目状态与验收记录](docs/project-status.md)
 - [Fake 聊天到编码演示](docs/fake-chat-to-code-demo.md) · [真实小修复验收](docs/real-chat-to-code-acceptance.md)
 - [独立聊天室接口](docs/standalone-chat.md) · [团队人格](docs/personas.md)
