@@ -153,7 +153,7 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   const reviewerAvatar = window.CodeCrewAvatars.create('reviewer', '鲸鲸');
   assert.equal(reviewerAvatar.className, 'avatar reviewer');
   assert.equal(reviewerAvatar.children[0].textContent, '鲸');
-  assert.equal(reviewerAvatar.children[1].src, '/ui/assets/avatars/reviewer.png');
+  assert.equal(reviewerAvatar.children[1].src, '/ui/assets/avatars/reviewer.jpg');
   assert.notEqual(reviewerAvatar.children[1].loading, 'lazy');
   assert.equal(reviewerAvatar.children[1].hidden, true);
   reviewerAvatar.children[1].dispatch('load');

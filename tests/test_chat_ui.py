@@ -44,10 +44,10 @@ def test_standalone_chat_ui_is_separate_from_task_workspace() -> None:
         stylesheet = client.get("/ui/assets/chat.css")
         assert stylesheet.status_code == 200
         assert "@media(max-width:700px)" in stylesheet.text
-        portrait = client.get("/ui/assets/avatars/reviewer.png")
+        portrait = client.get("/ui/assets/avatars/reviewer.jpg")
         assert portrait.status_code == 200
-        assert portrait.headers["content-type"].startswith("image/png")
-        assert portrait.content.startswith(b"\x89PNG\r\n\x1a\n")
+        assert portrait.headers["content-type"].startswith("image/jpeg")
+        assert portrait.content.startswith(b"\xff\xd8\xff")
         workspace = client.get("/ui/")
         assert '/ui/assets/avatars.js' in workspace.text
         assert '/ui/assets/avatars.css' in workspace.text

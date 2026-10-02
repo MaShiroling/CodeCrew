@@ -3,7 +3,7 @@
   const sources = {
     planner: '',
     implementer: '',
-    reviewer: '/ui/assets/avatars/reviewer.png',
+    reviewer: '/ui/assets/avatars/reviewer.jpg',
   };
   const fallbackGlyphs = {planner: '白', implementer: '月', reviewer: '鲸'};
 
