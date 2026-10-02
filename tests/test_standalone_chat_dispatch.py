@@ -90,6 +90,17 @@ async def test_http_mention_triggers_bounded_agent_chat_without_task(tmp_path: P
         ]
         assert reviewer_context["reply_to"] == messages[1]["message"]["message_id"]
         assert "发送者：月见（implementer）" in adapters[MemberRole.REVIEWER].requests[0].prompt
+        for role, cue in (
+            (MemberRole.PLANNER, "大小姐"),
+            (MemberRole.IMPLEMENTER, "海风"),
+            (MemberRole.REVIEWER, "小鲸鱼"),
+        ):
+            prompt = adapters[role].requests[0].prompt
+            assert cue in prompt
+            assert "先回应当前问题" in prompt
+            assert "不要套用固定口癖" in prompt
+            assert "仅讨论，不读写代码" in prompt
+            assert '"handoff_to":[]' in prompt
         await client.post(f"/api/v1/chats/{room_id}/messages", json=payload)
         await dispatcher.wait_idle()
         assert len((await client.get(f"/api/v1/chats/{room_id}/messages")).json()["items"]) == 4

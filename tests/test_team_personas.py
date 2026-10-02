@@ -19,6 +19,20 @@ def test_default_catalog_has_three_distinct_role_bound_profiles() -> None:
         catalog.for_role(MemberRole.VERIFIER)
 
 
+def test_chat_personalities_are_distinct_without_changing_role_boundaries() -> None:
+    catalog = default_team_personas()
+    planner = catalog.for_role(MemberRole.PLANNER)
+    implementer = catalog.for_role(MemberRole.IMPLEMENTER)
+    reviewer = catalog.for_role(MemberRole.REVIEWER)
+
+    assert "大小姐" in planner.personality and "取舍" in planner.personality
+    assert "海风" in implementer.personality and "追问" in implementer.personality
+    assert "小鲸鱼" in reviewer.personality and "具体" in reviewer.personality
+    assert "不写实现代码" in planner.restrictions
+    assert "不修改验收标准" in implementer.restrictions
+    assert "没有证据不批准" in reviewer.restrictions
+
+
 def test_profile_rejects_non_agent_role_bad_mentions_and_permission_fields() -> None:
     values = default_team_personas().for_role(MemberRole.PLANNER).model_dump(mode="json")
     with pytest.raises(ValidationError, match="Agent roles"):
