@@ -162,7 +162,16 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   reviewerAvatar.children[1].dispatch('error');
   assert.equal(reviewerAvatar.children[0].hidden, false);
   assert.equal(reviewerAvatar.children[1].hidden, true);
-  assert.equal(window.CodeCrewAvatars.create('planner', '白金').children.length, 1);
+  const plannerAvatar = window.CodeCrewAvatars.create('planner', '白金');
+  assert.equal(plannerAvatar.className, 'avatar planner');
+  assert.equal(plannerAvatar.children[0].textContent, '白');
+  assert.equal(plannerAvatar.children[1].src, '/ui/assets/avatars/planner.jpg');
+  plannerAvatar.children[1].dispatch('load');
+  assert.equal(plannerAvatar.children[0].hidden, true);
+  assert.equal(plannerAvatar.children[1].hidden, false);
+  plannerAvatar.children[1].dispatch('error');
+  assert.equal(plannerAvatar.children[0].hidden, false);
+  assert.equal(plannerAvatar.children[1].hidden, true);
   const implementerAvatar = window.CodeCrewAvatars.create('implementer', '月见');
   assert.equal(implementerAvatar.className, 'avatar implementer');
   assert.equal(implementerAvatar.children[0].textContent, '月');
@@ -184,6 +193,7 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   assert.equal(get('empty-room').hidden, true);
   assert.match(location.search, /room=room-1/);
   assert.equal(get('member-list').children.length, 3);
+  assert.equal(get('member-list').children[0].children[0].className, 'avatar planner');
   assert.equal(get('member-list').children[1].children[0].className, 'avatar implementer');
   assert.equal(get('member-list').children[2].children[0].className, 'avatar reviewer');
   assert.equal(authorizationPosts.length, 0);

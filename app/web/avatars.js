@@ -1,7 +1,7 @@
-// Only user-supplied portraits are bundled; missing roles keep a text fallback.
+// Use only user-supplied portraits; keep a text fallback if an image cannot load.
 (() => {
   const sources = {
-    planner: '',
+    planner: '/ui/assets/avatars/planner.jpg',
     implementer: '/ui/assets/avatars/implementer.jpg',
     reviewer: '/ui/assets/avatars/reviewer.jpg',
   };

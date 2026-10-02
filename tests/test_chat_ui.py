@@ -44,7 +44,7 @@ def test_standalone_chat_ui_is_separate_from_task_workspace() -> None:
         stylesheet = client.get("/ui/assets/chat.css")
         assert stylesheet.status_code == 200
         assert "@media(max-width:700px)" in stylesheet.text
-        for role in ("implementer", "reviewer"):
+        for role in ("planner", "implementer", "reviewer"):
             portrait = client.get(f"/ui/assets/avatars/{role}.jpg")
             assert portrait.status_code == 200
             assert portrait.headers["content-type"].startswith("image/jpeg")
