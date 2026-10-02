@@ -28,6 +28,7 @@
   object-fit: cover;
 }
 .avatar-image[hidden], .avatar-fallback[hidden] { display: none; }
+.avatar.implementer .avatar-image { transform: scale(1.8); transform-origin: 50% 43%; }
 .avatar.reviewer .avatar-image { transform: scale(1.8); transform-origin: 50% 43%; }
 
 .members .member, .member-chip { display: inline-flex; align-items: center; gap: 6px; }

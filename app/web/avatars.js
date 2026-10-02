@@ -2,7 +2,7 @@
 (() => {
   const sources = {
     planner: '',
-    implementer: '',
+    implementer: '/ui/assets/avatars/implementer.jpg',
     reviewer: '/ui/assets/avatars/reviewer.jpg',
   };
   const fallbackGlyphs = {planner: '白', implementer: '月', reviewer: '鲸'};
