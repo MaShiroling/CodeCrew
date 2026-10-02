@@ -6,19 +6,30 @@
 已完成 Fake 验收；P2 的真实三模型聊天室最小验收已完成，P2.4 长对话上下文
 三个小步已完成最小验收；之后是 P3 一次显式授权的编码演示、P4 文档和短演示。
 P3.1 只读授权预检、P3.2 后端一次性授权/建任务、P3.3 Fake UI/交付验收与
-P3.4 一键 Fake 演示已完成；P3.5 的验收工具与离线夹具已就绪，但真实三模型
-执行尚未运行（当前任务进程无 Kimi/DeepSeek 密钥）。下一步是实际运行 P3.5，若有阻断
-问题则在 P3.6 仅修阻断点，之后进入 P4 简历交付。
+P3.4 一键 Fake 演示已完成；P3.5 真实三模型 HTTP 小修复单次验收已通过。
+下一步进入 P4 简历交付；P3.6 仅在后续出现实际阻断问题时启用。
 原[15 步开发进度表](development-plan.md)仅保留历史进度；第 9～14 步不再自动推进。
 现有编码工作流代码保留，不因路线收敛仓促删除。以下记录既往验收事实，
 其中“下一步 8.4e”等文字属于原路线的历史表述，对应当前 P1。
+
+2026-10-02 P3.5 在线验收：用户本机运行
+`CODECREW_RUN_CHAT_TO_CODE_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_chat_to_code_live.py`。
+任务 `faac33fe-5198-42e0-bbb5-d453eb9a1a0b` 对应 trace
+`9b01b794-65fb-428a-9bd3-53326a859468`，最终 `completed`，摘要状态为
+`accepted`。先完成只读聊天，再由 Human 预检并单次授权；Planner、Implementer、
+Reviewer 均参与。唯一变更为 `src/app.py`；Diff、权限、语法、公开/占位隐藏测试、
+命令策略、Reviewer 批准及 CompletionGuard 条件均通过，Patch 可下载，原始仓库
+保持干净。脱敏摘要保存在被 Git 忽略的
+`evals/results/chat-to-code-live/9b01b794-65fb-428a-9bd3-53326a859468.json`。
+这只证明一次真实 HTTP 小修复，不证明浏览器手动交互、其它需求成功率或真正保密的
+隐藏测试。
 
 2026-10-02 P3.5 验收准备：新增一次性真实 Codex/Kimi/DeepSeek 的临时小修复
 夹具、`live-demo` 浏览器入口和默认跳过的在线 HTTP 测试。示例原始版公开与
 占位隐藏断言失败、目标版通过；服务端限定唯一临时仓库和目标、独立 Reviewer HOME，
 直接 Task 创建禁用。在线测试设计为检查三角色、Diff、确定性测试、Review、完成
 守卫和原始仓库干净状态，并保存不含原始回复/密钥的摘要。当前只通过离线测试，
-**未运行真实模型，也未取得 P3.5 成功证据**；详见[操作指南](real-chat-to-code-acceptance.md)。
+当时尚未运行真实模型；后续在线结果以上段记录为准。详见[操作指南](real-chat-to-code-acceptance.md)。
 
 2026-10-02 P3.4 一键 Fake 演示：`demo-serve` 在临时目录生成示例仓库，
 同一服务提供三角色 Fake 聊天与固定小修复任务；页面预填仓库，后端限定
