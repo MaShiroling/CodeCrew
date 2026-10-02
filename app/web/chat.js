@@ -125,7 +125,7 @@ function renderMembers() {
     badge.className = 'member';
     const name = document.createElement('strong');
     name.textContent = member.name;
-    badge.append(name, ` · ${member.role}`);
+    badge.append(window.CodeCrewAvatars.create(member.role, member.name), name, ` · ${member.role}`);
     return badge;
   });
   byId('member-list').replaceChildren(...badges);
@@ -350,9 +350,13 @@ function renderMessage(stored) {
   const row = document.createElement('article');
   row.className = `message${human ? ' human' : ''}`;
   row.dataset.messageId = message.message_id;
-  const avatar = document.createElement('span');
-  avatar.className = 'avatar';
-  avatar.textContent = human ? '我' : author.name.slice(0, 1);
+  const avatar = human ? document.createElement('span')
+    : window.CodeCrewAvatars.create(author.role, author.name);
+  if (human) {
+    avatar.className = 'avatar human-avatar';
+    avatar.textContent = '我';
+    avatar.setAttribute('aria-hidden', 'true');
+  }
   const body = document.createElement('div');
   body.className = 'message-body';
   const meta = document.createElement('div');

@@ -117,6 +117,7 @@ const context = vm.createContext({
   encodeURIComponent, crypto: { randomUUID: () => `key-${nextId++}` },
   console, setTimeout, clearTimeout,
 });
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/web/avatars.js'), 'utf8'), context);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/web/app.js'), 'utf8'), context);
 const tick = async () => { for (let i = 0; i < 8; i++) await new Promise((resolve) => setImmediate(resolve)); };
 const discussionReply = (index) => get('message-list').children[index].children

@@ -91,6 +91,7 @@ const context = vm.createContext({
   fetch, EventSource: FakeEventSource, Intl, Date, URL, encodeURIComponent, console,
   setTimeout, clearTimeout,
 });
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/web/avatars.js'), 'utf8'), context);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/web/app.js'), 'utf8'), context);
 const tick = async () => { for (let i = 0; i < 8; i++) await new Promise((resolve) => setImmediate(resolve)); };
 

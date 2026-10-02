@@ -1,0 +1,39 @@
+.avatar {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  overflow: hidden;
+  border: 1px solid #d8e8de;
+  border-radius: 50%;
+  background: #e6f4ee;
+  color: #0b8d77;
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.avatar.planner { background: #f5f0e4; color: #8c6d37; }
+.avatar.implementer { background: #e7f3f4; color: #337d8b; }
+.avatar.reviewer { background: #edf0f9; color: #526da3; }
+.avatar.system { background: #f0f2f2; color: #78908a; }
+
+.avatar-fallback { line-height: 1; }
+.avatar-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.avatar-image[hidden], .avatar-fallback[hidden] { display: none; }
+.avatar.reviewer .avatar-image { transform: scale(1.8); transform-origin: 50% 31%; }
+
+.members .member, .member-chip { display: inline-flex; align-items: center; gap: 6px; }
+.members .member .avatar, .member-chip .avatar {
+  width: 22px;
+  height: 22px;
+  font-size: 10px;
+}
+.detail-panel .message-head .avatar { width: 32px; height: 32px; font-size: 13px; }

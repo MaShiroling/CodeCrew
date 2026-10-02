@@ -145,10 +145,26 @@ class EventSource {
 EventSource.instances = [];
 const context = vm.createContext({document, window, fetch, crypto: {randomUUID: () => `key-${nextKey++}`},
   URL, URLSearchParams, Intl, Date, EventSource, console});
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/web/avatars.js'), 'utf8'), context);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/web/chat.js'), 'utf8'), context);
 const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resolve) => setImmediate(resolve)); };
 
 (async () => {
+  const reviewerAvatar = window.CodeCrewAvatars.create('reviewer', '鲸鲸');
+  assert.equal(reviewerAvatar.className, 'avatar reviewer');
+  assert.equal(reviewerAvatar.children[0].textContent, '鲸');
+  assert.equal(reviewerAvatar.children[1].src, '/ui/assets/avatars/reviewer.png');
+  assert.notEqual(reviewerAvatar.children[1].loading, 'lazy');
+  assert.equal(reviewerAvatar.children[1].hidden, true);
+  reviewerAvatar.children[1].dispatch('load');
+  assert.equal(reviewerAvatar.children[0].hidden, true);
+  assert.equal(reviewerAvatar.children[1].hidden, false);
+  reviewerAvatar.children[1].dispatch('error');
+  assert.equal(reviewerAvatar.children[0].hidden, false);
+  assert.equal(reviewerAvatar.children[1].hidden, true);
+  assert.equal(window.CodeCrewAvatars.create('planner', '白金').children.length, 1);
+  assert.equal(window.CodeCrewAvatars.create('implementer', '月见').children.length, 1);
+
   await tick();
   assert.match(get('room-list').children[0].textContent, /还没有房间/);
   assert.equal(window.pollDelay, 10000);
@@ -159,6 +175,7 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   assert.equal(get('empty-room').hidden, true);
   assert.match(location.search, /room=room-1/);
   assert.equal(get('member-list').children.length, 3);
+  assert.equal(get('member-list').children[2].children[0].className, 'avatar reviewer');
   assert.equal(authorizationPosts.length, 0);
   assert.match(EventSource.instances[0].url, /room-1\/events$/);
   EventSource.instances[0].emit('open');

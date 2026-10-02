@@ -58,6 +58,7 @@ const context = vm.createContext({
   setTimeout(callback) { timers.push(callback); return timers.length; },
   clearTimeout() {},
 });
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/web/avatars.js'), 'utf8'), context);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/web/app.js'), 'utf8'), context);
 const tick = async () => { for (let i = 0; i < 8; i++) await new Promise((resolve) => setImmediate(resolve)); };
 const runTimers = async () => { while (timers.length) { timers.shift()(); await tick(); } };

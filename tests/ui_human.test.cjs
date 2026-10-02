@@ -99,6 +99,7 @@ const context = vm.createContext({
   document, window: { addEventListener() {} }, fetch, Intl, Date, URL, encodeURIComponent,
   crypto: { randomUUID: () => `idempotency-${nextId++}` }, console, setTimeout, clearTimeout,
 });
+vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/web/avatars.js'), 'utf8'), context);
 vm.runInContext(fs.readFileSync(path.join(__dirname, '../app/web/app.js'), 'utf8'), context);
 const tick = async () => { for (let i = 0; i < 8; i++) await new Promise((resolve) => setImmediate(resolve)); };
 const replyButton = (index) => get('message-list').children[index].children.find((child) => child.className === 'reply-action');

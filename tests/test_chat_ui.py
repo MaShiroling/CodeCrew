@@ -30,6 +30,8 @@ def test_standalone_chat_ui_is_separate_from_task_workspace() -> None:
         assert 'id="coding-panel"' in page.text
         assert 'id="coding-confirm"' in page.text
         assert 'id="coding-task-link"' in page.text
+        assert '/ui/assets/avatars.js' in page.text
+        assert '/ui/assets/avatars.css' in page.text
         assert "create-repository" not in page.text
         assert client.get("/ui/chat").status_code == 200
         assert 'href="/ui/chat/"' in client.get("/ui/").text
@@ -42,6 +44,13 @@ def test_standalone_chat_ui_is_separate_from_task_workspace() -> None:
         stylesheet = client.get("/ui/assets/chat.css")
         assert stylesheet.status_code == 200
         assert "@media(max-width:700px)" in stylesheet.text
+        portrait = client.get("/ui/assets/avatars/reviewer.png")
+        assert portrait.status_code == 200
+        assert portrait.headers["content-type"].startswith("image/png")
+        assert portrait.content.startswith(b"\x89PNG\r\n\x1a\n")
+        workspace = client.get("/ui/")
+        assert '/ui/assets/avatars.js' in workspace.text
+        assert '/ui/assets/avatars.css' in workspace.text
 
 
 def test_standalone_chat_browser_script_with_mock_api() -> None:

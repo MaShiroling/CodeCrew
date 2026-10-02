@@ -983,7 +983,7 @@ function renderMessage(message, taskId) {
   const item = node('article', `message message-${message.sender_role === 'human' ? 'human' : 'agent'}`);
   const head = node('div', 'message-head');
   const role = message.sender_role;
-  head.append(node('span', `avatar ${['planner', 'implementer', 'reviewer'].includes(role) ? role : 'system'}`, message.sender_name.slice(0, 1)), node('span', 'message-name', message.sender_name), node('span', 'message-role', role), node('time', 'message-time', time(message.created_at)));
+  head.append(window.CodeCrewAvatars.create(role, message.sender_name), node('span', 'message-name', message.sender_name), node('span', 'message-role', role), node('time', 'message-time', time(message.created_at)));
   item.append(head, node('span', 'message-type', message.type.replaceAll('_', ' ')), node('p', 'message-content', message.content));
   if (message.reply_to) item.append(node('p', 'message-reply-link', `↳ 回复 #${short(message.reply_to)}`));
   if (message.artifacts.length) {
@@ -1275,7 +1275,7 @@ async function selectTask(taskId) {
     renderHumanComposer();
     $('room-members').replaceChildren(...room.room.members.filter((member) => member.kind === 'agent').map((member) => {
       const chip = node('span', 'member-chip');
-      chip.append(node('b', '', member.name), node('span', '', member.role));
+      chip.append(window.CodeCrewAvatars.create(member.role, member.name), node('b', '', member.name), node('span', '', member.role));
       return chip;
     }));
     renderPlans(plans.items, taskId);
