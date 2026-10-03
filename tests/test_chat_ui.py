@@ -30,6 +30,12 @@ def test_standalone_chat_ui_is_separate_from_task_workspace() -> None:
         assert 'id="coding-panel"' in page.text
         assert 'id="coding-confirm"' in page.text
         assert 'id="coding-task-link"' in page.text
+        assert 'id="bounded-mode"' in page.text
+        assert 'id="bounded-run-list"' in page.text
+        assert 'id="bounded-opening-role"' in page.text
+        assert 'id="bounded-max-turns"' in page.text
+        assert 'id="bounded-max-seconds"' in page.text
+        assert '/ui/assets/chat_bounded.css' in page.text
         assert '/ui/assets/avatars.js' in page.text
         assert '/ui/assets/avatars.css' in page.text
         assert "create-repository" not in page.text
@@ -41,9 +47,11 @@ def test_standalone_chat_ui_is_separate_from_task_workspace() -> None:
         assert "/api/v1/tasks" not in javascript.text
         assert "/coding-task-preflight" in javascript.text
         assert "/coding-tasks" in javascript.text
+        assert "/discussion-runs" in javascript.text
         stylesheet = client.get("/ui/assets/chat.css")
         assert stylesheet.status_code == 200
         assert "@media(max-width:700px)" in stylesheet.text
+        assert client.get("/ui/assets/chat_bounded.css").status_code == 200
         for role in ("planner", "implementer", "reviewer"):
             portrait = client.get(f"/ui/assets/avatars/{role}.jpg")
             assert portrait.status_code == 200

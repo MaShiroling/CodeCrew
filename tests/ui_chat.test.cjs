@@ -38,6 +38,12 @@ get('coding-panel').hidden = true;
 get('coding-preview').hidden = true;
 get('coding-result').hidden = true;
 get('coding-error').hidden = true;
+get('bounded-options').hidden = true;
+get('bounded-mode').disabled = true;
+get('bounded-mode').checked = false;
+get('bounded-opening-role').value = 'planner';
+get('bounded-max-turns').value = '8';
+get('bounded-max-seconds').value = '600';
 const mentionButtons = ['@白金', '@月见', '@鲸鲸'].map((mention) => {
   const button = new Element('button'); button.dataset.mention = mention; return button;
 });
@@ -60,8 +66,12 @@ const turns = [];
 const posts = [];
 const preflightPosts = [];
 const authorizationPosts = [];
+const boundedPosts = [];
+const boundedRuns = [];
+const boundedControls = [];
 let nextKey = 1;
 let postMode = 'ok';
+let boundedPostMode = 'ok';
 let authorizationMode = 'ok';
 let holdNextTurns = null;
 const response = (status, data) => ({ok: status >= 200 && status < 300, status, json: async () => data});
@@ -96,6 +106,43 @@ const fetch = async (url, options = {}) => {
   }
   if (url.startsWith('/api/v1/chats/room-2/messages?')) return response(200, {items: []});
   if (url === '/api/v1/chats/room-2/turns') return response(200, {items: []});
+  if (url === '/api/v1/chats/room-2/discussion-runs') return response(503,
+    {error: {message: 'bounded discussion is not configured'}});
+  if (url === `/api/v1/chats/${roomId}/discussion-runs` && options.method === 'POST') {
+    const body = JSON.parse(options.body);
+    boundedPosts.push(body);
+    let run = boundedRuns.find((item) => item.key === body.idempotency_key);
+    if (!run) {
+      run = {run_id: `run-${boundedRuns.length + 1}`, key: body.idempotency_key,
+        room_id: roomId, root_message_id: `human-${messages.length + 1}`,
+        correlation_id: `bounded-correlation-${boundedRuns.length + 1}`,
+        status: 'running', stop_reason: null, agent_turns_used: 1,
+        limits: body.limits, started_at: new Date().toISOString(),
+        pause_requested: false, cancel_requested: false};
+      boundedRuns.push(run);
+      const message = {message_id: run.root_message_id, room_id: roomId,
+        sender_id: 'human', content: `@白金 ${body.content}`, reply_to: null,
+        created_at: new Date().toISOString()};
+      messages.push({sequence: messages.length + 1, message, deliveries: []});
+      turns.push({turn_id: `turn-${turns.length + 1}`, room_id: roomId,
+        message_id: message.message_id, recipient_id: body.opening_role,
+        correlation_id: run.correlation_id, status: 'running', updated_at: message.created_at});
+    }
+    if (boundedPostMode === 'network') throw new TypeError('connection reset');
+    return response(201, {run, root_message: messages.at(-1), execution_authorized: false});
+  }
+  if (url === `/api/v1/chats/${roomId}/discussion-runs`) return response(200, {items: [...boundedRuns]});
+  const control = url.match(/^\/api\/v1\/chats\/room-1\/discussion-runs\/(run-\d+)\/(pause|resume|cancel)$/);
+  if (control && options.method === 'POST') {
+    const run = boundedRuns.find((item) => item.run_id === control[1]);
+    boundedControls.push(control[2]);
+    if (control[2] === 'pause') {run.status = 'paused'; run.stop_reason = 'human_paused';}
+    if (control[2] === 'resume') {run.status = 'running'; run.stop_reason = null;}
+    if (control[2] === 'cancel') {run.status = 'cancelled'; run.stop_reason = 'human_cancelled';}
+    turns.find((item) => item.correlation_id === run.correlation_id).status =
+      control[2] === 'cancel' ? 'cancelled' : 'succeeded';
+    return response(200, run);
+  }
   if (url.startsWith(`/api/v1/chats/${roomId}/messages?`)) {
     const cursor = Number(new URL(url, 'http://local').searchParams.get('after_sequence'));
     return response(200, {items: messages.filter((item) => item.sequence > cursor)});
@@ -324,6 +371,65 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   assert.equal(get('message-list').children.length, count);
   assert.equal(get('room-list').children.length, 1);
 
+  assert.equal(get('bounded-mode').disabled, false);
+  assert.equal(get('bounded-mode').checked, false, 'ordinary chat remains the default');
+  get('bounded-mode').checked = true;
+  get('bounded-mode').dispatch('change');
+  assert.equal(get('bounded-options').hidden, false);
+  assert.equal(get('mention-row').hidden, true);
+  assert.equal(get('reply-preview').hidden, true);
+  get('message-content').value = '@白金 这不是有界批次正文';
+  await get('message-form').dispatch('submit', {preventDefault() {}});
+  assert.match(get('send-error').textContent, /不要使用 @/);
+  assert.equal(boundedPosts.length, 0);
+  get('message-content').value = '请三位讨论输入兼容性';
+  get('bounded-max-turns').value = '9';
+  await get('message-form').dispatch('submit', {preventDefault() {}});
+  assert.match(get('send-error').textContent, /预算范围/);
+  get('bounded-max-turns').value = '3';
+  get('bounded-max-seconds').value = '90';
+  boundedPostMode = 'network';
+  await get('message-form').dispatch('submit', {preventDefault() {}});
+  assert.match(get('send-error').textContent, /网络未确认/);
+  assert.equal(get('message-content').value, '请三位讨论输入兼容性');
+  boundedPostMode = 'ok';
+  await get('message-form').dispatch('submit', {preventDefault() {}});
+  assert.equal(boundedPosts.length, 2);
+  assert.equal(boundedPosts[0].idempotency_key, boundedPosts[1].idempotency_key);
+  assert.equal(boundedPosts[1].limits.max_agent_turns, 3);
+  assert.equal(boundedPosts[1].limits.max_elapsed_seconds, 90);
+  assert.equal(boundedRuns.length, 1);
+  assert.equal(get('bounded-mode').checked, false);
+  assert.equal(get('message-content').value, '');
+  assert.match(get('bounded-run-list').children[0].children[1].textContent, /1\/3/);
+  assert.match(get('bounded-run-list').children[0].children[0].children[1].textContent, /接话中/);
+  assert.equal(get('turn-list').children[0].children.length, 2,
+    'bounded turns must use batch cancel, not legacy per-turn cancel');
+  boundedRuns[0].pause_requested = true;
+  await window.poll();
+  assert.match(get('bounded-run-list').children[0].children[2].textContent, /当前回合结束后生效/);
+  assert.equal(get('bounded-run-list').children[0].children.at(-1).children[0].textContent, '撤回暂停');
+  boundedRuns[0].pause_requested = false;
+  await window.poll();
+  await get('bounded-run-list').children[0].children.at(-1).children[0].dispatch('click');
+  assert.equal(boundedRuns[0].status, 'paused');
+  assert.match(get('bounded-run-list').children[0].children[2].textContent, /不会重置原预算/);
+  await get('bounded-run-list').children[0].children.at(-1).children[0].dispatch('click');
+  assert.equal(boundedRuns[0].status, 'running');
+  assert.equal(boundedRuns[0].agent_turns_used, 1);
+  await get('bounded-run-list').children[0].children.at(-1).children[1].dispatch('click');
+  assert.equal(boundedRuns[0].status, 'cancelled');
+  assert.equal(get('bounded-run-list').children[0].children.length, 3);
+  assert.deepEqual(boundedControls, ['pause', 'resume', 'cancel']);
+  boundedRuns[0].status = 'interrupted';
+  boundedRuns[0].stop_reason = 'uncertain_result';
+  await window.poll();
+  assert.match(get('bounded-run-list').children[0].children[0].children[1].textContent, /结果不确定/);
+  assert.equal(get('bounded-run-list').children[0].children.length, 3);
+  boundedRuns[0].status = 'cancelled';
+  boundedRuns[0].stop_reason = 'human_cancelled';
+  assert.equal(authorizationPosts.length, 2, 'bounded chat must not authorize another code task');
+
   rooms.push({...rooms[0], room_id: 'room-2', title: '另一个房间'});
   await get('refresh-rooms').dispatch('click');
   await get('room-list').children[1].dispatch('click');
@@ -331,7 +437,11 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   assert.match(EventSource.instances[1].url, /room-2\/events$/);
   assert.equal(get('conversation-title').textContent, '另一个房间');
   assert.match(get('message-list').children[0].textContent, /还没有消息/);
+  assert.equal(get('bounded-mode').disabled, true);
+  assert.match(get('bounded-run-list').children[0].textContent, /未启用/);
   await get('room-list').children[0].dispatch('click');
   assert.equal(get('conversation-title').textContent, '输入校验讨论');
-  assert.equal(get('message-list').children.length, count);
+  assert.equal(get('bounded-mode').disabled, false);
+  assert.equal(get('bounded-run-list').children[0].dataset.runId, boundedRuns[0].run_id);
+  assert.equal(get('message-list').children.length, count + 1);
 })().catch((error) => { console.error(error); process.exitCode = 1; });

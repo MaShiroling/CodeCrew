@@ -6,6 +6,7 @@
   <meta name="color-scheme" content="light">
   <title>CodeCrew · 团队聊天室</title>
   <link rel="stylesheet" href="/ui/assets/chat.css">
+  <link rel="stylesheet" href="/ui/assets/chat_bounded.css">
   <link rel="stylesheet" href="/ui/assets/avatars.css">
   <script src="/ui/assets/avatars.js" defer></script>
   <script src="/ui/assets/chat.js" defer></script>
@@ -41,7 +42,14 @@
           <div id="context-preview" class="reply-preview" hidden><span id="context-label"></span><button id="clear-context" type="button" aria-label="取消话题背景">×</button></div>
           <div id="reply-preview" class="reply-preview" hidden><span id="reply-label"></span><button id="clear-reply" type="button" aria-label="取消关联回复">×</button></div>
           <form id="message-form" class="message-form" novalidate>
-            <div class="mention-row" role="group" aria-label="提及成员"><span>提及成员</span><button type="button" data-mention="@白金">@白金</button><button type="button" data-mention="@月见">@月见</button><button type="button" data-mention="@鲸鲸">@鲸鲸</button></div>
+            <div class="send-mode-row" role="group" aria-label="发送模式"><label><input id="bounded-mode" type="checkbox" disabled> 开启有界接话</label><span id="bounded-mode-hint">普通消息：提及或回复 Agent，按原模式接话。</span></div>
+            <div id="bounded-options" class="bounded-options" hidden>
+              <label for="bounded-opening-role">首位 Agent <select id="bounded-opening-role"><option value="planner">白金 · 方案</option><option value="implementer">月见 · 实现视角</option><option value="reviewer">鲸鲸 · 风险检查</option></select></label>
+              <label for="bounded-max-turns">最多回合 <input id="bounded-max-turns" type="number" min="1" max="8" value="8"></label>
+              <label for="bounded-max-seconds">最长秒数 <input id="bounded-max-seconds" type="number" min="30" max="600" value="600"></label>
+              <p>Agent 可结构化邀请队友继续接话；系统上限为 8 回合、600 秒。只读聊天，不会授权改代码。关联回复请使用普通消息。</p>
+            </div>
+            <div id="mention-row" class="mention-row" role="group" aria-label="提及成员"><span>提及成员</span><button type="button" data-mention="@白金">@白金</button><button type="button" data-mention="@月见">@月见</button><button type="button" data-mention="@鲸鲸">@鲸鲸</button></div>
             <label class="visually-hidden" for="message-content">消息内容</label><textarea id="message-content" rows="3" maxlength="16000" placeholder="@白金 请和月见聊聊这个方案…（不填写密钥）"></textarea>
             <div class="composer-bottom"><p id="send-error" class="form-error" role="alert" hidden></p><p id="send-status" class="send-status" role="status">提及 Agent 或回复其消息即可开始对话</p><button id="send-button" type="submit">发送消息 ↗</button></div>
           </form>
@@ -69,6 +77,7 @@
           <p id="coding-error" class="form-error" role="alert" hidden></p>
           <div id="coding-result" class="coding-result" role="status" hidden><p id="coding-result-text"></p><a id="coding-task-link" href="/ui/">到任务工作台查看执行与证据 ↗</a></div>
         </section>
+        <section class="activity-section bounded-section" aria-labelledby="bounded-title"><div class="activity-head"><h3 id="bounded-title">有界接话批次</h3><button id="refresh-bounded" type="button">刷新</button></div><div id="bounded-run-list" aria-live="polite"><p class="empty-hint">选择房间后显示批次和预算。</p></div></section>
         <section class="activity-section" aria-labelledby="turn-title"><div class="activity-head"><h3 id="turn-title">Agent 回合</h3><button id="refresh-chat" type="button">刷新</button></div><div id="turn-list" aria-live="polite"><p class="empty-hint">选择房间后显示回合状态。</p></div></section>
         <p class="activity-footnote">实时事件提示页面读取持久化消息和回合；断线时每 10 秒兜底检查。运行中可请求取消；取消未确认时会显示中断，不会假装成功。</p>
       </aside>

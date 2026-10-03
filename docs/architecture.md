@@ -1,6 +1,6 @@
 # CodeCrew 当前架构（简历演示版）
 
-更新于 2026-10-03。当前产品有两条独立入口：**无 Git 仓库的只读聊天室**，以及
+更新于 2026-10-04。当前产品有两条独立入口：**无 Git 仓库的只读聊天室**，以及
 **Human 显式授权后才启动的受控编码任务**。下图描述已实现的本地单进程路径，
 不是多 worker、远程 SaaS 或通用 Agent 平台的设计承诺。
 
@@ -14,7 +14,7 @@ flowchart TB
         API[Chat API 与 SSE 通知] --> Service[StandaloneChatService]
         Service --> Store[(SQLite：房间、消息、回合)]
         API -->|普通消息| Dispatcher[StandaloneChatDispatcher]
-        API -->|显式有界 HTTP；网页尚未接入| Bounded[BoundedDiscussionDispatcher]
+        API -->|显式有界批次| Bounded[BoundedDiscussionDispatcher]
         Dispatcher --> Runtime[独立只读 Agent 会话]
         Bounded --> Runtime
         Bounded --> Store
@@ -23,6 +23,7 @@ flowchart TB
     end
 
     UI -->|普通消息、@提及、回复| API
+    UI -->|勾选有界模式；启动/暂停/继续/取消| API
     UI -->|Human 单独预检并确认| Auth[ChatCodingAuthorizationService]
     Auth -->|核对同房间 Human 消息| Store
     Auth -->|重查 Git 基线与写入范围；单次授权| TaskService[TaskService]
@@ -34,8 +35,8 @@ flowchart TB
 调度器只传有界同讨论消息与显式选取的背景，不复制完整聊天历史。SQLite 保存
 消息、投递和回合状态；SSE 只提示页面重新读取持久化快照，不是逐 Token 输出。
 有界批次另以 SQLite 记录 FIFO 邀请、预算和人工控制状态；暂停在安全回合边界
-生效，继续保留原预算，取消不能确认时保守中断。P6.4 仅有本地 HTTP 控制入口，
-网页按钮和真实模型连续接话验收仍待 P6.5～P6.6。
+生效，继续保留原预算，取消不能确认时保守中断。P6.5 已在独立聊天室提供
+默认关闭的网页入口和状态控件；真实模型连续接话验收仍待 P6.6。
 
 跨边界时，[预检](chat-to-code-authorization.md)先确认消息来自 Human、仓库和
 Git HEAD 合法、路径范围可用；**预检不执行任务**。Human 勾选确认并提交

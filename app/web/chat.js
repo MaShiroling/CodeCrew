@@ -2,6 +2,8 @@ const chatState = {
   rooms: [], room: null, members: new Map(), messages: new Map(), lastSequence: 0,
   replyTo: null, contextAnchorId: null, requestId: 0, pendingCreateKey: null, pendingSend: null,
   creating: false, sending: false, eventSource: null, refreshId: 0,
+  boundedAvailable: false, boundedRuns: [], pendingBoundedStart: null,
+  boundedBusyIds: new Set(),
   codingCapability: {available: false, allowed_paths: []}, codingSource: null,
   codingPreview: null, codingCommand: null, codingBusy: false, codingVersion: 0,
 };
@@ -12,6 +14,17 @@ const CHAT_ROLES = {human: '我', planner: '白金', implementer: '月见', revi
 const TURN_LABELS = {
   queued: '排队中', running: '正在回复', succeeded: '已回复', failed: '失败',
   cancelled: '已取消', interrupted: '已中断', budget_exhausted: '回合预算已用尽',
+};
+const RUN_LABELS = {
+  created: '待启动', running: '接话中', paused: '已暂停', awaiting_human: '等待人工补充',
+  finished: '本批已结束', failed: 'Agent 失败', cancelled: '已取消',
+  limit_reached: '已触及预算', interrupted: '结果不确定',
+};
+const RUN_REASONS = {
+  human_paused: '人工暂停', human_input_needed: 'Agent 请求人工补充',
+  agent_finished: 'Agent 结束本批', human_ended: '人工结束', agent_failed: 'Agent 失败',
+  human_cancelled: '人工取消', turn_limit: '回合上限', time_limit: '总时限',
+  server_restart: '服务重启', uncertain_result: '执行结果未确认',
 };
 
 async function chatRequest(path, options = {}) {
@@ -129,6 +142,136 @@ function renderMembers() {
     return badge;
   });
   byId('member-list').replaceChildren(...badges);
+}
+
+function renderSendMode() {
+  const enabled = byId('bounded-mode').checked && chatState.boundedAvailable;
+  byId('bounded-mode').disabled = !chatState.boundedAvailable || chatState.room?.status !== 'active';
+  byId('bounded-options').hidden = !enabled;
+  byId('mention-row').hidden = enabled;
+  byId('send-button').textContent = enabled ? '启动有界接话 ↗' : '发送消息 ↗';
+  byId('message-content').placeholder = enabled
+    ? '输入讨论目标；首位 Agent 在上方选择，不要在正文中使用 @'
+    : '@白金 请和月见聊聊这个方案…（不填写密钥）';
+  byId('message-content').maxLength = enabled ? 15996 : 16000;
+  byId('bounded-mode-hint').textContent = enabled
+    ? '明确启动一个只读批次；Agent 最多按预算接话，不会修改文件。'
+    : chatState.boundedAvailable
+      ? '普通消息仍按原模式接话；勾选后才启动有界批次。'
+      : '当前服务未启用有界接话，普通消息仍可使用。';
+}
+
+function boundedRunRemaining(run) {
+  if (!run.started_at) return run.limits.max_elapsed_seconds;
+  const deadline = new Date(run.started_at).getTime() + run.limits.max_elapsed_seconds * 1000;
+  return Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+}
+
+function runControlButton(run, action, label) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = label;
+  button.disabled = chatState.boundedBusyIds.has(run.run_id);
+  button.addEventListener('click', () => controlBoundedRun(run, action));
+  return button;
+}
+
+function renderBoundedRuns() {
+  const list = byId('bounded-run-list');
+  if (!chatState.boundedAvailable || !chatState.boundedRuns.length) {
+    const hint = document.createElement('p');
+    hint.className = 'empty-hint';
+    hint.textContent = chatState.boundedAvailable
+      ? '暂无批次。勾选输入框上方的“开启有界接话”可显式启动。'
+      : '当前服务未启用有界接话；普通消息仍可使用。';
+    list.replaceChildren(hint);
+    return;
+  }
+  list.replaceChildren(...[...chatState.boundedRuns].reverse().map((run) => {
+    const card = document.createElement('div');
+    card.className = 'bounded-run';
+    card.dataset.runId = run.run_id;
+    const heading = document.createElement('div');
+    heading.className = 'bounded-run-head';
+    const id = document.createElement('strong');
+    id.textContent = `批次 #${run.run_id.slice(0, 8)}`;
+    const status = document.createElement('span');
+    status.className = `turn-state ${run.status}`;
+    status.textContent = RUN_LABELS[run.status] || run.status;
+    heading.append(id, status);
+    const budget = document.createElement('p');
+    budget.textContent = `Agent 回合 ${run.agent_turns_used}/${run.limits.max_agent_turns} · ${['created', 'running', 'paused'].includes(run.status)
+      ? `剩余约 ${boundedRunRemaining(run)} 秒`
+      : `原总时限 ${run.limits.max_elapsed_seconds} 秒`}`;
+    const note = document.createElement('p');
+    note.textContent = run.cancel_requested ? '取消请求已发送，等待停止确认。'
+      : run.pause_requested ? '暂停请求已保存；当前回合结束后生效。'
+      : run.status === 'paused' ? '已到安全回合边界；继续不会重置原预算。'
+      : run.status === 'awaiting_human' ? '请发起新消息或新批次补充；本批不会自动继续。'
+      : run.status === 'interrupted' ? '执行结果未确认，不会自动重试。'
+      : run.stop_reason ? (RUN_REASONS[run.stop_reason] || run.stop_reason)
+      : '只读讨论；结束不代表编码任务完成。';
+    card.append(heading, budget, note);
+    if (!run.cancel_requested && ['created', 'running', 'paused'].includes(run.status)) {
+      const actions = document.createElement('div');
+      actions.className = 'bounded-actions';
+      if (run.status === 'paused' || run.pause_requested) {
+        actions.append(runControlButton(run, 'resume', run.pause_requested ? '撤回暂停' : '继续'));
+      } else {
+        actions.append(runControlButton(run, 'pause', '暂停'));
+      }
+      actions.append(runControlButton(run, 'cancel', '取消批次'));
+      card.append(actions);
+    }
+    return card;
+  }));
+}
+
+function syncBoundedRoomStatus() {
+  const active = [...chatState.boundedRuns].reverse().find((run) =>
+    ['created', 'running', 'paused'].includes(run.status));
+  if (!active) return;
+  byId('room-status').textContent = active.pause_requested ? '等待暂停'
+    : active.cancel_requested ? '正在取消'
+    : RUN_LABELS[active.status];
+}
+
+async function loadBoundedRuns(requestId, refreshId) {
+  const roomId = chatState.room.room_id;
+  try {
+    const page = await chatRequest(`${CHAT_API}/${encodeURIComponent(roomId)}/discussion-runs`);
+    if (!isCurrentRefresh(requestId, refreshId)) return;
+    chatState.boundedAvailable = true;
+    chatState.boundedRuns = page.items;
+  } catch (error) {
+    if (!isCurrentRefresh(requestId, refreshId)) return;
+    if (error.status !== 503) throw error;
+    chatState.boundedAvailable = false;
+    chatState.boundedRuns = [];
+    byId('bounded-mode').checked = false;
+  }
+  renderSendMode();
+  renderBoundedRuns();
+}
+
+async function controlBoundedRun(run, action) {
+  const roomId = chatState.room?.room_id;
+  if (!roomId || chatState.boundedBusyIds.has(run.run_id)) return;
+  clearError('conversation-error');
+  chatState.boundedBusyIds.add(run.run_id);
+  renderBoundedRuns();
+  let failed = null;
+  try {
+    await chatRequest(`${CHAT_API}/${encodeURIComponent(roomId)}/discussion-runs/${encodeURIComponent(run.run_id)}/${action}`, {method: 'POST'});
+  } catch (error) {
+    failed = error;
+  } finally {
+    chatState.boundedBusyIds.delete(run.run_id);
+    if (chatState.room?.room_id === roomId) {
+      await refreshSelected(chatState.requestId);
+      if (failed) showError('conversation-error', failed);
+    }
+  }
 }
 
 function clearReply() {
@@ -294,7 +437,14 @@ async function selectRoom(room) {
   chatState.messages = new Map();
   chatState.lastSequence = 0;
   chatState.pendingSend = null;
+  chatState.pendingBoundedStart = null;
+  chatState.boundedRuns = [];
+  chatState.boundedAvailable = false;
+  chatState.boundedBusyIds.clear();
   byId('message-content').value = '';
+  byId('bounded-mode').checked = false;
+  byId('bounded-mode').disabled = true;
+  renderSendMode();
   clearReply();
   clearContextAnchor();
   clearError('conversation-error');
@@ -311,6 +461,7 @@ async function selectRoom(room) {
   renderRooms();
   byId('message-list').replaceChildren();
   byId('turn-list').replaceChildren();
+  byId('bounded-run-list').replaceChildren();
   const next = new URL(window.location.href);
   next.searchParams.set('room', room.room_id);
   window.history.replaceState(null, '', next);
@@ -468,7 +619,8 @@ function renderTurn(turn) {
     error.textContent = turn.error;
     item.append(error);
   }
-  if (turn.status === 'running' || turn.status === 'queued') {
+  const boundedTurn = chatState.boundedRuns.some((run) => run.correlation_id === turn.correlation_id);
+  if ((turn.status === 'running' || turn.status === 'queued') && !boundedTurn) {
     const cancel = document.createElement('button');
     cancel.type = 'button';
     cancel.textContent = '请求取消';
@@ -519,7 +671,9 @@ async function refreshSelected(requestId = chatState.requestId) {
   const refreshId = ++chatState.refreshId;
   try {
     await loadMessages(requestId, refreshId);
+    if (isCurrentRefresh(requestId, refreshId)) await loadBoundedRuns(requestId, refreshId);
     if (isCurrentRefresh(requestId, refreshId)) await loadTurns(requestId, refreshId);
+    if (isCurrentRefresh(requestId, refreshId)) syncBoundedRoomStatus();
     if (isCurrentRefresh(requestId, refreshId)) clearError('conversation-error');
   } catch (error) {
     if (isCurrentRefresh(requestId, refreshId)) showError('conversation-error', error);
@@ -534,9 +688,63 @@ function insertMention(mention) {
   field.setSelectionRange(at + mention.length + 1, at + mention.length + 1);
 }
 
+async function startBoundedDiscussion() {
+  const roomId = chatState.room?.room_id;
+  if (!roomId || chatState.sending || !chatState.boundedAvailable) return;
+  const content = byId('message-content').value.trim();
+  const openingRole = byId('bounded-opening-role').value;
+  const maxTurns = Number(byId('bounded-max-turns').value);
+  const maxSeconds = Number(byId('bounded-max-seconds').value);
+  if (!content || content.includes('@')) {
+    showError('send-error', new Error('请填写讨论目标；首位 Agent 在上方选择，正文不要使用 @。'));
+    return;
+  }
+  if (!Number.isInteger(maxTurns) || maxTurns < 1 || maxTurns > 8
+      || !Number.isInteger(maxSeconds) || maxSeconds < 30 || maxSeconds > 600) {
+    showError('send-error', new Error('预算范围：1～8 个 Agent 回合、30～600 秒。'));
+    return;
+  }
+  clearError('send-error');
+  const draft = {roomId, content, openingRole, maxTurns, maxSeconds};
+  const pending = chatState.pendingBoundedStart;
+  const key = pending && Object.keys(draft).every((name) => draft[name] === pending[name])
+    ? pending.key : crypto.randomUUID();
+  chatState.pendingBoundedStart = {...draft, key};
+  chatState.sending = true;
+  byId('send-button').disabled = true;
+  byId('send-status').textContent = '正在启动有界接话…';
+  try {
+    const receipt = await chatRequest(`${CHAT_API}/${encodeURIComponent(roomId)}/discussion-runs`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({idempotency_key: key, opening_role: openingRole, content,
+        limits: {max_agent_turns: maxTurns, max_elapsed_seconds: maxSeconds}}),
+    });
+    if (receipt.execution_authorized !== false || !receipt.run?.run_id) {
+      throw new Error('服务端未确认只读批次，不能显示已启动。');
+    }
+    if (chatState.room?.room_id === roomId) {
+      chatState.pendingBoundedStart = null;
+      byId('message-content').value = '';
+      byId('bounded-mode').checked = false;
+      renderSendMode();
+      byId('send-status').textContent = '只读批次已创建；右侧可查看预算与控制。';
+      await refreshSelected(chatState.requestId);
+    }
+  } catch (error) {
+    if (chatState.room?.room_id === roomId) {
+      showError('send-error', error);
+      byId('send-status').textContent = '内容和幂等键已保留；结果不确定时保持原文重试。';
+    }
+  } finally {
+    chatState.sending = false;
+    if (chatState.room?.room_id === roomId) byId('send-button').disabled = chatState.room.status !== 'active';
+  }
+}
+
 async function sendMessage(event) {
   event?.preventDefault();
   if (!chatState.room || chatState.sending) return;
+  if (byId('bounded-mode').checked) return startBoundedDiscussion();
   const roomId = chatState.room.room_id;
   const content = byId('message-content').value.trim();
   const replyTo = chatState.replyTo;
@@ -594,6 +802,15 @@ function initializeChat() {
   byId('room-title').addEventListener('input', () => { chatState.pendingCreateKey = null; clearError('create-room-error'); });
   byId('refresh-rooms').addEventListener('click', () => refreshRooms());
   byId('refresh-chat').addEventListener('click', () => refreshSelected());
+  byId('refresh-bounded').addEventListener('click', () => refreshSelected());
+  byId('bounded-mode').addEventListener('change', () => {
+    if (byId('bounded-mode').checked) { clearReply(); clearContextAnchor(); }
+    clearError('send-error');
+    renderSendMode();
+    byId('send-status').textContent = byId('bounded-mode').checked
+      ? '选择首位 Agent 并填写目标；右侧展示批次预算。'
+      : '提及 Agent 或回复其消息即可开始普通对话。';
+  });
   byId('message-form').addEventListener('submit', sendMessage);
   byId('message-content').addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) sendMessage(event);
