@@ -85,7 +85,7 @@ def test_chat_migration_coexists_with_existing_task_storage(tmp_path: Path) -> N
     room = make_room()
     store.create_room(room)
 
-    assert database.schema_version == 16
+    assert database.schema_version == 18
     assert store.get_room(room.room_id) == room
     with database.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 0

@@ -130,6 +130,26 @@ STANDALONE_CHAT_MIGRATIONS = (
             "CREATE INDEX standalone_chat_turn_correlation_idx ON standalone_chat_turns(correlation_id)",
         ),
     ),
+    Migration(
+        version=18,
+        name="create_standalone_chat_discussion_runs",
+        statements=(
+            """
+            CREATE TABLE standalone_chat_discussion_runs (
+                run_id TEXT PRIMARY KEY,
+                room_id TEXT NOT NULL REFERENCES standalone_chat_rooms(room_id),
+                root_message_id TEXT NOT NULL UNIQUE
+                    REFERENCES standalone_chat_messages(message_id),
+                correlation_id TEXT NOT NULL,
+                run_json TEXT NOT NULL,
+                pending_json TEXT NOT NULL,
+                active_turn_id TEXT REFERENCES standalone_chat_turns(turn_id)
+            )
+            """,
+            ("CREATE INDEX standalone_chat_discussion_room_idx "
+             "ON standalone_chat_discussion_runs(room_id, root_message_id)"),
+        ),
+    ),
 )
 
 
@@ -411,6 +431,14 @@ class StandaloneChatStore:
             ).fetchone()
             if row is not None:
                 return self._turn(row), False
+            if connection.execute(
+                """SELECT 1 FROM standalone_chat_discussion_runs
+                WHERE room_id = ? AND correlation_id = ? LIMIT 1""",
+                (str(message.room_id), str(message.correlation_id)),
+            ).fetchone() is not None:
+                # The opt-in sequential scheduler owns this correlation. Never
+                # let legacy fanout create a parallel Agent delivery.
+                return None, False
             sender = connection.execute(
                 "SELECT role FROM standalone_chat_members WHERE member_id = ?",
                 (str(message.sender_id),),

@@ -30,6 +30,13 @@ _DISCUSSION_CONTEXT_MESSAGES = 6
 _CONTEXT_EXCERPT_CHARS = 240
 
 
+def _excerpt(content: str) -> str:
+    normalized = " ".join(content.split())
+    return normalized[:_CONTEXT_EXCERPT_CHARS] + (
+        "…" if len(normalized) > _CONTEXT_EXCERPT_CHARS else ""
+    )
+
+
 class _ChatAgentExited(RuntimeError):
     def __init__(self, reason: AgentExitReason, exit_code: int | None) -> None:
         self.reason = reason
@@ -93,6 +100,64 @@ def _normalize_reply(output: Mapping[str, object], *, own_role: MemberRole) -> _
     if any(role not in _AGENT_ROLES or role is own_role for role in reply.handoff_to):
         raise ValueError("Agent handoff must target other chat Agents")
     return reply
+
+
+def chat_context(
+    store: StandaloneChatStore, stored: StoredStandaloneChatMessage,
+    room: StandaloneChatRoom,
+) -> str:
+    """Shared bounded context for one-shot and opt-in sequential chat."""
+    history = store.recent_messages_before(
+        room.room_id, before_sequence=stored.sequence,
+        correlation_id=stored.message.correlation_id,
+        limit=_DISCUSSION_CONTEXT_MESSAGES,
+    )
+    scope = "same_discussion"
+    if stored.message.reply_to is not None and all(
+        item.message.message_id != stored.message.reply_to for item in history
+    ):
+        parent = store.get_message(stored.message.reply_to)
+        if parent.message.room_id == room.room_id and parent.sequence < stored.sequence:
+            history = tuple(sorted(
+                (parent, *history[-(_DISCUSSION_CONTEXT_MESSAGES - 1):]),
+                key=lambda item: item.sequence,
+            ))
+    if not history:
+        scope = "anchored_new_discussion" if stored.message.context_anchor_id else "none"
+    by_id = {member.member_id: member for member in room.members}
+    anchor = None
+    if stored.message.context_anchor_id is not None:
+        referenced = store.get_message(stored.message.context_anchor_id)
+        if referenced.message.room_id != room.room_id or referenced.sequence >= stored.sequence:
+            raise ValueError("invalid chat context anchor")
+        if by_id[referenced.message.sender_id].role is not MemberRole.HUMAN:
+            raise ValueError("chat context anchor must be a Human message")
+        history = tuple(item for item in history
+                        if item.message.message_id != referenced.message.message_id)
+        anchor = {
+            "sequence": referenced.sequence,
+            "message_id": str(referenced.message.message_id),
+            "sender": by_id[referenced.message.sender_id].name,
+            "role": by_id[referenced.message.sender_id].role.value,
+            "excerpt": _excerpt(referenced.message.content),
+        }
+    return json.dumps({
+        "room_title": room.title,
+        "scope": scope,
+        "topic_anchor": anchor,
+        "current_message_id": str(stored.message.message_id),
+        "reply_to": str(stored.message.reply_to) if stored.message.reply_to else None,
+        "history": [
+            {
+                "sequence": item.sequence,
+                "message_id": str(item.message.message_id),
+                "sender": by_id[item.message.sender_id].name,
+                "role": by_id[item.message.sender_id].role.value,
+                "excerpt": _excerpt(item.message.content),
+            }
+            for item in history
+        ],
+    }, ensure_ascii=False)
 
 
 class StandaloneChatDispatcher:
@@ -286,64 +351,11 @@ class StandaloneChatDispatcher:
             self._sessions.pop(turn_id, None)
 
     def _context(self, stored: StoredStandaloneChatMessage, room: StandaloneChatRoom) -> str:
-        history = self.store.recent_messages_before(
-            room.room_id, before_sequence=stored.sequence,
-            correlation_id=stored.message.correlation_id,
-            limit=_DISCUSSION_CONTEXT_MESSAGES,
-        )
-        scope = "same_discussion"
-        if stored.message.reply_to is not None and all(
-            item.message.message_id != stored.message.reply_to for item in history
-        ):
-            parent = self.store.get_message(stored.message.reply_to)
-            if parent.message.room_id == room.room_id and parent.sequence < stored.sequence:
-                history = tuple(sorted(
-                    (parent, *history[-(_DISCUSSION_CONTEXT_MESSAGES - 1):]),
-                    key=lambda item: item.sequence,
-                ))
-        if not history:
-            scope = "anchored_new_discussion" if stored.message.context_anchor_id else "none"
-        by_id = {member.member_id: member for member in room.members}
-        anchor = None
-        if stored.message.context_anchor_id is not None:
-            referenced = self.store.get_message(stored.message.context_anchor_id)
-            if referenced.message.room_id != room.room_id or referenced.sequence >= stored.sequence:
-                raise ValueError("invalid chat context anchor")
-            if by_id[referenced.message.sender_id].role is not MemberRole.HUMAN:
-                raise ValueError("chat context anchor must be a Human message")
-            history = tuple(item for item in history
-                            if item.message.message_id != referenced.message.message_id)
-            anchor = {
-                "sequence": referenced.sequence,
-                "message_id": str(referenced.message.message_id),
-                "sender": by_id[referenced.message.sender_id].name,
-                "role": by_id[referenced.message.sender_id].role.value,
-                "excerpt": self._excerpt(referenced.message.content),
-            }
-        return json.dumps({
-            "room_title": room.title,
-            "scope": scope,
-            "topic_anchor": anchor,
-            "current_message_id": str(stored.message.message_id),
-            "reply_to": str(stored.message.reply_to) if stored.message.reply_to else None,
-            "history": [
-                {
-                    "sequence": item.sequence,
-                    "message_id": str(item.message.message_id),
-                    "sender": by_id[item.message.sender_id].name,
-                    "role": by_id[item.message.sender_id].role.value,
-                    "excerpt": self._excerpt(item.message.content),
-                }
-                for item in history
-            ],
-        }, ensure_ascii=False)
+        return chat_context(self.store, stored, room)
 
     @staticmethod
     def _excerpt(content: str) -> str:
-        normalized = " ".join(content.split())
-        return normalized[:_CONTEXT_EXCERPT_CHARS] + (
-            "…" if len(normalized) > _CONTEXT_EXCERPT_CHARS else ""
-        )
+        return _excerpt(content)
 
     def _prompt(
         self, role: MemberRole, stored: StoredStandaloneChatMessage,
