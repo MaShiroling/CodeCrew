@@ -2,12 +2,13 @@
 
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 
-from app.agents import FakeAgentAdapter, FakeAgentScenario
+from app.agents import AgentExitReason, FakeAgentAdapter, FakeAgentScenario
 from app.chat.agents import StandaloneChatAgentRuntime, StandaloneChatWorkspaceManager
 from app.chat.bounded_dispatch import BoundedDiscussionDispatcher
 from app.chat.discussion_runs import (
@@ -19,6 +20,7 @@ from app.chat.discussion_store import DiscussionRunStore
 from app.chat.models import ChatTurnStatus, StandaloneChatMessage
 from app.chat.service import StandaloneChatService
 from app.chat.store import StandaloneChatConflictError, StandaloneChatStore
+from app.orchestration.models import utc_now
 from app.storage import SQLiteDatabase
 from app.team.models import MemberRole
 
@@ -338,3 +340,135 @@ async def test_shutdown_interrupts_running_batch(tmp_path: Path) -> None:
     await dispatcher.shutdown()
     assert dispatcher.runs.get(run.run_id).status is DiscussionRunStatus.INTERRUPTED
     assert service.store.list_turns(room.room_id)[0].status is ChatTurnStatus.INTERRUPTED
+
+
+def _age_running_batch(dispatcher: BoundedDiscussionDispatcher, run_id, seconds: float) -> None:
+    """Bring a minimum-30-second batch close to its deadline without sleeping."""
+    with dispatcher.runs.database.transaction() as connection:
+        row = dispatcher.runs._row(connection, run_id)
+        run = dispatcher.runs._run(row)
+        now = utc_now()
+        aged = run.model_copy(update={
+            "created_at": now - timedelta(seconds=seconds + 1),
+            "started_at": now - timedelta(seconds=seconds),
+        })
+        dispatcher.runs._save(
+            connection, aged, dispatcher.runs._pending(row),
+            UUID(row["active_turn_id"]),
+        )
+
+
+@pytest.mark.asyncio
+async def test_running_turn_hits_wall_deadline_and_cancels_agent(tmp_path: Path) -> None:
+    adapters = {
+        MemberRole.PLANNER: FakeAgentAdapter(FakeAgentScenario(block_until_cancel=True)),
+        MemberRole.IMPLEMENTER: fake("不应运行", "finish"),
+        MemberRole.REVIEWER: fake("不应运行", "finish"),
+    }
+    service, dispatcher, _ = setup(tmp_path, adapters)
+    await dispatcher.startup()
+    room, root = root_message(service)
+    run = dispatcher.runs.create(
+        root, opening_role=MemberRole.PLANNER,
+        limits=DiscussionRunLimits(max_elapsed_seconds=30),
+    )
+    turn = dispatcher.runs.claim_next(run.run_id)
+    assert turn is not None
+    _age_running_batch(dispatcher, run.run_id, 29.8)
+
+    assert not await dispatcher._execute(run.run_id, turn)
+    saved = dispatcher.runs.get(run.run_id)
+    assert saved.status is DiscussionRunStatus.LIMIT_REACHED
+    assert saved.stop_reason is DiscussionStopReason.TIME_LIMIT
+    assert service.store.get_turn(turn.turn_id).status is ChatTurnStatus.BUDGET_EXHAUSTED
+    assert len(service.store.list_messages(room.room_id)) == 1
+    assert not adapters[MemberRole.IMPLEMENTER].requests
+
+
+@pytest.mark.asyncio
+async def test_unconfirmed_deadline_cancel_is_interrupted(tmp_path: Path, monkeypatch) -> None:
+    adapters = {
+        MemberRole.PLANNER: FakeAgentAdapter(FakeAgentScenario(block_until_cancel=True)),
+        MemberRole.IMPLEMENTER: fake("不应运行", "finish"),
+        MemberRole.REVIEWER: fake("不应运行", "finish"),
+    }
+    service, dispatcher, _ = setup(tmp_path, adapters)
+    await dispatcher.startup()
+    room, root = root_message(service)
+    run = dispatcher.runs.create(
+        root, opening_role=MemberRole.PLANNER,
+        limits=DiscussionRunLimits(max_elapsed_seconds=30),
+    )
+    turn = dispatcher.runs.claim_next(run.run_id)
+    assert turn is not None
+    _age_running_batch(dispatcher, run.run_id, 29.8)
+    original_cancel = dispatcher.runtime.cancel
+
+    async def unconfirmed_cancel(session_id):
+        await original_cancel(session_id)
+        raise RuntimeError("cancel acknowledgement was lost")
+
+    monkeypatch.setattr(dispatcher.runtime, "cancel", unconfirmed_cancel)
+    assert not await dispatcher._execute(run.run_id, turn)
+    saved = dispatcher.runs.get(run.run_id)
+    assert saved.status is DiscussionRunStatus.INTERRUPTED
+    assert saved.stop_reason is DiscussionStopReason.UNCERTAIN_RESULT
+    assert service.store.get_turn(turn.turn_id).status is ChatTurnStatus.INTERRUPTED
+    assert len(service.store.list_messages(room.room_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_per_turn_timeout_fails_without_claiming_time_limit(tmp_path: Path) -> None:
+    adapters = {
+        MemberRole.PLANNER: FakeAgentAdapter(FakeAgentScenario(block_until_cancel=True)),
+        MemberRole.IMPLEMENTER: fake("不应运行", "finish"),
+        MemberRole.REVIEWER: fake("不应运行", "finish"),
+    }
+    service, dispatcher, _ = setup(tmp_path, adapters)
+    dispatcher.timeout_seconds = 1
+    await dispatcher.startup()
+    room, root = root_message(service)
+    run = dispatcher.start(root.message.message_id, opening_role=MemberRole.PLANNER)
+    await dispatcher.wait_idle()
+    saved = dispatcher.runs.get(run.run_id)
+    assert saved.status is DiscussionRunStatus.FAILED
+    assert saved.stop_reason is DiscussionStopReason.AGENT_FAILED
+    assert service.store.list_turns(room.room_id)[0].status is ChatTurnStatus.FAILED
+    assert len(service.store.list_messages(room.room_id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_scheduler_error_fences_unclaimed_run(tmp_path: Path, monkeypatch) -> None:
+    service, dispatcher, adapters = setup(tmp_path)
+    await dispatcher.startup()
+    room, root = root_message(service)
+
+    def broken_claim(_run_id):
+        raise RuntimeError("scheduler unavailable")
+
+    monkeypatch.setattr(dispatcher.runs, "claim_next", broken_claim)
+    run = dispatcher.start(root.message.message_id, opening_role=MemberRole.PLANNER)
+    await dispatcher.wait_idle()
+    assert dispatcher.runs.get(run.run_id).status is DiscussionRunStatus.INTERRUPTED
+    assert len(service.store.list_messages(room.room_id)) == 1
+    assert not service.store.list_turns(room.room_id)
+    assert all(not adapter.requests for adapter in adapters.values())
+
+
+@pytest.mark.asyncio
+async def test_agent_failure_does_not_route_queued_handoffs(tmp_path: Path) -> None:
+    adapters = {
+        MemberRole.PLANNER: FakeAgentAdapter(
+            FakeAgentScenario(reason=AgentExitReason.FAILED, exit_code=1),
+        ),
+        MemberRole.IMPLEMENTER: fake("不应运行", "finish"),
+        MemberRole.REVIEWER: fake("不应运行", "finish"),
+    }
+    service, dispatcher, _ = setup(tmp_path, adapters)
+    await dispatcher.startup()
+    room, root = root_message(service)
+    run = dispatcher.start(root.message.message_id, opening_role=MemberRole.PLANNER)
+    await dispatcher.wait_idle()
+    assert dispatcher.runs.get(run.run_id).status is DiscussionRunStatus.FAILED
+    assert len(service.store.list_messages(room.room_id)) == 1
+    assert not adapters[MemberRole.IMPLEMENTER].requests

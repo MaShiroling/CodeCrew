@@ -251,6 +251,8 @@ class DiscussionRunStore:
             ):
                 raise StandaloneChatConflictError("discussion response does not match its turn")
             now = utc_now()
+            if now - run.started_at >= timedelta(seconds=run.limits.max_elapsed_seconds):
+                raise TimeoutError("discussion deadline elapsed before reply acceptance")
             connection.execute(
                 """UPDATE standalone_chat_turns SET status = ?, updated_at = ?
                 WHERE turn_id = ? AND status = ?""",
@@ -361,6 +363,87 @@ class DiscussionRunStore:
                     if uncertain
                     else DiscussionStopReason.AGENT_FAILED
                 ),
+                at=now,
+            )
+            self._save(connection, run, (), None)
+            return run
+
+    def expire_turn(
+        self,
+        run_id: UUID,
+        turn_id: UUID,
+        *,
+        result_confirmed: bool,
+        error: str,
+    ) -> DiscussionRun:
+        """Stop an active turn at the wall deadline without accepting a late reply.
+
+        An unconfirmed CLI cancellation remains interrupted, not a clean limit stop.
+        """
+        with self.database.transaction() as connection:
+            row = self._row(connection, run_id)
+            run = self._run(row)
+            if run.status is not DiscussionRunStatus.RUNNING or row["active_turn_id"] != str(
+                turn_id
+            ):
+                return run
+            turn = self._active_turn(connection, row, turn_id, run, allow_queued=True)
+            now = utc_now()
+            if now - run.started_at < timedelta(seconds=run.limits.max_elapsed_seconds):
+                raise ValueError("discussion deadline has not elapsed")
+            terminal = (
+                ChatTurnStatus.BUDGET_EXHAUSTED
+                if result_confirmed
+                else ChatTurnStatus.INTERRUPTED
+            )
+            connection.execute(
+                """UPDATE standalone_chat_turns
+                SET status = ?, error = ?, updated_at = ? WHERE turn_id = ?""",
+                (terminal.value, error[:500], now.isoformat(), str(turn_id)),
+            )
+            self._ack_delivery(connection, turn.message_id, turn.recipient_id)
+            self._ack_invites(connection, run.room_id, self._pending(row))
+            self._ack_orphan_response_invites(connection, run, turn_id)
+            run = transition_discussion_run(
+                run,
+                (
+                    DiscussionRunStatus.LIMIT_REACHED
+                    if result_confirmed
+                    else DiscussionRunStatus.INTERRUPTED
+                ),
+                reason=(
+                    DiscussionStopReason.TIME_LIMIT
+                    if result_confirmed
+                    else DiscussionStopReason.UNCERTAIN_RESULT
+                ),
+                at=now,
+            )
+            self._save(connection, run, (), None)
+            return run
+
+    def interrupt_run(self, run_id: UUID, *, error: str) -> DiscussionRun:
+        """Fence a scheduler failure even when no Agent turn was claimed."""
+        with self.database.transaction() as connection:
+            row = self._row(connection, run_id)
+            run = self._run(row)
+            if run.status not in {DiscussionRunStatus.CREATED, DiscussionRunStatus.RUNNING}:
+                return run
+            now = utc_now()
+            if row["active_turn_id"] is not None:
+                turn_id = UUID(row["active_turn_id"])
+                turn = self._active_turn(connection, row, turn_id, run, allow_queued=True)
+                connection.execute(
+                    """UPDATE standalone_chat_turns
+                    SET status = ?, error = ?, updated_at = ? WHERE turn_id = ?""",
+                    (ChatTurnStatus.INTERRUPTED.value, error[:500], now.isoformat(), str(turn_id)),
+                )
+                self._ack_delivery(connection, turn.message_id, turn.recipient_id)
+                self._ack_orphan_response_invites(connection, run, turn_id)
+            self._ack_invites(connection, run.room_id, self._pending(row))
+            run = transition_discussion_run(
+                run,
+                DiscussionRunStatus.INTERRUPTED,
+                reason=DiscussionStopReason.UNCERTAIN_RESULT,
                 at=now,
             )
             self._save(connection, run, (), None)
