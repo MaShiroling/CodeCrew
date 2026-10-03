@@ -30,6 +30,23 @@ def test_discussion_live_flag_is_explicitly_disabled() -> None:
     ] == "0"
 
 
+def test_bounded_discussion_live_flag_is_explicitly_disabled() -> None:
+    assert "CODECREW_RUN_BOUNDED_DISCUSSION_LIVE" in LIVE_FLAGS
+    assert offline_environment({"CODECREW_RUN_BOUNDED_DISCUSSION_LIVE": "1"})[
+        "CODECREW_RUN_BOUNDED_DISCUSSION_LIVE"
+    ] == "0"
+
+
+def test_all_standalone_chat_live_flags_are_explicitly_disabled() -> None:
+    for flag in (
+        "CODECREW_RUN_STANDALONE_CHAT_LIVE",
+        "CODECREW_RUN_CHAT_CONTEXT_LIVE",
+        "CODECREW_RUN_CHAT_TO_CODE_LIVE",
+    ):
+        assert flag in LIVE_FLAGS
+        assert offline_environment({flag: "1"})[flag] == "0"
+
+
 def test_offline_environment_disables_live_tests_and_does_not_mutate_parent() -> None:
     original = {name: "1" for name in LIVE_FLAGS}
     original.update(dict.fromkeys(MODEL_CREDENTIALS, "fake-test-secret"))

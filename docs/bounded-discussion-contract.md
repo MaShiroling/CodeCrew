@@ -1,4 +1,4 @@
-# P6.1～P6.5：独立聊天室有界自由接话
+# P6.1～P6.6：独立聊天室有界自由接话
 
 P6.1 定义纯数据与状态迁移；P6.2 增加 SQLite 持久化和**内部调用的顺序调度器**。
 P6.3 补齐运行中总时限与失败围栏；P6.4 增加本地 HTTP 显式启动与人工控制；
@@ -125,4 +125,8 @@ SQLite 接受回复前再次检查时限，避免迟到的 `finish` 绕过硬截
 `tests/test_bounded_discussion_control.py` 验证人工控制、跨重启保持、本地 HTTP
 显式入口、旧模式隔离和 Fake 三角色顺序接话。`tests/ui_chat.test.cjs` 验证网页
 模式、预算、幂等重试和控制；本机 `chat-demo` 实际页面验证 Fake 三角色接话、
-批次终态与刷新恢复。真实模型连续接话与真实 CLI 人工控制**尚未验收**。
+批次终态与刷新恢复。P6.6 增加
+[`test_bounded_discussion_live.py`](../tests/integration/test_bounded_discussion_live.py)
+的同路径 Fake 对照和默认跳过的三模型在线用例；运行方法见
+[P6.6 在线验收](bounded-discussion-live.md)。真实模型连续接话与真实 CLI 人工控制
+在取得真实运行结果前**仍未验收**。
