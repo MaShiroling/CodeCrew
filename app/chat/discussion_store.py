@@ -132,6 +132,142 @@ class DiscussionRunStore:
             ).fetchall()
             return tuple(self._run(row) for row in rows)
 
+    def has_pending(self, run_id: UUID) -> bool:
+        with self.database.connect() as connection:
+            row = self._row(connection, run_id)
+            run = self._run(row)
+            return (
+                run.status is DiscussionRunStatus.RUNNING
+                and not run.pause_requested
+                and not run.cancel_requested
+                and row["active_turn_id"] is None
+                and bool(self._pending(row))
+            )
+
+    def request_pause(self, run_id: UUID) -> DiscussionRun:
+        """Pause now if idle, otherwise finish the active turn before pausing."""
+        with self.database.transaction() as connection:
+            row = self._row(connection, run_id)
+            run = self._run(row)
+            if run.status is DiscussionRunStatus.PAUSED or run.pause_requested:
+                return run
+            if run.status not in {DiscussionRunStatus.CREATED, DiscussionRunStatus.RUNNING}:
+                raise StandaloneChatConflictError("discussion cannot be paused in this state")
+            if run.cancel_requested:
+                raise StandaloneChatConflictError("discussion cancellation is pending")
+            now = utc_now()
+            if row["active_turn_id"] is None:
+                run = transition_discussion_run(
+                    run, DiscussionRunStatus.PAUSED,
+                    reason=DiscussionStopReason.HUMAN_PAUSED, at=now,
+                )
+            else:
+                run = DiscussionRun.model_validate(run.model_dump() | {
+                    "pause_requested": True, "updated_at": now,
+                })
+            self._save(connection, run, self._pending(row),
+                       UUID(row["active_turn_id"]) if row["active_turn_id"] else None)
+            return run
+
+    def resume(self, run_id: UUID) -> DiscussionRun:
+        """Resume explicitly, keeping the original turn count and wall deadline."""
+        with self.database.transaction() as connection:
+            row = self._row(connection, run_id)
+            run = self._run(row)
+            if run.status is DiscussionRunStatus.RUNNING and run.pause_requested:
+                run = DiscussionRun.model_validate(run.model_dump() | {
+                    "pause_requested": False, "updated_at": utc_now(),
+                })
+                self._save(connection, run, self._pending(row), UUID(row["active_turn_id"]))
+                return run
+            if run.status is not DiscussionRunStatus.PAUSED:
+                raise StandaloneChatConflictError("only a paused discussion can resume")
+            now = utc_now()
+            reason = None
+            if run.agent_turns_used >= run.limits.max_agent_turns:
+                reason = DiscussionStopReason.TURN_LIMIT
+            elif run.started_at is not None and now - run.started_at >= timedelta(
+                seconds=run.limits.max_elapsed_seconds
+            ):
+                reason = DiscussionStopReason.TIME_LIMIT
+            if reason is not None:
+                run = transition_discussion_run(
+                    run, DiscussionRunStatus.LIMIT_REACHED, reason=reason, at=now,
+                )
+                self._ack_invites(connection, run.room_id, self._pending(row))
+                self._save(connection, run, (), None)
+            else:
+                run = transition_discussion_run(run, DiscussionRunStatus.RUNNING, at=now)
+                self._save(connection, run, self._pending(row), None)
+            return run
+
+    def request_cancel(self, run_id: UUID) -> tuple[DiscussionRun, UUID | None]:
+        """Cancel idle work atomically; active work waits for CLI cancellation proof."""
+        with self.database.transaction() as connection:
+            row = self._row(connection, run_id)
+            run = self._run(row)
+            if run.status is DiscussionRunStatus.CANCELLED:
+                return run, None
+            if run.status not in {
+                DiscussionRunStatus.CREATED, DiscussionRunStatus.RUNNING,
+                DiscussionRunStatus.PAUSED,
+            }:
+                raise StandaloneChatConflictError("discussion cannot be cancelled in this state")
+            active = UUID(row["active_turn_id"]) if row["active_turn_id"] else None
+            if active is None:
+                run = transition_discussion_run(
+                    run, DiscussionRunStatus.CANCELLED,
+                    reason=DiscussionStopReason.HUMAN_CANCELLED,
+                )
+                self._ack_invites(connection, run.room_id, self._pending(row))
+                self._save(connection, run, (), None)
+            elif not run.cancel_requested:
+                run = DiscussionRun.model_validate(run.model_dump() | {
+                    "pause_requested": False, "cancel_requested": True,
+                    "updated_at": utc_now(),
+                })
+                self._save(connection, run, self._pending(row), active)
+            return run, active
+
+    def finish_cancel(
+        self, run_id: UUID, turn_id: UUID, *, confirmed: bool,
+    ) -> DiscussionRun:
+        """Never label an unconfirmed running process as cleanly cancelled."""
+        with self.database.transaction() as connection:
+            row = self._row(connection, run_id)
+            run = self._run(row)
+            if run.status is not DiscussionRunStatus.RUNNING or row["active_turn_id"] != str(
+                turn_id
+            ):
+                return run
+            if not run.cancel_requested:
+                raise StandaloneChatConflictError("discussion cancellation was not requested")
+            turn = self._active_turn(connection, row, turn_id, run, allow_queued=True)
+            now = utc_now()
+            connection.execute(
+                """UPDATE standalone_chat_turns
+                SET status = ?, error = ?, updated_at = ? WHERE turn_id = ?""",
+                (
+                    (ChatTurnStatus.CANCELLED if confirmed else ChatTurnStatus.INTERRUPTED).value,
+                    ("cancelled by Human" if confirmed else "Agent cancellation was not confirmed"),
+                    now.isoformat(), str(turn_id),
+                ),
+            )
+            self._ack_delivery(connection, turn.message_id, turn.recipient_id)
+            self._ack_invites(connection, run.room_id, self._pending(row))
+            self._ack_orphan_response_invites(connection, run, turn_id)
+            run = transition_discussion_run(
+                run,
+                DiscussionRunStatus.CANCELLED if confirmed else DiscussionRunStatus.INTERRUPTED,
+                reason=(
+                    DiscussionStopReason.HUMAN_CANCELLED if confirmed
+                    else DiscussionStopReason.UNCERTAIN_RESULT
+                ),
+                at=now,
+            )
+            self._save(connection, run, (), None)
+            return run
+
     def claim_next(self, run_id: UUID) -> StandaloneChatTurn | None:
         """Atomically reserve the next invitation and its turn budget."""
         with self.database.transaction() as connection:
@@ -142,6 +278,21 @@ class DiscussionRunStore:
             if row["active_turn_id"] is not None:
                 return None
             pending = self._pending(row)
+            if run.cancel_requested:
+                run = transition_discussion_run(
+                    run, DiscussionRunStatus.CANCELLED,
+                    reason=DiscussionStopReason.HUMAN_CANCELLED,
+                )
+                self._ack_invites(connection, run.room_id, pending)
+                self._save(connection, run, (), None)
+                return None
+            if run.pause_requested:
+                run = transition_discussion_run(
+                    run, DiscussionRunStatus.PAUSED,
+                    reason=DiscussionStopReason.HUMAN_PAUSED,
+                )
+                self._save(connection, run, pending, None)
+                return None
             if not pending:
                 return None
             room = self.chat._get_room(connection, run.room_id)
@@ -225,6 +376,8 @@ class DiscussionRunStore:
             row = self._row(connection, run_id)
             run = self._run(row)
             turn = self._active_turn(connection, row, turn_id, run)
+            if run.cancel_requested:
+                raise StandaloneChatConflictError("discussion cancellation is pending")
             room = self.chat._get_room(connection, run.room_id)
             speaker = next(
                 member for member in room.members if member.member_id == turn.recipient_id
@@ -310,7 +463,13 @@ class DiscussionRunStore:
                         at=now,
                     )
                     pending = ()
-            if run.status is not DiscussionRunStatus.RUNNING:
+                elif run.pause_requested:
+                    run = transition_discussion_run(
+                        run, DiscussionRunStatus.PAUSED,
+                        reason=DiscussionStopReason.HUMAN_PAUSED,
+                        at=now,
+                    )
+            if run.status not in {DiscussionRunStatus.RUNNING, DiscussionRunStatus.PAUSED}:
                 self._ack_invites(connection, run.room_id, self._pending(row))
                 self._ack_invites(
                     connection,
@@ -461,7 +620,6 @@ class DiscussionRunStore:
                 if run.status not in {
                     DiscussionRunStatus.CREATED,
                     DiscussionRunStatus.RUNNING,
-                    DiscussionRunStatus.PAUSED,
                 }:
                     continue
                 now = utc_now()

@@ -7,15 +7,19 @@ from fastapi import APIRouter, Depends, Query, Request, status
 
 from app.api.chat_events import stream_chat_activity
 from app.api.chat_models import (
+    BoundedDiscussionPage,
+    BoundedDiscussionReceipt,
     ChatMessagePage,
     ChatMessageReceipt,
     ChatRoomPage,
     ChatTurnPage,
     CreateChatRequest,
     PostChatMessageRequest,
+    StartBoundedDiscussionRequest,
 )
 from app.api.events import EventStreamResponse
 from app.api.models import ApiErrorResponse
+from app.chat.bounded_dispatch import BoundedDiscussionDispatcher
 from app.chat.coding_authorization import ChatCodingAuthorizationService, ChatCodingUnavailable
 from app.chat.coding_intent import (
     AuthorizeChatCodingTaskRequest,
@@ -25,10 +29,18 @@ from app.chat.coding_intent import (
     CodingTaskPreflight,
     preflight_coding_task,
 )
+from app.chat.discussion_runs import DiscussionRun
 from app.chat.dispatch import StandaloneChatDispatcher
 from app.chat.models import StandaloneChatRoom, StandaloneChatTurn
-from app.chat.service import ChatMessageNotFound, ChatServiceUnavailable, StandaloneChatService
-from app.chat.store import StandaloneChatMessageNotFoundError
+from app.chat.service import (
+    ChatConflict,
+    ChatMessageNotFound,
+    ChatNotFound,
+    ChatServiceUnavailable,
+    StandaloneChatService,
+)
+from app.chat.store import StandaloneChatConflictError, StandaloneChatMessageNotFoundError
+from app.team.personas import default_team_personas
 
 router = APIRouter(prefix="/api/v1/chats", tags=["standalone chats"])
 ERROR_RESPONSES = {
@@ -52,6 +64,30 @@ def get_chat_dispatcher(request: Request) -> StandaloneChatDispatcher | None:
 
 ChatServiceDependency = Annotated[StandaloneChatService, Depends(get_chat_service)]
 ChatDispatcherDependency = Annotated[StandaloneChatDispatcher | None, Depends(get_chat_dispatcher)]
+
+
+def get_bounded_dispatcher(request: Request) -> BoundedDiscussionDispatcher:
+    dispatcher = getattr(request.app.state, "bounded_dispatcher", None)
+    if dispatcher is None:
+        raise ChatServiceUnavailable("bounded discussion is not configured")
+    return dispatcher
+
+
+BoundedDispatcherDependency = Annotated[
+    BoundedDiscussionDispatcher, Depends(get_bounded_dispatcher),
+]
+
+
+def _owned_run(
+    room_id: UUID, run_id: UUID, dispatcher: BoundedDiscussionDispatcher,
+) -> DiscussionRun:
+    try:
+        run = dispatcher.runs.get(run_id)
+    except StandaloneChatConflictError as exc:
+        raise ChatNotFound("discussion run not found") from exc
+    if run.room_id != room_id:
+        raise ChatNotFound("discussion run not found")
+    return run
 
 
 def get_chat_coding_service(request: Request) -> ChatCodingAuthorizationService:
@@ -104,6 +140,91 @@ def list_chats(
 @router.get("/{room_id}", response_model=StandaloneChatRoom, responses=ERROR_RESPONSES)
 def get_chat(room_id: UUID, service: ChatServiceDependency) -> StandaloneChatRoom:
     return service.get_room(room_id)
+
+
+@router.post("/{room_id}/discussion-runs", response_model=BoundedDiscussionReceipt,
+             status_code=status.HTTP_201_CREATED, responses=ERROR_RESPONSES)
+async def start_bounded_discussion(
+    room_id: UUID, request: StartBoundedDiscussionRequest,
+    service: ChatServiceDependency, dispatcher: BoundedDispatcherDependency,
+) -> BoundedDiscussionReceipt:
+    """A separate Human opt-in; does not dispatch the legacy one-shot route."""
+    service.get_room(room_id)
+    mention = default_team_personas().for_role(request.opening_role).mention_patterns[0]
+    root = service.post_message(
+        room_id, content=f"{mention} {request.content}",
+        idempotency_key=request.idempotency_key, reply_to=None,
+    )
+    try:
+        run = dispatcher.start(
+            root.message.message_id,
+            opening_role=request.opening_role, limits=request.limits,
+        )
+    except StandaloneChatConflictError as exc:
+        raise ChatConflict(str(exc)) from exc
+    return BoundedDiscussionReceipt(run=run, root_message=root)
+
+
+@router.get("/{room_id}/discussion-runs", response_model=BoundedDiscussionPage,
+            responses=ERROR_RESPONSES)
+def list_bounded_discussions(
+    room_id: UUID, service: ChatServiceDependency,
+    dispatcher: BoundedDispatcherDependency,
+) -> BoundedDiscussionPage:
+    service.get_room(room_id)
+    return BoundedDiscussionPage(items=dispatcher.runs.list_for_room(room_id))
+
+
+@router.get("/{room_id}/discussion-runs/{run_id}", response_model=DiscussionRun,
+            responses=ERROR_RESPONSES)
+def get_bounded_discussion(
+    room_id: UUID, run_id: UUID, service: ChatServiceDependency,
+    dispatcher: BoundedDispatcherDependency,
+) -> DiscussionRun:
+    service.get_room(room_id)
+    return _owned_run(room_id, run_id, dispatcher)
+
+
+@router.post("/{room_id}/discussion-runs/{run_id}/pause", response_model=DiscussionRun,
+             responses=ERROR_RESPONSES)
+async def pause_bounded_discussion(
+    room_id: UUID, run_id: UUID, service: ChatServiceDependency,
+    dispatcher: BoundedDispatcherDependency,
+) -> DiscussionRun:
+    service.get_room(room_id)
+    _owned_run(room_id, run_id, dispatcher)
+    try:
+        return dispatcher.pause(run_id)
+    except StandaloneChatConflictError as exc:
+        raise ChatConflict(str(exc)) from exc
+
+
+@router.post("/{room_id}/discussion-runs/{run_id}/resume", response_model=DiscussionRun,
+             responses=ERROR_RESPONSES)
+async def resume_bounded_discussion(
+    room_id: UUID, run_id: UUID, service: ChatServiceDependency,
+    dispatcher: BoundedDispatcherDependency,
+) -> DiscussionRun:
+    service.get_room(room_id)
+    _owned_run(room_id, run_id, dispatcher)
+    try:
+        return dispatcher.resume(run_id)
+    except StandaloneChatConflictError as exc:
+        raise ChatConflict(str(exc)) from exc
+
+
+@router.post("/{room_id}/discussion-runs/{run_id}/cancel", response_model=DiscussionRun,
+             responses=ERROR_RESPONSES)
+async def cancel_bounded_discussion(
+    room_id: UUID, run_id: UUID, service: ChatServiceDependency,
+    dispatcher: BoundedDispatcherDependency,
+) -> DiscussionRun:
+    service.get_room(room_id)
+    _owned_run(room_id, run_id, dispatcher)
+    try:
+        return await dispatcher.cancel(run_id)
+    except StandaloneChatConflictError as exc:
+        raise ChatConflict(str(exc)) from exc
 
 
 @router.post("/{room_id}/coding-task-preflight", response_model=CodingTaskPreflight,

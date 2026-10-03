@@ -1,6 +1,6 @@
 # CodeCrew 当前架构（简历演示版）
 
-更新于 2026-10-02。当前产品有两条独立入口：**无 Git 仓库的只读聊天室**，以及
+更新于 2026-10-03。当前产品有两条独立入口：**无 Git 仓库的只读聊天室**，以及
 **Human 显式授权后才启动的受控编码任务**。下图描述已实现的本地单进程路径，
 不是多 worker、远程 SaaS 或通用 Agent 平台的设计承诺。
 
@@ -13,8 +13,11 @@ flowchart TB
     subgraph Chat[独立聊天室：默认只读]
         API[Chat API 与 SSE 通知] --> Service[StandaloneChatService]
         Service --> Store[(SQLite：房间、消息、回合)]
-        API --> Dispatcher[StandaloneChatDispatcher]
+        API -->|普通消息| Dispatcher[StandaloneChatDispatcher]
+        API -->|显式有界 HTTP；网页尚未接入| Bounded[BoundedDiscussionDispatcher]
         Dispatcher --> Runtime[独立只读 Agent 会话]
+        Bounded --> Runtime
+        Bounded --> Store
         Runtime --> CLIs[Codex / Kimi / Claude 接 DeepSeek；或 Fake]
         Store --> API
     end
@@ -30,6 +33,9 @@ flowchart TB
 `@月见` 或 Agent 间 `handoff_to` 都**不是写权限**。聊天室 Agent 各用独立会话；
 调度器只传有界同讨论消息与显式选取的背景，不复制完整聊天历史。SQLite 保存
 消息、投递和回合状态；SSE 只提示页面重新读取持久化快照，不是逐 Token 输出。
+有界批次另以 SQLite 记录 FIFO 邀请、预算和人工控制状态；暂停在安全回合边界
+生效，继续保留原预算，取消不能确认时保守中断。P6.4 仅有本地 HTTP 控制入口，
+网页按钮和真实模型连续接话验收仍待 P6.5～P6.6。
 
 跨边界时，[预检](chat-to-code-authorization.md)先确认消息来自 Human、仓库和
 Git HEAD 合法、路径范围可用；**预检不执行任务**。Human 勾选确认并提交

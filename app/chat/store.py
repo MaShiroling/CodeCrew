@@ -524,7 +524,11 @@ class StandaloneChatStore:
             changed = connection.execute(
                 """UPDATE standalone_chat_turns SET status = 'interrupted',
                 error = 'process stopped before a confirmed turn result', updated_at = ?
-                WHERE status IN ('queued', 'running')""",
+                WHERE status IN ('queued', 'running')
+                AND NOT EXISTS (
+                    SELECT 1 FROM standalone_chat_discussion_runs AS bounded
+                    WHERE bounded.correlation_id = standalone_chat_turns.correlation_id
+                )""",
                 (utc_now().isoformat(),),
             )
             return changed.rowcount

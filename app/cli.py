@@ -30,6 +30,7 @@ from app.chat.agents import (
     StandaloneChatWorkspaceManager,
     build_standalone_chat_agent_runtime,
 )
+from app.chat.bounded_dispatch import BoundedDiscussionDispatcher
 from app.chat.dispatch import StandaloneChatDispatcher
 from app.chat.service import StandaloneChatService
 from app.chat.store import StandaloneChatStore
@@ -89,6 +90,25 @@ def _build_fake_chat_runtime(settings: Settings) -> StandaloneChatAgentRuntime:
     })
 
 
+def _build_fake_bounded_runtime(settings: Settings) -> StandaloneChatAgentRuntime:
+    workspaces = StandaloneChatWorkspaceManager(
+        settings.standalone_chat_workspace_root, settings.standalone_chat_runtime_root,
+    )
+    replies = {
+        MemberRole.PLANNER: ("白金：先把讨论边界理清，请月见补充。", "handoff", ["implementer"]),
+        MemberRole.IMPLEMENTER: ("月见：我补充具体条件，请鲸鲸检查风险。", "handoff", ["reviewer"]),
+        MemberRole.REVIEWER: ("鲸鲸：这些是讨论结论，不是代码或测试证据。", "finish", []),
+    }
+    return StandaloneChatAgentRuntime(workspaces, {
+        role: FakeAgentAdapter(FakeAgentScenario(output={
+            "structured_output": {
+                "content": content, "next_action": action, "handoff_to": targets,
+            },
+        }))
+        for role, (content, action, targets) in replies.items()
+    })
+
+
 def build_chat_app(*, settings: Settings, fake_agents: bool = False) -> FastAPI:
     """Chat-only app; the explicit demo mode never starts real model CLIs."""
     service = _build_chat_service(settings)
@@ -98,7 +118,13 @@ def build_chat_app(*, settings: Settings, fake_agents: bool = False) -> FastAPI:
         service.store, runtime,
         timeout_seconds=min(settings.agent_timeout_seconds, 180),
     )
-    return create_app(chat_service=service, chat_dispatcher=dispatcher)
+    bounded = BoundedDiscussionDispatcher(
+        service.store,
+        _build_fake_bounded_runtime(settings) if fake_agents else runtime,
+        timeout_seconds=min(settings.agent_timeout_seconds, 180),
+    )
+    return create_app(chat_service=service, chat_dispatcher=dispatcher,
+                      bounded_dispatcher=bounded)
 
 
 def build_server_app(
@@ -176,12 +202,18 @@ def build_server_app(
         command_policy=config.command_policy,
     )
     chat_service = _build_chat_service(settings)
+    chat_runtime = build_standalone_chat_agent_runtime(settings)
     chat_dispatcher = StandaloneChatDispatcher(
-        chat_service.store, build_standalone_chat_agent_runtime(settings),
+        chat_service.store, chat_runtime,
+        timeout_seconds=min(settings.agent_timeout_seconds, 180),
+    )
+    bounded_dispatcher = BoundedDiscussionDispatcher(
+        chat_service.store, chat_runtime,
         timeout_seconds=min(settings.agent_timeout_seconds, 180),
     )
     return create_app(runtime=runtime, chat_service=chat_service,
                       chat_dispatcher=chat_dispatcher,
+                      bounded_dispatcher=bounded_dispatcher,
                       chat_coding_policy=config.permission_policy,
                       chat_coding_repository_bound=repository_bound,
                       chat_coding_issue_bound=issue_bound,

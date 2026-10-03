@@ -11,6 +11,7 @@ from app.api.models import ApiErrorDetail, ApiErrorResponse, ApiValidationIssue
 from app.api.runtime import TaskRuntime
 from app.api.service import TaskApiServiceError, TaskService
 from app.api.tasks import router as tasks_router
+from app.chat.bounded_dispatch import BoundedDiscussionDispatcher
 from app.chat.coding_authorization import ChatCodingAuthorizationService
 from app.chat.dispatch import StandaloneChatDispatcher
 from app.chat.service import ChatApiError, StandaloneChatService
@@ -22,6 +23,7 @@ def create_app(
     *, task_service: TaskService | None = None, runtime: TaskRuntime | None = None,
     chat_service: StandaloneChatService | None = None,
     chat_dispatcher: StandaloneChatDispatcher | None = None,
+    bounded_dispatcher: BoundedDiscussionDispatcher | None = None,
     chat_coding_policy: PermissionPolicy | None = None,
     chat_coding_repository_bound: Path | None = None,
     chat_coding_issue_bound: str | None = None,
@@ -31,6 +33,10 @@ def create_app(
         raise ValueError("provide either task_service or runtime, not both")
     if chat_dispatcher is not None and chat_service is None:
         raise ValueError("chat dispatcher requires a chat service")
+    if bounded_dispatcher is not None and (
+        chat_service is None or bounded_dispatcher.chat is not chat_service.store
+    ):
+        raise ValueError("bounded discussion requires its matching chat service")
     if chat_coding_policy is not None and (chat_service is None or
                                            (task_service is None and runtime is None)):
         raise ValueError("chat coding authorization requires chat and task services")
@@ -49,6 +55,8 @@ def create_app(
             await runtime.service.startup(runtime.recovery)
         if chat_dispatcher is not None:
             await chat_dispatcher.startup()
+        if bounded_dispatcher is not None:
+            await bounded_dispatcher.startup()
         try:
             yield
         finally:
@@ -56,6 +64,8 @@ def create_app(
                 await runtime.service.shutdown()
             if chat_dispatcher is not None:
                 await chat_dispatcher.shutdown()
+            if bounded_dispatcher is not None:
+                await bounded_dispatcher.shutdown()
 
     application = FastAPI(title="CodeCrew", version="0.1.0", lifespan=lifespan)
     application.state.disable_direct_task_creation = disable_direct_task_creation
@@ -67,6 +77,8 @@ def create_app(
         application.state.chat_service = chat_service
     if chat_dispatcher is not None:
         application.state.chat_dispatcher = chat_dispatcher
+    if bounded_dispatcher is not None:
+        application.state.bounded_dispatcher = bounded_dispatcher
     if chat_coding_policy is not None:
         application.state.chat_coding_service = ChatCodingAuthorizationService(
             chat_service, task_service, chat_coding_policy,

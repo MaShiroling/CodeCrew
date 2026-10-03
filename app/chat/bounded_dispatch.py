@@ -100,31 +100,86 @@ class BoundedDiscussionDispatcher:
         opening_role: MemberRole,
         limits: DiscussionRunLimits | None = None,
     ) -> DiscussionRun:
-        """Explicit internal opt-in; HTTP/UI authorization is a later step."""
+        """Explicit bounded run; ordinary chat messages remain one-shot."""
         if self._stopping:
             raise RuntimeError("discussion controller is stopping")
         root_id = root if isinstance(root, UUID) else root.message_id
         stored = self.chat.get_message(root_id)
         run = self.runs.create(stored, opening_role=opening_role, limits=limits)
-        if run.run_id not in self._tasks and run.status is DiscussionRunStatus.CREATED:
-            task = asyncio.create_task(self._drive(run.run_id))
-            self._tasks[run.run_id] = task
-            task.add_done_callback(lambda _done, run_id=run.run_id: self._tasks.pop(run_id, None))
+        if run.status is DiscussionRunStatus.CREATED:
+            self._schedule(run.run_id)
         return run
+
+    def pause(self, run_id: UUID) -> DiscussionRun:
+        if self._stopping:
+            raise RuntimeError("discussion controller is stopping")
+        return self.runs.request_pause(run_id)
+
+    def resume(self, run_id: UUID) -> DiscussionRun:
+        if self._stopping:
+            raise RuntimeError("discussion controller is stopping")
+        run = self.runs.resume(run_id)
+        if run.status is DiscussionRunStatus.RUNNING:
+            self._schedule(run_id)
+        return run
+
+    async def cancel(self, run_id: UUID) -> DiscussionRun:
+        if self._stopping:
+            raise RuntimeError("discussion controller is stopping")
+        _, active = self.runs.request_cancel(run_id)
+        if active is not None:
+            task = self._tasks.get(run_id)
+            if task is None or task.done():
+                self.runs.finish_cancel(run_id, active, confirmed=False)
+            else:
+                task.cancel()
+                done, _ = await asyncio.wait({task}, timeout=10)
+                if not done:
+                    # A cancellation-resistant adapter must not hold the Human
+                    # request open indefinitely or receive a clean cancellation.
+                    self.runs.finish_cancel(run_id, active, confirmed=False)
+                elif self.runs.get(run_id).cancel_requested:
+                    self.runs.finish_cancel(run_id, active, confirmed=False)
+        return self.runs.get(run_id)
+
+    def _schedule(self, run_id: UUID) -> None:
+        current = self._tasks.get(run_id)
+        if current is not None and not current.done():
+            return
+        task = asyncio.create_task(self._drive(run_id))
+        self._tasks[run_id] = task
+        task.add_done_callback(lambda done, rid=run_id: self._on_done(rid, done))
+
+    def _on_done(self, run_id: UUID, task: asyncio.Task[None]) -> None:
+        if self._tasks.get(run_id) is task:
+            self._tasks.pop(run_id, None)
+        # A Human resume may race with the just-finishing paused worker.
+        if not self._stopping and self.runs.has_pending(run_id) and run_id not in self._tasks:
+            self._schedule(run_id)
 
     async def wait_idle(self) -> None:
         while self._tasks:
             await asyncio.gather(*tuple(self._tasks.values()))
 
     async def _drive(self, run_id: UUID) -> None:
+        active: StandaloneChatTurn | None = None
         try:
             while not self._stopping:
-                turn = self.runs.claim_next(run_id)
-                if turn is None:
+                active = self.runs.claim_next(run_id)
+                if active is None:
                     return
-                if not await self._execute(run_id, turn):
+                if not await self._execute(run_id, active):
                     return
+                active = None
         except asyncio.CancelledError:
+            run = self.runs.get(run_id)
+            if run.status is DiscussionRunStatus.RUNNING:
+                if run.cancel_requested and active is not None:
+                    # _execute owns confirmation after the adapter stops. A
+                    # cancellation escaping this fallback has no such proof.
+                    self.runs.finish_cancel(run_id, active.turn_id, confirmed=False)
+                else:
+                    self.runs.interrupt_run(run_id, error="discussion controller stopped")
             raise
         except Exception as exc:  # noqa: BLE001 - fence a failed scheduler, never replay it
             self.runs.interrupt_run(run_id, error=_safe_turn_error(exc))
@@ -171,7 +226,13 @@ class BoundedDiscussionDispatcher:
                 result = await self.runtime.wait(session_id)
             result_confirmed = True
             session_id = None
-            if self._remaining_seconds(self.runs.get(run_id)) <= 0:
+            current_run = self.runs.get(run_id)
+            if current_run.status is not DiscussionRunStatus.RUNNING:
+                return False
+            if current_run.cancel_requested:
+                self.runs.finish_cancel(run_id, turn.turn_id, confirmed=True)
+                return False
+            if self._remaining_seconds(current_run) <= 0:
                 raise TimeoutError("discussion deadline elapsed before reply acceptance")
             if result.reason is not AgentExitReason.COMPLETED or result.exit_code not in {0, None}:
                 raise _ChatAgentExited(result.reason, result.exit_code)
@@ -202,7 +263,12 @@ class BoundedDiscussionDispatcher:
             cancellation_confirmed = result_confirmed or not start_attempted
             if session_id is not None:
                 cancellation_confirmed = await self._cancel_session(session_id)
-            if self._remaining_seconds(self.runs.get(run_id)) <= 0:
+            current_run = self.runs.get(run_id)
+            if current_run.cancel_requested:
+                self.runs.finish_cancel(
+                    run_id, turn.turn_id, confirmed=cancellation_confirmed,
+                )
+            elif self._remaining_seconds(current_run) <= 0:
                 self.runs.expire_turn(
                     run_id,
                     turn.turn_id,
@@ -218,30 +284,43 @@ class BoundedDiscussionDispatcher:
                 )
             return False
         except asyncio.CancelledError:
-            cancellation_confirmed = await self._cancel_session(session_id)
-            self.runs.abort_turn(
-                run_id,
-                turn.turn_id,
-                uncertain=True,
-                error=(
-                    "Agent cancellation could not be confirmed"
-                    if not cancellation_confirmed
-                    else "discussion controller stopped before a confirmed result"
-                ),
-            )
+            cancellation_confirmed = result_confirmed or not start_attempted
+            if session_id is not None:
+                cancellation_confirmed = await self._cancel_session(session_id)
+            if self.runs.get(run_id).cancel_requested:
+                self.runs.finish_cancel(
+                    run_id, turn.turn_id, confirmed=cancellation_confirmed,
+                )
+            else:
+                self.runs.abort_turn(
+                    run_id,
+                    turn.turn_id,
+                    uncertain=True,
+                    error=(
+                        "Agent cancellation could not be confirmed"
+                        if not cancellation_confirmed
+                        else "discussion controller stopped before a confirmed result"
+                    ),
+                )
             raise
         except Exception as exc:  # noqa: BLE001 - external CLI/persistence failure boundary
             cancellation_confirmed = await self._cancel_session(session_id)
-            self.runs.abort_turn(
-                run_id,
-                turn.turn_id,
-                uncertain=(
-                    (start_attempted and session_id is None and not result_confirmed)
-                    or persisted_reply
-                    or (session_id is not None and not cancellation_confirmed)
-                ),
-                error=_safe_turn_error(exc),
-            )
+            if self.runs.get(run_id).cancel_requested:
+                self.runs.finish_cancel(
+                    run_id, turn.turn_id,
+                    confirmed=(result_confirmed or cancellation_confirmed or not start_attempted),
+                )
+            else:
+                self.runs.abort_turn(
+                    run_id,
+                    turn.turn_id,
+                    uncertain=(
+                        (start_attempted and session_id is None and not result_confirmed)
+                        or persisted_reply
+                        or (session_id is not None and not cancellation_confirmed)
+                    ),
+                    error=_safe_turn_error(exc),
+                )
             return False
 
     @staticmethod
@@ -253,8 +332,16 @@ class BoundedDiscussionDispatcher:
     async def _cancel_session(self, session_id: UUID | None) -> bool:
         if session_id is None:
             return False
+        cancel_task = asyncio.create_task(self.runtime.cancel(session_id))
         try:
-            await asyncio.wait_for(self.runtime.cancel(session_id), timeout=10)
+            done, _ = await asyncio.wait({cancel_task}, timeout=10)
+            if not done:
+                cancel_task.add_done_callback(
+                    lambda finished: None if finished.cancelled() else finished.exception()
+                )
+                cancel_task.cancel()
+                return False
+            await cancel_task
             return True
         except Exception:  # noqa: BLE001 - process state is not confirmed
             return False

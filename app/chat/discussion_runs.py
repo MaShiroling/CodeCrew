@@ -61,7 +61,8 @@ _STOP_REASONS = {
 _TERMINAL_STATUSES = frozenset(_STOP_REASONS) - {DiscussionRunStatus.PAUSED}
 _ALLOWED_TRANSITIONS = {
     DiscussionRunStatus.CREATED: frozenset({
-        DiscussionRunStatus.RUNNING, DiscussionRunStatus.CANCELLED,
+        DiscussionRunStatus.RUNNING, DiscussionRunStatus.PAUSED,
+        DiscussionRunStatus.CANCELLED,
         DiscussionRunStatus.INTERRUPTED,
     }),
     DiscussionRunStatus.RUNNING: frozenset({
@@ -72,7 +73,8 @@ _ALLOWED_TRANSITIONS = {
     }),
     DiscussionRunStatus.PAUSED: frozenset({
         DiscussionRunStatus.RUNNING, DiscussionRunStatus.FINISHED,
-        DiscussionRunStatus.CANCELLED, DiscussionRunStatus.INTERRUPTED,
+        DiscussionRunStatus.CANCELLED, DiscussionRunStatus.LIMIT_REACHED,
+        DiscussionRunStatus.INTERRUPTED,
     }),
 }
 
@@ -100,6 +102,8 @@ class DiscussionRun(BaseModel):
     status: DiscussionRunStatus = DiscussionRunStatus.CREATED
     stop_reason: DiscussionStopReason | None = None
     agent_turns_used: int = Field(default=0, ge=0)
+    pause_requested: bool = False
+    cancel_requested: bool = False
     created_at: AwareDatetime = Field(default_factory=utc_now)
     updated_at: AwareDatetime = Field(default_factory=utc_now)
     started_at: AwareDatetime | None = None
@@ -129,11 +133,17 @@ class DiscussionRun(BaseModel):
         if self.status is DiscussionRunStatus.CREATED and self.started_at is not None:
             raise ValueError("created discussion cannot already be started")
         if self.status in {
-            DiscussionRunStatus.RUNNING, DiscussionRunStatus.PAUSED,
+            DiscussionRunStatus.RUNNING,
             DiscussionRunStatus.AWAITING_HUMAN, DiscussionRunStatus.FINISHED,
             DiscussionRunStatus.FAILED, DiscussionRunStatus.LIMIT_REACHED,
         } and self.started_at is None:
             raise ValueError("discussion status requires started_at")
+        if self.status is DiscussionRunStatus.PAUSED and self.started_at is None and self.agent_turns_used:
+            raise ValueError("paused discussion turns require started_at")
+        if (self.pause_requested or self.cancel_requested) and self.status is not DiscussionRunStatus.RUNNING:
+            raise ValueError("only a running discussion can have a pending control request")
+        if self.pause_requested and self.cancel_requested:
+            raise ValueError("pause and cancel cannot both be requested")
         allowed_reasons = _STOP_REASONS.get(self.status)
         if allowed_reasons is None and self.stop_reason is not None:
             raise ValueError("active discussion cannot have stop_reason")
@@ -165,7 +175,10 @@ def transition_discussion_run(
         raise ValueError(f"invalid discussion transition: {run.status.value} -> {status.value}")
     now = at or utc_now()
     values = run.model_dump()
-    values.update(status=status, stop_reason=reason, updated_at=now)
+    values.update(
+        status=status, stop_reason=reason, updated_at=now,
+        pause_requested=False, cancel_requested=False,
+    )
     if status is DiscussionRunStatus.RUNNING and run.started_at is None:
         values["started_at"] = now
     if status in _TERMINAL_STATUSES:
@@ -179,6 +192,8 @@ def reserve_discussion_turn(
     """Count a reserved Agent turn; pause/resume cannot reset its budget."""
     if run.status is not DiscussionRunStatus.RUNNING:
         raise ValueError("discussion must be running to reserve an Agent turn")
+    if run.pause_requested or run.cancel_requested:
+        raise ValueError("discussion has a pending Human control request")
     if run.agent_turns_used >= run.limits.max_agent_turns:
         raise ValueError("discussion Agent turn limit reached")
     now = at or utc_now()
