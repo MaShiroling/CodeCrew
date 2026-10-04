@@ -323,7 +323,7 @@ function closeCodingPanel() {
 }
 
 function chooseCodingSource(message) {
-  if (!chatState.codingCapability.available || memberFor(message.sender_id).role !== 'human') return;
+  if (message.external_source || !chatState.codingCapability.available || memberFor(message.sender_id).role !== 'human') return;
   chatState.codingSource = message;
   resetCodingPreview();
   byId('coding-source').textContent = `来源：本房间 Human 消息 #${message.message_id.slice(0, 8)}。这条聊天消息不是授权。`;
@@ -494,6 +494,21 @@ function connectRoom(roomId, requestId) {
   });
 }
 
+function chatSenderName(message) {
+  const source = message.external_source;
+  if (!source) return memberFor(message.sender_id).role === 'human' ? '我' : memberFor(message.sender_id).name;
+  // Stable short display discriminator; never put full platform IDs into DOM labels.
+  let hash = 2166136261;
+  for (const char of source.external_sender_id) hash = Math.imul(hash ^ char.codePointAt(0), 16777619);
+  const suffix = (hash >>> 0).toString(16).padStart(8, '0');
+  return `${source.display_name || 'Feishu 用户'} ${suffix}`;
+}
+
+function isFeishuDiscussion(message) {
+  return Boolean(message.external_source) || [...chatState.messages.values()].some((item) =>
+    item.message.correlation_id === message.correlation_id && item.message.external_source);
+}
+
 function renderMessage(stored) {
   const message = stored.message;
   const author = memberFor(message.sender_id);
@@ -505,7 +520,7 @@ function renderMessage(stored) {
     : window.CodeCrewAvatars.create(author.role, author.name);
   if (human) {
     avatar.className = 'avatar human-avatar';
-    avatar.textContent = '我';
+    avatar.textContent = message.external_source ? '飞' : '我';
     avatar.setAttribute('aria-hidden', 'true');
   }
   const body = document.createElement('div');
@@ -513,9 +528,9 @@ function renderMessage(stored) {
   const meta = document.createElement('div');
   meta.className = 'message-meta';
   const name = document.createElement('strong');
-  name.textContent = human ? '我' : author.name;
+  name.textContent = chatSenderName(message);
   const role = document.createElement('span');
-  role.textContent = human ? 'human' : author.role;
+  role.textContent = message.external_source ? '飞书 · 外部用户' : human ? 'human' : author.role;
   const time = document.createElement('time');
   time.textContent = formatTime(message.created_at);
   meta.append(name, role, time);
@@ -524,14 +539,14 @@ function renderMessage(stored) {
     const context = document.createElement('div');
     context.className = 'reply-context';
     const parent = chatState.messages.get(message.reply_to)?.message;
-    context.textContent = parent ? `↳ ${memberFor(parent.sender_id).name}：${parent.content.slice(0, 60)}` : '↳ 关联上一条消息';
+    context.textContent = parent ? `↳ ${chatSenderName(parent)}：${parent.content.slice(0, 60)}` : '↳ 关联上一条消息';
     body.append(context);
   }
   if (message.context_anchor_id) {
     const background = document.createElement('div');
     background.className = 'reply-context';
     const anchor = chatState.messages.get(message.context_anchor_id)?.message;
-    background.textContent = anchor ? `背景 · 我：${anchor.content.slice(0, 60)}` : '背景 · 已引用 Human 消息';
+    background.textContent = anchor ? `背景 · ${chatSenderName(anchor)}：${anchor.content.slice(0, 60)}` : '背景 · 已引用 Human 消息';
     body.append(background);
   }
   const bubble = document.createElement('div');
@@ -539,7 +554,7 @@ function renderMessage(stored) {
   bubble.textContent = message.content;
   body.append(bubble);
   if (human) {
-    if (chatState.codingCapability.available) {
+    if (chatState.codingCapability.available && !message.external_source) {
       const coding = document.createElement('button');
       coding.type = 'button';
       coding.className = 'reply-action coding-action';
@@ -553,7 +568,7 @@ function renderMessage(stored) {
     anchor.textContent = '以此为背景继续 ↗';
     anchor.addEventListener('click', () => setContextAnchor(message));
     body.append(anchor);
-  } else {
+  } else if (!isFeishuDiscussion(message)) {
     const reply = document.createElement('button');
     reply.type = 'button';
     reply.className = 'reply-action';

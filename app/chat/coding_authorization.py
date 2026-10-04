@@ -14,7 +14,8 @@ from app.chat.coding_intent import (
     CodingTaskPreflight,
     preflight_coding_task,
 )
-from app.chat.service import ChatApiError, ChatConflict, StandaloneChatService
+from app.chat.service import ChatApiError, ChatConflict, ChatMessageNotFound, StandaloneChatService
+from app.chat.store import StandaloneChatMessageNotFoundError
 from app.orchestration.models import utc_now
 from app.storage import Migration, SQLiteDatabase
 from app.workspace import PermissionPolicy
@@ -76,6 +77,13 @@ class ChatCodingAuthorizationService:
     async def authorize(
         self, room_id: UUID, command: AuthorizeChatCodingTaskRequest,
     ) -> AuthorizedCodingTask:
+        # Check provenance even before returning a previously persisted receipt.
+        try:
+            source = self.chat.store.get_message(command.source_message_id).message
+        except StandaloneChatMessageNotFoundError:
+            raise ChatMessageNotFound("coding source message is not in this room") from None
+        if source.external_source is not None:
+            raise ChatConflict("external Feishu messages cannot authorize coding")
         fingerprint = hashlib.sha256(json.dumps(
             {"room_id": str(room_id), **command.model_dump(mode="json")},
             sort_keys=True, separators=(",", ":"), ensure_ascii=False,

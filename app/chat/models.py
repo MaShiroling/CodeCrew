@@ -1,9 +1,12 @@
 """Task-independent, repository-free team chat data contracts."""
 
+import hashlib
+import unicodedata
 from enum import Enum
+from typing import Literal
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.orchestration.models import utc_now
 from app.team.models import (
@@ -20,6 +23,29 @@ _CHAT_ROLES = frozenset({
     MemberRole.IMPLEMENTER,
     MemberRole.REVIEWER,
 })
+
+
+class ExternalChatSource(BaseModel):
+    """Untrusted display metadata, never a local Human authorization identity."""
+
+    model_config = ConfigDict(frozen=True, extra="forbid", str_strip_whitespace=True)
+
+    platform: Literal["feishu"] = "feishu"
+    external_chat_id: str = Field(pattern=r"^[A-Za-z0-9_.:-]{1,255}$", repr=False)
+    external_sender_id: str = Field(pattern=r"^[A-Za-z0-9_.:-]{1,255}$", repr=False)
+    display_name: str | None = Field(default=None, min_length=1, max_length=60)
+
+    @field_validator("display_name")
+    @classmethod
+    def safe_display_name(cls, value: str | None) -> str | None:
+        if value is not None and any(unicodedata.category(char).startswith("C") or char in "<>" for char in value):
+            raise ValueError("external display name contains unsafe characters")
+        return value
+
+    @property
+    def safe_label(self) -> str:
+        suffix = hashlib.sha256(self.external_sender_id.encode()).hexdigest()[:8]
+        return f"{self.display_name or 'Feishu 用户'} {suffix}"
 
 
 class StandaloneChatRoom(BaseModel):
@@ -65,6 +91,7 @@ class StandaloneChatMessage(BaseModel):
     content: str = Field(min_length=1, max_length=MAX_CHAT_CONTENT_CHARS)
     reply_to: UUID | None = None
     context_anchor_id: UUID | None = None
+    external_source: ExternalChatSource | None = None
     correlation_id: UUID = Field(default_factory=uuid4)
     causation_id: UUID | None = None
     idempotency_key: str = Field(min_length=1, max_length=255)

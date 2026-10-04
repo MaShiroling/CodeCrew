@@ -44,6 +44,24 @@ Git HEAD 合法、路径范围可用；**预检不执行任务**。Human 勾选�
 未知结果的 `pending` 占用不会自动重派。只有显式装配了任务运行时的本地服务
 才提供这条入口；`chat-demo` 和 `chat-serve` 不提供编码授权。
 
+## 飞书只读入口
+
+飞书是独立聊天室的可选入口，只有 `chat-serve --feishu` 显式装配：
+
+```mermaid
+flowchart LR
+    F[飞书应用机器人] --> T[官方 SDK receiver 子进程]
+    T --> Q[有界队列 / 主进程 asyncio]
+    Q --> B[白名单 / 稳定绑定 / ingress 去重]
+    B --> C[原有 StandaloneChatService 与 bounded dispatcher]
+    C --> S[(SQLite 消息 / run)]
+    S --> O[按 correlation 和 turn 扫描 outbox]
+    O --> R[按序有限重试 / 官方回复 API]
+    R --> F
+```
+
+子进程只收事件，不调度模型或访问数据库。父服务保持单实例；SDK 子进程用于确保阻塞长连接可停止，不提供分布式调度。外部 Human 来源是可选消息字段，UI 和有界上下文区分真实发言者，preflight/authorize 拒绝外部来源。外部消息不能创建 Task/Worktree。SQLite migration 19 保存绑定、ingress、事件别名和 outbox；重启只补投递，不补跑不确定模型。真实飞书烟雾测试未执行；[实现细节](feishu-integration-development.md)说明 ACK、重复投递和有限重试的边界。
+
 ## 授权后的编码状态流
 
 ```mermaid

@@ -10,6 +10,7 @@ CodeCrew 是一个本地运行的个人开源项目：你可以在独立聊天�
 | --- | --- |
 | 无仓库聊天室 | 创建房间、`@` 成员、关联回复、Agent 间邀请接话、消息持久化与实时状态；显式有界接话的 Fake 页面验收已完成，真实三模型连续接话待验收。 |
 | Human 授权后改代码 | 只读预检 → 单次授权 → 独立 Worktree → Verifier → Reviewer → CompletionGuard → Patch；Fake 浏览器闭环已验收。 |
+| 飞书只读聊天入口 | 已实现白名单 DM／群真实 @bot、外部发言身份、持久化幂等和按序 outbox；离线 Fake/集成测试已完成；真实飞书长连接烟雾测试尚未执行。 |
 | 真实三 Agent 小修复 | 临时仓库的单次 HTTP 自动验收已通过：唯一变更 `src/app.py`，检查、审批、完成守卫与 Patch 均通过。真实浏览器手动代码演示仍待复测。 |
 
 CodeCrew 不把 Agent 的“已完成”当作成功证据。一次通过也**不是**任意任务成功率或正式可靠性评测。[当前路线与逐步进度](docs/portfolio-roadmap.md)记录了每项能力的验收边界。
@@ -48,6 +49,8 @@ python3.11 -m venv .venv
 
 ## 设计概览
 
+飞书入口需额外安装 `pip install -e '.[feishu,dev]'`，配置应用身份和两类白名单后显式运行 `python -m app.cli chat-serve --feishu`。一个飞书会话稳定绑定一个只读房间，飞书 Human 即使从网页选择也不能直接授权编码。安装、控制台权限待核项、重试语义和单实例限制见[飞书配置指南](docs/feishu-setup.md)。本次 Windows 检查保留了原仓库的 Unix/macOS 平台限制，完整对比见[验收记录](docs/feishu-acceptance.md)。
+
 - 独立聊天室：SQLite 持久化房间、消息和回合；`@` 路由与有界上下文支持成员接话，默认只读。
 - 受控编码：Human 的预检与单次授权绑定消息、仓库、Git 基线和允许路径；Implementer 在独立 Git Worktree 工作。
 - 证据判定：Verifier 执行静态/编译、公开和占位隐藏检查、路径与命令审计；独立 Reviewer 只读审批，CompletionGuard 复核必要条件并输出 Patch。
@@ -70,6 +73,7 @@ python3.11 -m venv .venv
 - [当前路线和进度](docs/portfolio-roadmap.md) · [项目状态与验收记录](docs/project-status.md)
 - [Fake 聊天到编码演示](docs/fake-chat-to-code-demo.md) · [真实小修复验收](docs/real-chat-to-code-acceptance.md)
 - [独立聊天室接口](docs/standalone-chat.md) · [团队人格](docs/personas.md)
+- [飞书配置与烟雾测试](docs/feishu-setup.md) · [实现边界](docs/feishu-integration-development.md) · [验收结果](docs/feishu-acceptance.md)
 
 ## License
 

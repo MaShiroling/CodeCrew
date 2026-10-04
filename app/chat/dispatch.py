@@ -137,7 +137,7 @@ def chat_context(
         anchor = {
             "sequence": referenced.sequence,
             "message_id": str(referenced.message.message_id),
-            "sender": by_id[referenced.message.sender_id].name,
+            "sender": chat_sender_label(referenced.message, room),
             "role": by_id[referenced.message.sender_id].role.value,
             "excerpt": _excerpt(referenced.message.content),
         }
@@ -151,13 +151,19 @@ def chat_context(
             {
                 "sequence": item.sequence,
                 "message_id": str(item.message.message_id),
-                "sender": by_id[item.message.sender_id].name,
+                "sender": chat_sender_label(item.message, room),
                 "role": by_id[item.message.sender_id].role.value,
                 "excerpt": _excerpt(item.message.content),
             }
             for item in history
         ],
     }, ensure_ascii=False)
+
+
+def chat_sender_label(message: StandaloneChatMessage, room: StandaloneChatRoom) -> str:
+    if message.external_source is not None:
+        return message.external_source.safe_label + "（飞书外部用户，只读消息）"
+    return next(member.name for member in room.members if member.member_id == message.sender_id)
 
 
 class StandaloneChatDispatcher:
@@ -382,6 +388,6 @@ class StandaloneChatDispatcher:
             "handoff_to 可以填其他成员的角色 planner、implementer、reviewer，至多两位；"
             "仅确需队友回答时使用，不要提及自己；如果 Human 已同时点名多位成员，"
             "默认各自直接回答 Human，不要再次邀请已被点名的成员。\n"
-            f"发送者：{sender.name}（{sender.role.value}）\n"
+            f"发送者：{chat_sender_label(stored.message, room)}（{sender.role.value}）\n"
             f"收到的消息：{stored.message.content}"
         )

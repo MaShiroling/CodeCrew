@@ -14,7 +14,13 @@ from app.chat.models import (
 )
 from app.orchestration.models import utc_now
 from app.storage import Migration, SQLiteDatabase
-from app.team.models import MessageDelivery, MessageDeliveryStatus, RoomMember, RoomStatus
+from app.team.models import (
+    MemberRole,
+    MessageDelivery,
+    MessageDeliveryStatus,
+    RoomMember,
+    RoomStatus,
+)
 
 
 class StandaloneChatStoreError(RuntimeError):
@@ -239,6 +245,11 @@ class StandaloneChatStore:
                 recipient not in members for recipient in message.recipient_ids
             ):
                 raise StandaloneChatMemberNotFoundError("chat sender or recipient is not in room")
+            if message.external_source is not None and not any(
+                member.member_id == message.sender_id and member.role is MemberRole.HUMAN
+                for member in room.members
+            ):
+                raise StandaloneChatConflictError("external source requires a Human sender")
             existing = connection.execute(
                 """SELECT message_id, message_fingerprint FROM standalone_chat_messages
                 WHERE room_id = ? AND sender_id = ? AND idempotency_key = ?""",
@@ -313,6 +324,17 @@ class StandaloneChatStore:
     def get_message(self, message_id: UUID) -> StoredStandaloneChatMessage:
         with self.database.connect() as connection:
             return self._get_message(connection, message_id)
+
+    def is_external_discussion(self, correlation_id: UUID) -> bool:
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT message_json FROM standalone_chat_messages "
+                "WHERE correlation_id = ? ORDER BY sequence LIMIT 1",
+                (str(correlation_id),),
+            ).fetchone()
+            return bool(row and StandaloneChatMessage.model_validate_json(
+                row["message_json"]
+            ).external_source is not None)
 
     def list_messages(
         self, room_id: UUID, *, after_sequence: int = 0, limit: int = 100,
@@ -590,6 +612,10 @@ def _fingerprint(message: StandaloneChatMessage) -> str:
     excluded = {"message_id", "created_at"}
     if message.context_anchor_id is None:
         excluded.add("context_anchor_id")  # Preserve fingerprints for pre-upgrade messages.
+    if message.external_source is None:
+        excluded.add("external_source")
     content = message.model_dump(mode="json", exclude=excluded)
+    if message.external_source is not None:
+        content["external_source"].pop("display_name", None)
     encoded = json.dumps(content, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()

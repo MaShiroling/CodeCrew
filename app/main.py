@@ -1,4 +1,4 @@
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request
@@ -16,6 +16,8 @@ from app.chat.coding_authorization import ChatCodingAuthorizationService
 from app.chat.dispatch import StandaloneChatDispatcher
 from app.chat.service import ChatApiError, StandaloneChatService
 from app.config import get_settings
+from app.feishu.models import FeishuStatus
+from app.feishu.runtime import FeishuRuntime
 from app.workspace import PermissionPolicy
 
 
@@ -28,6 +30,7 @@ def create_app(
     chat_coding_repository_bound: Path | None = None,
     chat_coding_issue_bound: str | None = None,
     disable_direct_task_creation: bool = False,
+    feishu_runtime: FeishuRuntime | None = None,
 ) -> FastAPI:
     if task_service is not None and runtime is not None:
         raise ValueError("provide either task_service or runtime, not both")
@@ -48,27 +51,36 @@ def create_app(
         raise ValueError("repository-bound coding requires a chat coding policy")
     if chat_coding_issue_bound is not None and chat_coding_repository_bound is None:
         raise ValueError("issue-bound coding requires a repository bound")
+    if feishu_runtime is not None and (
+        feishu_runtime.bridge.service is not chat_service
+        or feishu_runtime.bridge.dispatcher is not bounded_dispatcher
+        or runtime is not None or task_service is not None or chat_coding_policy is not None
+    ):
+        raise ValueError("Feishu requires its matching chat-only runtime")
 
     @asynccontextmanager
     async def lifespan(_application: FastAPI):
-        if runtime is not None:
-            await runtime.service.startup(runtime.recovery)
-        if chat_dispatcher is not None:
-            await chat_dispatcher.startup()
-        if bounded_dispatcher is not None:
-            await bounded_dispatcher.startup()
-        try:
-            yield
-        finally:
+        async with AsyncExitStack() as cleanup:
             if runtime is not None:
-                await runtime.service.shutdown()
+                await runtime.service.startup(runtime.recovery)
+                cleanup.push_async_callback(runtime.service.shutdown)
+            if chat_service is not None:
+                chat_service.store.initialize()
             if chat_dispatcher is not None:
-                await chat_dispatcher.shutdown()
+                await chat_dispatcher.startup()
+                cleanup.push_async_callback(chat_dispatcher.shutdown)
             if bounded_dispatcher is not None:
-                await bounded_dispatcher.shutdown()
+                await bounded_dispatcher.startup()
+                cleanup.push_async_callback(bounded_dispatcher.shutdown)
+            if feishu_runtime is not None:
+                await feishu_runtime.start()
+                cleanup.push_async_callback(feishu_runtime.stop)
+            yield
 
     application = FastAPI(title="CodeCrew", version="0.1.0", lifespan=lifespan)
     application.state.disable_direct_task_creation = disable_direct_task_creation
+    if feishu_runtime is not None:
+        application.state.feishu_runtime = feishu_runtime
     if runtime is not None:
         task_service = runtime.service
     if task_service is not None:
@@ -133,6 +145,10 @@ def create_app(
     def health() -> dict[str, str]:
         settings = get_settings()
         return {"status": "ok", "environment": settings.environment}
+
+    @application.get("/api/v1/feishu/status", response_model=FeishuStatus, tags=["feishu"])
+    def feishu_status() -> FeishuStatus:
+        return feishu_runtime.status() if feishu_runtime is not None else FeishuStatus()
 
     application.include_router(tasks_router)
     application.include_router(chats_router)
