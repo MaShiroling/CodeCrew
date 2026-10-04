@@ -80,7 +80,7 @@ durable at-least-once delivery with local dedupe, finite retries and diagnostics
 - [x] External sender label distinct from local “我”, no coding button; minimal
   connection/delivery UI without a settings console.
 - [x] Setup guide, frozen specs, README, env example and architecture update.
-- [ ] Full offline regression comparison (running); named key regressions, Ruff and self-review done.
+- [x] Full offline regression comparison; named key regressions, Ruff and self-review done. Platform/live limitations recorded, not relabelled as passes.
 
 ## Test matrix and review gates
 
@@ -120,3 +120,12 @@ optional CLI behavior, callback thread handoff, reconnect and stop cleanup.
   queue state, closed-room recovery and unsafe display-name controls.
 - Windows baseline: 1351 tests; 208 failures, 11 errors, 24 skips. Named
   regressions: 6 passes / 4 pre-existing failures. No isolation weakened.
+
+- Final validation: Feishu 90 passed / 3 expected skips; optional SDK 2 passed;
+  Ruff passed. Full suite: 1187 passed / 209 failed / 11 errors / 27 skipped.
+  Original failures/errors preserved; one extra 5-second rework timeout did not
+  reproduce in serial comparison (both trees: True passed, False timed out).
+  No existing tests or isolation checks weakened. Full suite is not green.
+- Local feature commit 1cea56a saved; final evidence and delivery prepared.
+  Live Feishu and macOS on-device regression remain PENDING for lack of the
+  required external environment, not labelled PASS.

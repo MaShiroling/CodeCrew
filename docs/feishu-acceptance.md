@@ -21,7 +21,7 @@ D3：DM 和白名单群真实 @当前 bot；D4：单应用机器人、逐条角�
 
 ## 验证环境与命令
 
-当前宿主没有项目 .venv；依赖安装在工作区的 `work/review-deps`，SDK 单独在 `work/sdk-deps`，没有修改用户全局 Python。`work/dev_check.py` 加载 review-deps，清除模型凭据，关闭所有 LIVE 开关，清除 Feishu 配置环境，仅为测试加入已捆绑 Node 的 PATH。SDK runner 另加 sdk-deps。两个 runner 随同交付副本放在仓库外，作用相当于隔离环境中的 `python -m pytest` / `python -m ruff`。
+当前宿主没有项目 .venv；依赖安装在工作区的 `work/review-deps`，SDK 单独在 `work/sdk-deps`，没有修改用户全局 Python。`work/dev_check.py` 加载 review-deps，清除模型凭据，关闭所有 LIVE 开关，清除 Feishu 配置环境，仅为测试加入已捆绑 Node 的 PATH。SDK runner 另加 sdk-deps。这两个本机辅助 runner 位于仓库外，不属于仓库发布内容，作用相当于隔离环境中的 `python -m pytest` / `python -m ruff`。
 
 以下为本次实际命令形式，从包含 work/ 与 outputs/ 的工作目录执行；PowerShell 中 `$py` 指向 `C:\Users\DELL\.cache\codex-runtimes\codex-primary-runtime\dependencies\python\python.exe`：
 
@@ -33,6 +33,9 @@ $py = 'C:\Users\DELL\.cache\codex-runtimes\codex-primary-runtime\dependencies\py
 & $py work/dev_check.py outputs/CodeCrew -q tests/test_feishu_adapter.py tests/test_feishu_bridge.py tests/test_feishu_outbox.py tests/test_feishu_runtime.py tests/test_feishu_transport.py tests/test_feishu_sdk.py tests/test_feishu_ui.py tests/integration/test_feishu_live.py tests/test_standalone_chat_api.py tests/test_standalone_chat_store.py tests/test_chat_coding_preflight.py --tb=short --junitxml=../../work/final-focused.xml
 & $py work/sdk_check.py outputs/CodeCrew -q tests/test_feishu_sdk.py --tb=short --junitxml=../../work/sdk.xml
 & $py work/dev_check.py outputs/CodeCrew -q tests/test_feishu_outbox.py --tb=short --junitxml=../../work/privacy-final.xml
+& $py work/dev_check.py outputs/CodeCrew -q tests/test_feishu_adapter.py tests/test_feishu_bridge.py tests/test_feishu_outbox.py tests/test_feishu_runtime.py tests/test_feishu_transport.py tests/test_feishu_sdk.py tests/test_feishu_ui.py tests/integration/test_feishu_live.py --tb=short --junitxml=../../work/feishu-final.xml
+& $py work/dev_check.py work/source/CodeCrew-54d4767ae73aa7de5f40a0fbf00f3a525bfdd602 -q tests/test_continuation_workflow.py::test_rework_is_bounded_and_never_self_approves --tb=short --junitxml=../../baseline-timeout-recheck.xml
+& $py work/dev_check.py outputs/CodeCrew -q tests/test_continuation_workflow.py::test_rework_is_bounded_and_never_self_approves --tb=short --junitxml=../../work/final-timeout-recheck.xml
 & $py work/dev_check.py outputs/CodeCrew ruff
 ```
 
@@ -43,7 +46,27 @@ $py = 'C:\Users\DELL\.cache\codex-runtimes\codex-primary-runtime\dependencies\py
 ## 测试结果
 
 <!-- RESULTS:START -->
-全量回归正在执行，最终数字待更新。已完成：原始快照 1351 项，208 failed、11 errors、24 skipped；关键回归 6 passed、4 failed（均为原始基线失败）；最终受影响范围 107 passed、1 failed、3 skipped（失败是已有 Windows symlink 权限）；SDK 契约 2 passed；Ruff PASS。
+| 检查 | 总数 | 通过 | 失败 | 错误 | 跳过 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 未修改 upstream 快照（全量） | 1351 | 1108 | 208 | 11 | 24 |
+| 开发副本（全量） | 1434 | 1187 | 209 | 11 | 27 |
+| 最终飞书专用测试（无 SDK） | 93 | 90 | 0 | 0 | 3 |
+| 官方 SDK 离线契约 | 2 | 2 | 0 | 0 | 0 |
+| 用户指定的三个关键回归文件 | 10 | 6 | 4 | 0 | 0 |
+| 最终受影响聊天/预检/飞书范围 | 111 | 107 | 1 | 0 | 3 |
+| 最后的隐私/出站复验 | 23 | 23 | 0 | 0 | 0 |
+| 原始快照返工测试复测 | 2 | 1 | 1 | 0 | 0 |
+| 开发副本返工测试复测 | 2 | 1 | 1 | 0 | 0 |
+
+Ruff `check .`：PASS；Git whitespace check：PASS。Node UI 脚本已实际执行，通过；没有因缺 Node 跳过。
+
+无 SDK 的最终 93 项中，2 项官方 SDK 契约按预期跳过、1 项真实 smoke 按 opt-in 规则跳过；单独 SDK 环境的 2 项均通过。真实 smoke 的 skip 不是线上 PASS。
+
+全量比较保留了 208 个原始失败和 11 个原始错误，另一次性多出 `test_rework_is_bounded_and_never_self_approves[True]` 的 5 秒 TimeoutError。未改测试或放宽超时；在相同隔离环境中先后单独复测两个参数分支，原始快照与开发副本均为 True 通过、False 因已有 5 秒超时失败。新增全量超时未在复测中复现，两侧复测结果一致，符合时间敏感测试波动；**不将全量失败改记为通过，也不声称全量绿色**。
+
+原有参数 ID 中 4 个 collection-time uuid4 值每次不同，对比时只将 UUID 替换为占位符，保留测试函数和其他参数；归一化后只有上述 1 项结果差异。用户指定的 4 个回归失败都已出现在基线。受影响范围中唯一失败为 Windows 不允许创建 symlink（WinError 1314），也已出现在基线。
+
+全量测试收集于最后一批 Feishu 审查补充前；最后的功能代码由完整 93 项 Feishu 测试、受影响范围和隐私复验覆盖。全量命令运行了约 30.8 分钟，没有在收到失败后提前停止。紧凑机器可读证据在交付目录的 `feishu-validation-summary.json`，保留全量差异及两侧复测结果。
 <!-- RESULTS:END -->
 
 新增 Fake 测试覆盖用户 A～L 验收矩阵：解析和 mentions、白名单、双 identity 去重、并发首次绑定/busy、双 chat 和群发送者身份、角色路由、三条 A→B→A、回合/时间上限、顺序扫描和不外泄本地话题、重试/封顶/stale sending、Human 保存前后崩溃、编码权限、CLI/生命周期/UI/日志隐私。另验证游标事务回滚、关闭房间时恢复、进程启动失败和错误队列清理。
@@ -82,5 +105,7 @@ $py = 'C:\Users\DELL\.cache\codex-runtimes\codex-primary-runtime\dependencies\py
 ## Git 交付
 
 <!-- GIT:START -->
-本地基线提交 `2574132c58eb48cb8218a7d16e50796e32bd93af` 导入 upstream 快照；功能提交与最终状态待收尾更新。未创建远端分支或推送。
+本地基线提交 `2574132c58eb48cb8218a7d16e50796e32bd93af` 导入 upstream 快照。
+功能提交 `1cea56af3224df38adc0e55b839c90f9b0ef0512`：Add opt-in read-only Feishu chat bridge with durable ingress and outbox。
+最终验收记录另有文档提交，见 `git log -2` 和交付目录 DELIVERY.md。交付完成后工作树 clean，分支 feishu-v1；未设置/推送远端，没有 PR。
 <!-- GIT:END -->
