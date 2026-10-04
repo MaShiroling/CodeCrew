@@ -260,6 +260,57 @@ def test_http_controls_are_explicit_and_room_scoped(tmp_path: Path) -> None:
         assert client.post(f"/api/v1/chats/{uuid4()}/discussion-runs/{run_id}/cancel").status_code == 404
 
 
+def test_http_slow_fake_pause_reaches_boundary_then_resumes(tmp_path: Path) -> None:
+    service, dispatcher, adapters = _setup(
+        tmp_path, planner=_adapter("白金交给月见", "handoff", ("implementer",), delay=0.8),
+    )
+    app = create_app(chat_service=service, bounded_dispatcher=dispatcher)
+
+    def wait_for(client: TestClient, url: str, predicate):
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            result = client.get(url).json()
+            if predicate(result):
+                return result
+            time.sleep(0.005)
+        raise AssertionError(f"timed out waiting for {url}")
+
+    with TestClient(app) as client:
+        room = client.post("/api/v1/chats", json={
+            "title": "慢速 Fake Agent 控制验收", "idempotency_key": str(uuid4()),
+        }).json()
+        room_id = room["room_id"]
+        path = f"/api/v1/chats/{room_id}/discussion-runs"
+        response = client.post(path, json={
+            "idempotency_key": str(uuid4()), "opening_role": "planner",
+            "content": "按顺序讨论边界", "limits": {"max_agent_turns": 3, "max_elapsed_seconds": 30},
+        })
+        assert response.status_code == 201, response.text
+        assert response.json()["execution_authorized"] is False
+        run_id = response.json()["run"]["run_id"]
+        run_url = f"{path}/{run_id}"
+        turns_url = f"/api/v1/chats/{room_id}/turns"
+        wait_for(client, turns_url, lambda body: body["items"] and body["items"][-1]["status"] == "running")
+
+        requested = client.post(f"{run_url}/pause")
+        assert requested.status_code == 200
+        assert requested.json()["status"] == "running"
+        assert requested.json()["pause_requested"] is True
+        paused = wait_for(client, run_url, lambda body: body["status"] == "paused")
+        assert paused["stop_reason"] == "human_paused"
+        assert paused["agent_turns_used"] == 1
+        assert len(client.get(turns_url).json()["items"]) == 1
+        assert not adapters[MemberRole.IMPLEMENTER].requests
+
+        resumed = client.post(f"{run_url}/resume")
+        assert resumed.status_code == 200
+        assert resumed.json()["agent_turns_used"] == 1
+        finished = wait_for(client, run_url, lambda body: body["status"] == "finished")
+        assert finished["agent_turns_used"] == 3
+        assert len(client.get(turns_url).json()["items"]) == 3
+        assert len(adapters[MemberRole.IMPLEMENTER].requests) == 1
+
+
 def test_bounded_api_is_unavailable_without_explicit_controller(tmp_path: Path) -> None:
     chat = StandaloneChatStore(SQLiteDatabase(tmp_path / "chat.sqlite3"))
     chat.initialize()

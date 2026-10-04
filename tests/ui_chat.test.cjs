@@ -136,11 +136,22 @@ const fetch = async (url, options = {}) => {
   if (control && options.method === 'POST') {
     const run = boundedRuns.find((item) => item.run_id === control[1]);
     boundedControls.push(control[2]);
-    if (control[2] === 'pause') {run.status = 'paused'; run.stop_reason = 'human_paused';}
-    if (control[2] === 'resume') {run.status = 'running'; run.stop_reason = null;}
-    if (control[2] === 'cancel') {run.status = 'cancelled'; run.stop_reason = 'human_cancelled';}
-    turns.find((item) => item.correlation_id === run.correlation_id).status =
-      control[2] === 'cancel' ? 'cancelled' : 'succeeded';
+    if (control[2] === 'pause') run.pause_requested = true;
+    if (control[2] === 'resume') {
+      if (run.pause_requested) {
+        run.pause_requested = false;
+      } else {
+        run.status = 'running'; run.stop_reason = null;
+        run.agent_turns_used += 1;
+        turns.push({turn_id: `turn-${turns.length + 1}`, room_id: roomId,
+          message_id: 'planner-reply', recipient_id: 'implementer',
+          correlation_id: run.correlation_id, status: 'running', updated_at: new Date().toISOString()});
+      }
+    }
+    if (control[2] === 'cancel') {
+      run.status = 'cancelled'; run.stop_reason = 'human_cancelled';
+      turns.findLast((item) => item.correlation_id === run.correlation_id).status = 'cancelled';
+    }
     return response(200, run);
   }
   if (url.startsWith(`/api/v1/chats/${roomId}/messages?`)) {
@@ -412,13 +423,30 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   boundedRuns[0].pause_requested = false;
   await window.poll();
   await get('bounded-run-list').children[0].children.at(-1).children[0].dispatch('click');
+  assert.equal(boundedRuns[0].status, 'running', 'pause waits for the slow Agent turn');
+  assert.equal(boundedRuns[0].pause_requested, true);
+  assert.equal(get('room-status').textContent, '等待暂停');
+  assert.match(get('bounded-run-list').children[0].children[2].textContent, /当前回合结束后生效/);
+  assert.equal(turns.findLast((turn) => turn.correlation_id === boundedRuns[0].correlation_id).status,
+    'running');
+  turns.findLast((turn) => turn.correlation_id === boundedRuns[0].correlation_id).status = 'succeeded';
+  boundedRuns[0].status = 'paused';
+  boundedRuns[0].stop_reason = 'human_paused';
+  boundedRuns[0].pause_requested = false;
+  await window.poll();
   assert.equal(boundedRuns[0].status, 'paused');
   assert.match(get('bounded-run-list').children[0].children[2].textContent, /不会重置原预算/);
   await get('bounded-run-list').children[0].children.at(-1).children[0].dispatch('click');
   assert.equal(boundedRuns[0].status, 'running');
-  assert.equal(boundedRuns[0].agent_turns_used, 1);
+  assert.equal(boundedRuns[0].agent_turns_used, 2);
+  assert.equal(turns.findLast((turn) => turn.correlation_id === boundedRuns[0].correlation_id).recipient_id,
+    'implementer');
   await get('bounded-run-list').children[0].children.at(-1).children[1].dispatch('click');
   assert.equal(boundedRuns[0].status, 'cancelled');
+  assert.equal(turns.findLast((turn) => turn.correlation_id === boundedRuns[0].correlation_id).status,
+    'cancelled');
+  assert.equal(turns.filter((turn) => turn.correlation_id === boundedRuns[0].correlation_id).length, 2,
+    'cancel must not schedule a later Agent turn');
   assert.equal(get('bounded-run-list').children[0].children.length, 3);
   assert.deepEqual(boundedControls, ['pause', 'resume', 'cancel']);
   boundedRuns[0].status = 'interrupted';

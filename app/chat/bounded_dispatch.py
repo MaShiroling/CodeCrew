@@ -54,20 +54,34 @@ def _parse_discussion_reply(
     else:
         raise TypeError("Agent returned no structured discussion reply")
     if isinstance(payload, dict) and isinstance(payload.get("handoff_to"), (list, tuple)):
-        # Models sometimes use a teammate's display name instead of the role ID.
-        # Only catalogued identities are aliases; the decision schema still
-        # rejects unknown targets, duplicates, self-handoffs and extra fields.
+        # Models sometimes use a teammate's display name or a redundant
+        # {"role": ..., "name": ...} target instead of the role ID. Accept
+        # objects only when both fields exactly match a catalogued identity;
+        # the decision schema still rejects everything else.
+        profiles = default_team_personas().profiles
         aliases = {
             alias: profile.role.value
-            for profile in default_team_personas().profiles
+            for profile in profiles
             for alias in (profile.display_name, *profile.mention_patterns)
         }
+        display_names = {profile.role.value: profile.display_name for profile in profiles}
+
+        def normalize_target(target: object) -> object:
+            if isinstance(target, str):
+                return aliases.get(target, target)
+            if isinstance(target, dict) and set(target) == {"role", "name"}:
+                role, name = target["role"], target["name"]
+                if (
+                    isinstance(role, str)
+                    and isinstance(name, str)
+                    and display_names.get(role) == name
+                ):
+                    return role
+            return target
+
         payload = {
             **payload,
-            "handoff_to": [
-                aliases.get(target, target) if isinstance(target, str) else target
-                for target in payload["handoff_to"]
-            ],
+            "handoff_to": [normalize_target(target) for target in payload["handoff_to"]],
         }
     try:
         return DiscussionReply.model_validate(payload).validate_for_speaker(speaker)
@@ -384,7 +398,8 @@ class BoundedDiscussionDispatcher:
             "最终只输出一个 JSON 对象："
             '{"content":"给人的回复","next_action":"handoff|await_human|finish",'
             '"handoff_to":[]}。handoff 时指定一至两位其他 Agent 的角色 '
-            "planner、implementer、reviewer；await_human 或 finish 时留空。"
+            'planner、implementer、reviewer；例如 "handoff_to":["reviewer"]，'
+            "数组元素只能是角色 ID 字符串，不要写姓名或对象；await_human 或 finish 时留空。"
             "不要指定自己；每次交接按顺序执行，而不是同时运行。\n"
             f"发送者：{sender.name}（{sender.role.value}）\n"
             f"收到的消息：{source.message.content}"

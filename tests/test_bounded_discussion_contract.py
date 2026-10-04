@@ -56,6 +56,18 @@ def test_bounded_reply_normalizes_known_persona_handoff(target: str) -> None:
     assert parsed.handoff_to == (MemberRole.REVIEWER,)
 
 
+def test_bounded_reply_normalizes_matching_role_and_persona_object() -> None:
+    parsed = _parse_discussion_reply(
+        {"message": json.dumps({
+            "content": "请鲸鲸检查风险。",
+            "next_action": "handoff",
+            "handoff_to": [{"role": "reviewer", "name": "鲸鲸"}],
+        }, ensure_ascii=False)},
+        speaker=MemberRole.IMPLEMENTER,
+    )
+    assert parsed.handoff_to == (MemberRole.REVIEWER,)
+
+
 @pytest.mark.parametrize("raw", [
     "只有自然语言，没有决定",
     (
@@ -68,6 +80,11 @@ def test_bounded_reply_normalizes_known_persona_handoff(target: str) -> None:
     '{"content":"a","next_action":"handoff","handoff_to":["月见"]}',
     '{"content":"a","next_action":"handoff","handoff_to":["reviewer","鲸鲸"]}',
     '{"content":"a","next_action":"handoff","handoff_to":["未登记成员"]}',
+    '{"content":"a","next_action":"handoff","handoff_to":[{"role":"reviewer","name":"白金"}]}',
+    '{"content":"a","next_action":"handoff","handoff_to":[{"role":"reviewer","name":"鲸鲸","id":"x"}]}',
+    '{"content":"a","next_action":"handoff","handoff_to":[{"role":"reviewer"}]}',
+    '{"content":"a","next_action":"handoff","handoff_to":[{"role":"implementer","name":"月见"}]}',
+    '{"content":"a","next_action":"handoff","handoff_to":["reviewer",{"role":"reviewer","name":"鲸鲸"}]}',
     '{"content":"a","next_action":"finish","handoff_to":[],"write_file":"x"}',
 ])
 def test_bounded_reply_rejects_ambiguous_or_unauthorized_json(raw: str) -> None:

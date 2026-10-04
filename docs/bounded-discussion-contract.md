@@ -128,5 +128,9 @@ SQLite 接受回复前再次检查时限，避免迟到的 `finish` 绕过硬截
 批次终态与刷新恢复。P6.6 增加
 [`test_bounded_discussion_live.py`](../tests/integration/test_bounded_discussion_live.py)
 的同路径 Fake 对照和默认跳过的三模型在线用例；运行方法见
-[P6.6 在线验收](bounded-discussion-live.md)。真实模型连续接话与真实 CLI 人工控制
-在取得真实运行结果前**仍未验收**。
+[P6.6 在线验收](bounded-discussion-live.md)。真实三模型本地 HTTP 顺序接话已通过
+三回合自动验收；`chat-serve` 浏览器里三角色按顺序回复、批次结束和刷新恢复
+已由用户手动确认；另一次有界批次的关联链显示白金→月见→鲸鲸，验证月见
+主动邀请鲸鲸。该批最终为“等待人工补充”，不证明鲸鲸选择了结束动作。
+真实 CLI 运行中的暂停、同批继续与取消已通过本地 HTTP 实操；慢速 Fake Agent
+的网页暂停/继续/取消按钮及刷新恢复已实际验收，真实 CLI 页面按钮未单独复测。
