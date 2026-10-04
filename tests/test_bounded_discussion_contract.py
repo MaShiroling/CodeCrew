@@ -1,11 +1,13 @@
 """P6.1: contracts only, before persistence, HTTP controls or Agent dispatch."""
 
+import json
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
 from pydantic import ValidationError
 
+from app.chat.bounded_dispatch import _parse_discussion_reply
 from app.chat.discussion_runs import (
     DiscussionNextAction,
     DiscussionReply,
@@ -19,6 +21,42 @@ from app.chat.discussion_runs import (
 from app.team.models import MemberRole
 
 _START = datetime(2026, 10, 3, tzinfo=timezone.utc)
+
+
+@pytest.mark.parametrize("wrapper", [
+    "{}",
+    "```json\n{}\n```",
+    "我已整理建议。\n```json\n{}\n```",
+    "```json\n{}\n```\n补充说明。",
+    "建议如下：\n{}",
+])
+def test_bounded_reply_accepts_one_unambiguous_json_presentation(wrapper: str) -> None:
+    payload = {
+        "content": "月见：补充实现视角。",
+        "next_action": "handoff",
+        "handoff_to": ["reviewer"],
+    }
+    parsed = _parse_discussion_reply(
+        {"message": wrapper.format(json.dumps(payload, ensure_ascii=False))},
+        speaker=MemberRole.IMPLEMENTER,
+    )
+    assert parsed == DiscussionReply.model_validate(payload)
+
+
+@pytest.mark.parametrize("raw", [
+    "只有自然语言，没有决定",
+    (
+        '说明\n```json\n{"content":"建议","next_action":"finish","handoff_to":[]}\n```\n'
+        '```json\n{"content":"建议","next_action":"finish","handoff_to":[]}\n```'
+    ),
+    '{"content":"a","content":"b","next_action":"finish","handoff_to":[]}',
+    '{"content":"a","next_action":"handoff","handoff_to":["human"]}',
+    '{"content":"a","next_action":"handoff","handoff_to":["implementer"]}',
+    '{"content":"a","next_action":"finish","handoff_to":[],"write_file":"x"}',
+])
+def test_bounded_reply_rejects_ambiguous_or_unauthorized_json(raw: str) -> None:
+    with pytest.raises(ValueError, match="invalid discussion"):
+        _parse_discussion_reply({"message": raw}, speaker=MemberRole.IMPLEMENTER)
 
 
 def run(**changes) -> DiscussionRun:

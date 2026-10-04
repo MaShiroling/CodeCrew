@@ -33,6 +33,7 @@ from app.chat.models import (
 )
 from app.chat.store import StandaloneChatStore
 from app.orchestration.models import utc_now
+from app.structured_output import parse_json_response
 from app.team.models import MemberRole
 from app.team.personas import default_team_personas
 
@@ -46,11 +47,8 @@ def _parse_discussion_reply(
     if isinstance(raw, dict):
         payload = raw
     elif isinstance(raw, str):
-        stripped = raw.strip()
-        if stripped.startswith("```json") and stripped.endswith("```"):
-            stripped = stripped[7:-3].strip()
         try:
-            payload = json.loads(stripped)
+            payload = parse_json_response(raw, allow_surrounding_prose=True)
         except json.JSONDecodeError as exc:
             raise ValueError("Agent returned invalid discussion JSON") from exc
     else:

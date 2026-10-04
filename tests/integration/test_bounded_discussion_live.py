@@ -71,6 +71,29 @@ def _check_acceptance(room: dict, run: dict, messages: list[dict], turns: list[d
 
 async def _exercise(app, settings: Settings, *, archive: bool) -> None:
     bounded = app.state.bounded_dispatcher
+    raw_agent_results: list[dict] = []
+    if archive:
+        # The production controller keeps provider text out of public turn errors.
+        # Capture exact results only in this opt-in, Git-ignored local evidence.
+        roles_by_session = {}
+        original_start = bounded.runtime.start
+        original_wait = bounded.runtime.wait
+
+        async def recorded_start(**kwargs):
+            session = await original_start(**kwargs)
+            roles_by_session[session.session_id] = kwargs["role"].value
+            return session
+
+        async def recorded_wait(session_id):
+            result = await original_wait(session_id)
+            raw_agent_results.append({
+                "role": roles_by_session.get(session_id),
+                "result": result.model_dump(mode="json"),
+            })
+            return result
+
+        bounded.runtime.start = recorded_start
+        bounded.runtime.wait = recorded_wait
     room = None
     room_id = None
     run_id = None
@@ -134,7 +157,8 @@ async def _exercise(app, settings: Settings, *, archive: bool) -> None:
             evidence = archive_root / f"{room['trace_id']}.json"
             evidence.write_text(json.dumps({
                 "room": room, "run": archived_run, "messages": archived_messages,
-                "turns": archived_turns, "execution_authorized": False,
+                "turns": archived_turns, "raw_agent_results": raw_agent_results,
+                "execution_authorized": False,
             }, ensure_ascii=False, indent=2), encoding="utf-8")
             print(json.dumps({
                 "trace_id": room["trace_id"], "evidence": str(evidence),
