@@ -43,6 +43,19 @@ def test_bounded_reply_accepts_one_unambiguous_json_presentation(wrapper: str) -
     assert parsed == DiscussionReply.model_validate(payload)
 
 
+@pytest.mark.parametrize("target", ["鲸鲸", "@鲸鲸", "@deepseek"])
+def test_bounded_reply_normalizes_known_persona_handoff(target: str) -> None:
+    parsed = _parse_discussion_reply(
+        {"message": json.dumps({
+            "content": "请鲸鲸补充风险。",
+            "next_action": "handoff",
+            "handoff_to": [target],
+        }, ensure_ascii=False)},
+        speaker=MemberRole.IMPLEMENTER,
+    )
+    assert parsed.handoff_to == (MemberRole.REVIEWER,)
+
+
 @pytest.mark.parametrize("raw", [
     "只有自然语言，没有决定",
     (
@@ -52,6 +65,9 @@ def test_bounded_reply_accepts_one_unambiguous_json_presentation(wrapper: str) -
     '{"content":"a","content":"b","next_action":"finish","handoff_to":[]}',
     '{"content":"a","next_action":"handoff","handoff_to":["human"]}',
     '{"content":"a","next_action":"handoff","handoff_to":["implementer"]}',
+    '{"content":"a","next_action":"handoff","handoff_to":["月见"]}',
+    '{"content":"a","next_action":"handoff","handoff_to":["reviewer","鲸鲸"]}',
+    '{"content":"a","next_action":"handoff","handoff_to":["未登记成员"]}',
     '{"content":"a","next_action":"finish","handoff_to":[],"write_file":"x"}',
 ])
 def test_bounded_reply_rejects_ambiguous_or_unauthorized_json(raw: str) -> None:

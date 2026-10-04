@@ -53,6 +53,22 @@ def _parse_discussion_reply(
             raise ValueError("Agent returned invalid discussion JSON") from exc
     else:
         raise TypeError("Agent returned no structured discussion reply")
+    if isinstance(payload, dict) and isinstance(payload.get("handoff_to"), (list, tuple)):
+        # Models sometimes use a teammate's display name instead of the role ID.
+        # Only catalogued identities are aliases; the decision schema still
+        # rejects unknown targets, duplicates, self-handoffs and extra fields.
+        aliases = {
+            alias: profile.role.value
+            for profile in default_team_personas().profiles
+            for alias in (profile.display_name, *profile.mention_patterns)
+        }
+        payload = {
+            **payload,
+            "handoff_to": [
+                aliases.get(target, target) if isinstance(target, str) else target
+                for target in payload["handoff_to"]
+            ],
+        }
     try:
         return DiscussionReply.model_validate(payload).validate_for_speaker(speaker)
     except (ValidationError, ValueError) as exc:
