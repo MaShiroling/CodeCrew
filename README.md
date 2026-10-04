@@ -70,7 +70,6 @@ python3.11 -m venv .venv
 - [当前路线和进度](docs/portfolio-roadmap.md) · [项目状态与验收记录](docs/project-status.md)
 - [Fake 聊天到编码演示](docs/fake-chat-to-code-demo.md) · [真实小修复验收](docs/real-chat-to-code-acceptance.md)
 - [独立聊天室接口](docs/standalone-chat.md) · [团队人格](docs/personas.md)
-- [旧版 README 历史快照](docs/readme-history.md) · [旧 15 步开发计划](docs/development-plan.md)
 
 ## License
 
