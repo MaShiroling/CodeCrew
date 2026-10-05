@@ -183,13 +183,19 @@ class FeishuStore:
     def claim_delivery(self, *, max_attempts: int) -> sqlite3.Row | None:
         with self.database.transaction() as conn:
             # Select each chat's earliest unfinished item; a waiting head blocks later sends.
-            heads = conn.execute("""SELECT o.* FROM feishu_outbox o WHERE o.app_id=?
+            heads = conn.execute("""WITH ordered AS (
+                    SELECT *, CASE source_kind WHEN 'agent' THEN 0 WHEN 'status' THEN 1 ELSE 2 END AS priority
+                    FROM feishu_outbox)
+                SELECT o.* FROM ordered o WHERE o.app_id=?
                 AND o.status NOT IN ('sent','failed') AND NOT EXISTS (
-                    SELECT 1 FROM feishu_outbox p WHERE p.app_id=o.app_id AND p.chat_id=o.chat_id
+                    SELECT 1 FROM ordered p WHERE p.app_id=o.app_id AND p.chat_id=o.chat_id
                     AND p.status NOT IN ('sent','failed')
                     AND (p.sequence<o.sequence OR
-                         (p.sequence=o.sequence AND p.outbox_id<o.outbox_id)))
-                ORDER BY o.sequence,o.outbox_id""", (self.app_id,)).fetchall()
+                         (p.sequence=o.sequence AND (p.priority<o.priority OR
+                          (p.priority=o.priority AND p.outbox_id<o.outbox_id)))))
+                AND EXISTS (SELECT 1 FROM feishu_bindings b
+                    WHERE b.app_id=o.app_id AND b.chat_id=o.chat_id AND b.scan_cursor>=o.sequence)
+                ORDER BY o.sequence,o.priority,o.outbox_id""", (self.app_id,)).fetchall()
             now = utc_now().isoformat()
             for row in heads:
                 if row["status"] == "sending" or (row["next_retry_at"] and row["next_retry_at"] > now):

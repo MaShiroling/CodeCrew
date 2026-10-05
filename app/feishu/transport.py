@@ -17,6 +17,7 @@ from app.feishu.adapter import FeishuAdapter
 from app.feishu.models import ConnectionState, FeishuInbound
 from app.feishu.privacy import log_event
 from app.feishu.sender import require_sdk
+from app.feishu.workers import finish_cleanup, stop_process
 
 
 class FeishuTransport(Protocol):
@@ -172,21 +173,19 @@ class OfficialFeishuTransport:
             await asyncio.sleep(0.05)
 
     async def stop(self) -> None:
+        await finish_cleanup(self._stop())
+
+    async def _stop(self) -> None:
         if self._pump_task is not None:
             self._pump_task.cancel()
             await asyncio.gather(self._pump_task, return_exceptions=True)
             self._pump_task = None
         if self._process is not None:
-            if self._process.is_alive():
-                self._process.terminate()
-            await asyncio.to_thread(self._process.join, 3)
-            if self._process.is_alive():
-                self._process.kill()
-                await asyncio.to_thread(self._process.join, 3)
-            if self._process.is_alive():
+            try:
+                await stop_process(self._process)
+            except RuntimeError:
                 self.state, self.last_error = ConnectionState.FAILED, "sdk_stop_unconfirmed"
-                raise RuntimeError("sdk_stop_unconfirmed")
-            self._process.close()
+                raise
             self._process = None
             for channel in (self._events, self._states):
                 channel.cancel_join_thread()

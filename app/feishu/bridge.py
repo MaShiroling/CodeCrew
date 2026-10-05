@@ -4,6 +4,7 @@ import asyncio
 from uuid import UUID, uuid5
 
 from app.chat.bounded_dispatch import BoundedDiscussionDispatcher
+from app.chat.discussion_runs import DiscussionRunStatus
 from app.chat.models import ExternalChatSource
 from app.chat.service import ChatInvalid, StandaloneChatService
 from app.chat.store import StandaloneChatConflictError, StandaloneChatMessageNotFoundError
@@ -86,6 +87,10 @@ class FeishuBridge:
             except StandaloneChatConflictError:
                 run = None
             if run is not None:
+                if run.status is DiscussionRunStatus.CREATED:
+                    run = self.dispatcher.runs.interrupt_run(
+                        run.run_id, error="Feishu admission result unconfirmed",
+                    )
                 ingress = self.store.finish_ingress(ingress["ingress_id"], "admitted",
                                                     message=root.message, run=run)
                 return self._result(ingress)  # Never schedule an existing uncertain run.
@@ -103,9 +108,15 @@ class FeishuBridge:
         )
         # Persist run and ingress BEFORE scheduling. Nothing above invokes a model.
         run = self.dispatcher.runs.create(root, opening_role=role)
-        ingress = self.store.finish_ingress(ingress["ingress_id"], "admitted",
-                                            message=root.message, run=run)
-        self.dispatcher.start(root.message.message_id, opening_role=role)
+        try:
+            ingress = self.store.finish_ingress(ingress["ingress_id"], "admitted",
+                                                message=root.message, run=run)
+            self.dispatcher.start(root.message.message_id, opening_role=role)
+        except Exception:
+            # No await occurs in admission, so a scheduled worker cannot have
+            # started yet. Fence the durable run before accepting another event.
+            self.dispatcher.runs.interrupt_run(run.run_id, error="Feishu admission failed")
+            raise
         return self._result(ingress)
 
     def _existing_root(self, ingress):

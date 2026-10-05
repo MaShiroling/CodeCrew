@@ -129,3 +129,10 @@ optional CLI behavior, callback thread handoff, reconnect and stop cleanup.
 - Local feature commit 1cea56a saved; final evidence and delivery prepared.
   Live Feishu and macOS on-device regression remain PENDING for lack of the
   required external environment, not labelled PASS.
+- Second independent audit: proved and fixed busy-notice ordering, orphan CREATED
+  runs after admission exceptions, and synchronous HTTP threads surviving send
+  cancellation. Sender calls now run in disposable processes with confirmed
+  cleanup; receiver cleanup also survives cancellation. No migration changed.
+  New crash/concurrency/process tests and the complete 25-item evidence matrix
+  are recorded in [round-two audit](feishu-audit-round2.md). First-round numbers
+  above remain historical; the linked report records current validation.

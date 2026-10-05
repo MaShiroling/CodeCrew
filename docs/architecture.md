@@ -60,7 +60,7 @@ flowchart LR
     R --> F
 ```
 
-子进程只收事件，不调度模型或访问数据库。父服务保持单实例；SDK 子进程用于确保阻塞长连接可停止，不提供分布式调度。外部 Human 来源是可选消息字段，UI 和有界上下文区分真实发言者，preflight/authorize 拒绝外部来源。外部消息不能创建 Task/Worktree。SQLite migration 19 保存绑定、ingress、事件别名和 outbox；重启只补投递，不补跑不确定模型。真实飞书烟雾测试未执行；[实现细节](feishu-integration-development.md)说明 ACK、重复投递和有限重试的边界。
+接收子进程只收事件；每次 HTTP 发送另用可终止子进程，均不调度模型或访问数据库。父服务保持单实例；SDK 子进程用于确保阻塞收发可停止，不提供分布式调度。外部 Human 来源是可选消息字段，UI 和有界上下文区分真实发言者，preflight/authorize 拒绝外部来源。外部消息不能创建 Task/Worktree。SQLite migration 19 保存绑定、ingress、事件别名和 outbox；重启只补投递，不补跑不确定模型。真实飞书烟雾测试未执行；[实现细节](feishu-integration-development.md)说明 ACK、重复投递和有限重试的边界。
 
 ## 授权后的编码状态流
 

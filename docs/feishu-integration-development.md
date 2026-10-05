@@ -15,7 +15,7 @@ D3～D6 已冻结，见[需求](feishu-integration-requirements.md)。部署见[
   → OfficialFeishuSender（官方回复 API、有限重试）
 ```
 
-`app/feishu/` 按 models、adapter、store、bridge、outbox、sender、transport、runtime、privacy 分工，没有新的模型调度器。只有主进程访问 SQLite、调度 Agent 和发送消息。子进程不访问任务服务、数据库或 Agent。
+`app/feishu/` 按 models、adapter、store、bridge、outbox、sender、transport、runtime、privacy、workers 分工，没有新的模型调度器。只有主进程访问 SQLite 和调度 Agent；收包与 HTTP 发送使用可终止子进程。子进程不访问任务服务、数据库或 Agent。
 
 ## SDK 与生命周期
 
@@ -23,7 +23,7 @@ D3～D6 已冻结，见[需求](feishu-integration-requirements.md)。部署见[
 
 已检查安装源码并离线验证事件对象、Create/Reply 请求对象和 reconnect hooks；这不是线上连通证明。SDK 的 `Client.start()` 使用模块全局 loop，阻塞运行，连接地址发现含同步请求，没有公共 stop API。因此一个可终止的 receiver 子进程负责长连接；退出时 terminate/join，必要时 kill/join 并确认，不对 SDK 私有连接做关闭操作。仅观察版本固定的 `_conn` 来报告首次连接。SDK logger 禁用，以免其错误日志泄露 URL、token、完整 ID 或正文。
 
-主进程发送用官方同步 API 放入 `asyncio.to_thread`，HTTP timeout 15 秒；避免 SDK 异步入口内部同步获取 token 阻塞 FastAPI loop。只有固定错误码能进入状态和日志。
+发送用官方同步 API，但每次调用置于独立子进程，HTTP timeout 15 秒、父进程总等待上限 30 秒。取消或超时会 terminate/join，必要时 kill/join，并确认退出；不依赖取消线程来停止 HTTP 请求。收发进程清理均保护到完成，再向调用方传播取消。每次发送新建客户端会增加进程和 token 获取开销，适用于当前个人/小团队的有限文本流量。只有固定错误码能进入状态和日志。
 
 FastAPI 启动顺序为 chat store → legacy dispatcher → bounded dispatcher 启动栅栏 → Feishu 恢复和连接；退出顺序相反。停止收新消息，排空现有入队消息（最多 5 秒），给发送任务 35 秒收尾，再停止 bounded 工作。运行中未完成推理由原有 dispatcher 中断；下次启动不自动恢复推理。进程启动失败、异常队列和启动途中失败均清理资源。
 
@@ -42,11 +42,11 @@ SDK callback 只解析并放入容量 128 的跨进程队列；父端通过线�
 
 稳定 UUID 从有长度前缀的 app/chat/message 身份派生；消息和 run 沿用现有稳定根消息语义。先白名单和路由验证，再创建/复用 room 和 binding，然后 claim ingress，持久化 external Human 和 run，完成 ingress 映射，最后 schedule。存在 run 的不确定重放只补记录，不再次 schedule。活跃 CREATED/RUNNING/PAUSED 期间新 ingress 只落 busy 状态和一次通知，不写 Human，不污染上下文。bound room 的本地 bounded 新 run 也检查同一事务中的活跃状态。
 
-重启先 fence 未完成 bounded，再恢复 received：已有 Human → 补 run 并中断；没有 Human → interrupted 通知；已完成或被中断的 run 从不重跑。房间创建后绑定前、Human 保存后完成 ingress 前等崩溃窗口靠稳定键收敛。
+重启先 fence 未完成 bounded，再恢复 received：已有 Human → 补 run 并中断；没有 Human → interrupted 通知；已完成或被中断的 run 从不重跑。房间创建后绑定前、Human 保存后完成 ingress 前等崩溃窗口靠稳定键收敛。创建 run 后的入站提交/调度异常立即中断 run；重放遇到尚未完成入站记录的 CREATED run 也中断，避免永久 busy，且不重新推理。
 
 出站扫描同时要求：active binding、绑定起点之后、同 app/chat/room、已 admitted ingress 的 correlation、有真实 bounded turn 对应的 Agent 消息幂等键。只扫 room 或只按 Agent 身份去重均不成立。A→B→A 三条均可投递。游标推进与 outbox 插入同一事务；Agent 消息已落库但未扫描时可补扫。普通本地讨论、Human 消息和历史消息均不导出。网页向外部链追加本地 reply 被拒绝；可创建新本地讨论，显式背景引用仍不改变外发范围。
 
-每个 chat 的最早未终结 outbox 项阻塞后续项，跨 chat 可继续发送。状态 pending → sending → sent 或 retry_wait/failed；默认最多 5 次，指数退避 2 秒起、60 秒封顶。单实例启动将旧 sending 标为结果未确认并重试。每次发送前复查白名单和 binding 状态。耗尽后 failed 可见，不自动无限重试，也不重跑模型。
+每次选择投递前补扫已落库消息；扫描游标未覆盖到的通知暂不发送。每个 chat 按 sequence 排序，同一 sequence 依次为 Agent 回复、run 状态、busy/interrupted 入站通知，再按 outbox ID 排序，防止先插入的 busy 越过回复。最早未终结项阻塞后续项，跨 chat 可继续发送。状态 pending → sending → sent 或 retry_wait/failed；默认最多 5 次，指数退避 2 秒起、60 秒封顶。单实例启动将旧 sending 标为结果未确认并重试。每次发送前复查白名单和 binding 状态。耗尽后 failed 可见，不自动无限重试，也不重跑模型。
 
 这是一种持久化、有限重试的至少一次投递策略，**不是保证最终送达**，更不是跨系统 exactly-once。远端发送成功但本地回执尚未提交时崩溃可能重复发出；Agent 与本地 outbox 去重不能消除该窗口。
 

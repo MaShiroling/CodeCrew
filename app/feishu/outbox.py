@@ -95,6 +95,9 @@ class FeishuOutbox:
 
     async def deliver_one(self) -> bool:
         async with self._delivery_lock:
+            # Sends yield to ingress and Agent workers. Materialize their newly
+            # durable replies before selecting another notice from the queue.
+            self.scan()
             row = self.store.claim_delivery(max_attempts=self.settings.feishu_max_outbox_attempts)
             if row is None:
                 return False
