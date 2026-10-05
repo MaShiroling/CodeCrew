@@ -197,6 +197,52 @@ async def test_authorized_implementer_reply_runs_new_verification_and_review(pro
 
 
 @pytest.mark.asyncio
+async def test_workflow_revisits_first_agent_without_consuming_reserved_human_inputs(production_paused):
+    service, view, agents = production_paused
+    body = await granted(production_paused, "implementer")
+    question = FakeAgentScenario(output={"actions": [
+        {"action": "ask_question", "recipient": {"kind": "role", "role": "planner"},
+         "content": "The target value is present; should I keep the existing diff?"},
+        {"action": "finish_turn", "content": "Waiting for planner"},
+    ]})
+    review = FakeAgentScenario(output={"actions": [
+        {"action": "request_review", "recipient": {"kind": "role", "role": "orchestrator"},
+         "content": "The existing diff is ready for verification"},
+        {"action": "finish_turn", "content": "Ready for review"},
+    ]})
+    original_start = agents[1].start
+
+    async def start_with_question_then_review(request):
+        agents[1]._scenario = question if len(agents[1].requests) == 1 else review
+        return await original_start(request)
+
+    agents[1].start = start_with_question_then_review
+    agents[0]._scenario = FakeAgentScenario(output={"actions": [
+        {"action": "share_plan", "recipient": {"kind": "role", "role": "implementer"},
+         "content": "Keep the existing one-line diff", "artifact_content": {"steps": ["verify"]}},
+        {"action": "finish_turn", "content": "Plan clarified"},
+    ]})
+    agents[2]._scenario = FakeAgentScenario(output={"actions": [
+        {"action": "approve_review", "recipient": {"kind": "role", "role": "orchestrator"},
+         "content": "Approved", "artifact_content": {"issues": []}},
+        {"action": "finish_turn", "content": "Review complete"},
+    ]})
+    async with client(service) as api:
+        accepted = await api.post(f"/api/v1/tasks/{view.task_id}/continue/workflow", json=body)
+        assert accepted.status_code == 202, accepted.text
+        request_id = accepted.json()["receipt"]["request"]["request_id"]
+        receipt = (await finished(service, request_id)).receipt
+        assert receipt.state.value == "succeeded"
+        outcome = (await api.get(
+            f"/api/v1/tasks/{view.task_id}/continuations/{request_id}/workflow"
+        )).json()
+        assert outcome["success"] is True
+    assert service.tasks.get(view.task_id).task.state is TaskState.COMPLETED
+    assert len(agents[1].requests) == 3
+    assert service.rooms.get_message(UUID(body["message_id"])).deliveries[0].status.value == "acknowledged"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("failed_role", ["planner", "reviewer"])
 async def test_failed_agent_never_commits_task_or_selected_ack(waiting_for_planner, failed_role):
     service, view, agents = waiting_for_planner

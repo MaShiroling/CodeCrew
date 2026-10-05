@@ -322,6 +322,7 @@ class HumanContinuationKernel:
         if not first.agent_turns:
             receipt = service.continuations.pause(claim, code="budget_blocked", park_resumed=park_resumed)
             return ContinuationTurn(prepared, first, receipt.runtime_revision, receipt)
+        runtime.reserved_message_ids.update(first.agent_turns[0].consumed_message_ids)
         if first.paused:
             loop_result = None
         else:

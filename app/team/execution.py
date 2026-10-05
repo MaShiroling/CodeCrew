@@ -69,6 +69,9 @@ class WorkflowRuntime:
     native_session_ids: dict[MemberRole, str] = field(default_factory=dict)
     latest_verification: VerificationReport | None = None
     latest_completion: CompletionDecision | None = None
+    # Inputs selected by a controlled Human continuation remain pending until
+    # its final atomic commit. Do not feed them to later turns in that chain.
+    reserved_message_ids: set[UUID] = field(default_factory=set)
 
     def to_context(self) -> WorkflowRuntimeContext:
         return WorkflowRuntimeContext(
@@ -282,7 +285,20 @@ class WorkflowDirectiveExecutor:
             # Multiple messages produced by one Agent turn can each request a wake-up.
             # The first wake consumes the complete pending batch, so later directives
             # are intentionally coalesced instead of failing with "no pending messages".
-            if input_message_ids is None and not self.turns.rooms.pending_for(
+            selected_input_ids = input_message_ids
+            if selected_input_ids is None and runtime.reserved_message_ids:
+                pending = self.turns.rooms.pending_for(
+                    member.member_id,
+                    limit=self.turns.pending_limit + len(runtime.reserved_message_ids),
+                    exclude_discussion=True,
+                )
+                selected_input_ids = tuple(
+                    item.message.message_id for item in pending
+                    if item.message.message_id not in runtime.reserved_message_ids
+                )[:self.turns.pending_limit]
+                if not selected_input_ids:
+                    continue
+            elif selected_input_ids is None and not self.turns.rooms.pending_for(
                 member.member_id, limit=1, exclude_discussion=True,
             ):
                 continue
@@ -309,7 +325,7 @@ class WorkflowDirectiveExecutor:
                     agent_name=agent_name,
                     working_directory=runtime.worktree.worktree_path,
                     resume_native_session_id=runtime.native_session_ids.get(member.role),
-                    input_message_ids=input_message_ids,
+                    input_message_ids=selected_input_ids,
                     validate_before_routing=validate_before_routing,
                     acknowledge_inputs=acknowledge_inputs,
                     observe_cancellation=observe_cancellation,
