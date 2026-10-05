@@ -129,6 +129,8 @@ def preflight_coding_task(
     human = next(member for member in room.members if member.role is MemberRole.HUMAN)
     if source.sender_id != human.member_id:
         raise CodingPreflightInvalid("coding task source must be a Human message")
+    if source.external_source is not None:
+        raise CodingPreflightInvalid("external Feishu messages cannot authorize coding")
 
     try:
         candidate = Path(draft.repository_path).resolve()

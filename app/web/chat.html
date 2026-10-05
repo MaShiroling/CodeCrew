@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="/ui/assets/avatars.css">
   <script src="/ui/assets/avatars.js" defer></script>
   <script src="/ui/assets/chat.js" defer></script>
+  <script src="/ui/assets/feishu.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#chat-main">跳到聊天室</a>
@@ -59,6 +60,7 @@
       <aside class="activity-sidebar" aria-labelledby="activity-title">
         <div class="side-head"><div><span class="kicker">03 / ACTIVITY</span><h2 id="activity-title">团队动态</h2></div></div>
         <div class="read-only-card"><span class="read-only-icon">◇</span><div><strong>只读讨论模式</strong><p>Agent 在独立环境接话。聊天消息本身不会启动编码任务或获得写权限。</p></div></div>
+        <p id="feishu-status" class="sidebar-note" role="status" hidden></p>
         <section id="coding-panel" class="coding-panel" aria-labelledby="coding-title" hidden>
           <div class="coding-head"><h3 id="coding-title">授权一次编码任务</h3><button id="coding-close" type="button" aria-label="关闭编码授权面板">×</button></div>
           <p id="coding-source" class="coding-source"></p>

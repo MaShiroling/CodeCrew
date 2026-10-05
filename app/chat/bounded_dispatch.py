@@ -23,6 +23,7 @@ from app.chat.dispatch import (
     _ChatAgentExited,
     _safe_turn_error,
     chat_context,
+    chat_sender_label,
 )
 from app.chat.models import (
     ChatTurnStatus,
@@ -401,6 +402,6 @@ class BoundedDiscussionDispatcher:
             'planner、implementer、reviewer；例如 "handoff_to":["reviewer"]，'
             "数组元素只能是角色 ID 字符串，不要写姓名或对象；await_human 或 finish 时留空。"
             "不要指定自己；每次交接按顺序执行，而不是同时运行。\n"
-            f"发送者：{sender.name}（{sender.role.value}）\n"
+            f"发送者：{chat_sender_label(source.message, room)}（{sender.role.value}）\n"
             f"收到的消息：{source.message.content}"
         )

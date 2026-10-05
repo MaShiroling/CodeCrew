@@ -4,6 +4,7 @@ import re
 from uuid import UUID, uuid5
 
 from app.chat.models import (
+    ExternalChatSource,
     StandaloneChatMessage,
     StandaloneChatRoom,
     StoredStandaloneChatMessage,
@@ -138,6 +139,8 @@ class StandaloneChatService:
                 raise ChatMessageNotFound("reply target is not in this chat room") from exc
             if parent.room_id != room_id:
                 raise ChatMessageNotFound("reply target is not in this chat room")
+            if self.store.is_external_discussion(parent.correlation_id):
+                raise ChatInvalid("start a new local discussion instead of replying into Feishu")
             author = next(
                 (member for member in room.members if member.member_id == parent.sender_id),
                 None,
@@ -177,3 +180,44 @@ class StandaloneChatService:
             raise ChatConflict("message key was used for different content") from exc
         except StandaloneChatConflictError as exc:
             raise ChatConflict(str(exc)) from exc
+
+    @staticmethod
+    def external_opening_role(
+        content: str, opening_role: MemberRole | None = None,
+    ) -> MemberRole:
+        aliases = {
+            alias.casefold(): profile.role
+            for profile in default_team_personas().profiles
+            for alias in profile.mention_patterns
+        }
+        tokens = _MENTION.findall(content)
+        if any(token.casefold() not in aliases for token in tokens):
+            raise ChatInvalid("external chat contains an unknown Agent mention")
+        if not _MENTION.sub("", content).strip(" \t\r\n,，。.!?？;；:："):
+            raise ChatInvalid("chat needs content beyond Agent mentions")
+        selected = aliases[tokens[0].casefold()] if tokens else opening_role or MemberRole.PLANNER
+        if selected not in _AGENT_ROLES or (tokens and opening_role and selected != opening_role):
+            raise ChatInvalid("external opening role conflicts with Agent mention")
+        return selected
+
+    def post_external_message(
+        self, room_id: UUID, *, content: str, idempotency_key: UUID,
+        external_source: ExternalChatSource, opening_role: MemberRole | None = None,
+    ) -> StoredStandaloneChatMessage:
+        """Restricted bridge entry: one fresh read-only root, no dispatcher or Task."""
+        source = ExternalChatSource.model_validate(external_source.model_dump())
+        role = self.external_opening_role(content, opening_role)
+        room = self.get_room(room_id)
+        human = next(member for member in room.members if member.role is MemberRole.HUMAN)
+        recipient = next(member for member in room.members if member.role is role)
+        key = f"external-chat:{idempotency_key}"
+        message = StandaloneChatMessage(
+            message_id=uuid5(room_id, key), room_id=room_id, trace_id=room.trace_id,
+            sender_id=human.member_id, recipient_ids=(recipient.member_id,),
+            content=content, external_source=source, correlation_id=uuid5(room_id, key + ':thread'),
+            idempotency_key=key,
+        )
+        try:
+            return self.store.append_message(message)
+        except StandaloneChatIdempotencyError as exc:
+            raise ChatConflict("external message key was used for different content") from exc

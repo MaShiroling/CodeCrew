@@ -22,6 +22,7 @@ dependencies = [
 codecrew = "app.cli:main"
 
 [project.optional-dependencies]
+feishu = ["lark-oapi==1.7.3"]
 dev = [
   "httpx>=0.28,<1",
   "pytest>=8.3,<9",

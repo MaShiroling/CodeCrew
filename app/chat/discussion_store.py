@@ -82,6 +82,23 @@ class DiscussionRunStore:
                 if run.opening_role is opening_role and run.limits == limits:
                     return run
                 raise StandaloneChatConflictError("discussion root already has another run")
+            # Optional Feishu integration reserves its bound rooms for one active
+            # bounded run, including requests originating from the local web UI.
+            has_bindings = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='feishu_bindings'"
+            ).fetchone()
+            if has_bindings and connection.execute(
+                "SELECT 1 FROM feishu_bindings WHERE room_id=? AND status='active'",
+                (str(room.room_id),),
+            ).fetchone():
+                rows = connection.execute(
+                    "SELECT run_json FROM standalone_chat_discussion_runs WHERE room_id=?",
+                    (str(room.room_id),),
+                ).fetchall()
+                if any(DiscussionRun.model_validate_json(row[0]).status in {
+                    DiscussionRunStatus.CREATED, DiscussionRunStatus.RUNNING, DiscussionRunStatus.PAUSED,
+                } for row in rows):
+                    raise StandaloneChatConflictError("Feishu room already has an active discussion")
             if (
                 connection.execute(
                     "SELECT 1 FROM standalone_chat_turns WHERE correlation_id = ? LIMIT 1",

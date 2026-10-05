@@ -109,8 +109,15 @@ def _build_fake_bounded_runtime(settings: Settings) -> StandaloneChatAgentRuntim
     })
 
 
-def build_chat_app(*, settings: Settings, fake_agents: bool = False) -> FastAPI:
+def build_chat_app(*, settings: Settings, fake_agents: bool = False,
+                   feishu: bool = False) -> FastAPI:
     """Chat-only app; the explicit demo mode never starts real model CLIs."""
+    if feishu:
+        if fake_agents:
+            raise ValueError("chat-demo cannot start Feishu")
+        settings.require_feishu()
+        from app.feishu.sender import require_sdk
+        require_sdk()
     service = _build_chat_service(settings)
     runtime = (_build_fake_chat_runtime(settings) if fake_agents
                else build_standalone_chat_agent_runtime(settings))
@@ -123,8 +130,12 @@ def build_chat_app(*, settings: Settings, fake_agents: bool = False) -> FastAPI:
         _build_fake_bounded_runtime(settings) if fake_agents else runtime,
         timeout_seconds=min(settings.agent_timeout_seconds, 180),
     )
+    feishu_runtime = None
+    if feishu:
+        from app.feishu.runtime import build_feishu_runtime
+        feishu_runtime = build_feishu_runtime(service, bounded, settings)
     return create_app(chat_service=service, chat_dispatcher=dispatcher,
-                      bounded_dispatcher=bounded)
+                      bounded_dispatcher=bounded, feishu_runtime=feishu_runtime)
 
 
 def build_server_app(
@@ -244,6 +255,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     serve.add_argument("--port", type=int, default=8000, help="local HTTP port")
     chat_serve = commands.add_parser("chat-serve", help="start local read-only team chat")
     chat_serve.add_argument("--port", type=int, default=8000, help="local HTTP port")
+    chat_serve.add_argument("--feishu", action="store_true", help="explicitly enable Feishu read-only bridge")
     chat_demo = commands.add_parser("chat-demo", help="start chat UI with three fake Agents")
     chat_demo.add_argument("--port", type=int, default=8000, help="local HTTP port")
     full_demo = commands.add_parser(
@@ -302,7 +314,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         settings = get_settings()
         if args.command in {"chat-serve", "chat-demo"}:
-            app = build_chat_app(settings=settings, fake_agents=args.command == "chat-demo")
+            options = {"feishu": True} if args.command == "chat-serve" and args.feishu else {}
+            app = build_chat_app(settings=settings, fake_agents=args.command == "chat-demo", **options)
         else:
             config = load_server_config(args.config)
             _require_clis(config, settings)
