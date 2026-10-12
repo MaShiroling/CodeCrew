@@ -12,7 +12,8 @@ from httpx import ASGITransport, AsyncClient
 
 from app.agents import AgentExitReason, FakeAgentAdapter, FakeAgentScenario
 from app.chat.agents import StandaloneChatAgentRuntime, StandaloneChatWorkspaceManager
-from app.chat.dispatch import StandaloneChatDispatcher
+from app.chat.dispatch import StandaloneChatDispatcher, chat_context
+from app.chat.memory import AgentMemoryProposal
 from app.chat.models import ChatTurnStatus, StandaloneChatMessage
 from app.chat.service import StandaloneChatService
 from app.chat.store import StandaloneChatStore
@@ -101,6 +102,9 @@ async def test_http_mention_triggers_bounded_agent_chat_without_task(tmp_path: P
             assert "不要套用固定口癖" in prompt
             assert "仅讨论，不读写代码" in prompt
             assert '"handoff_to":[]' in prompt
+            assert "content 必须逐字出现在" in prompt
+            assert "‘还没完成’只表示未完成" in prompt
+            assert "不要承诺只回复‘完成了’" in prompt
         await client.post(f"/api/v1/chats/{room_id}/messages", json=payload)
         await dispatcher.wait_idle()
         assert len((await client.get(f"/api/v1/chats/{room_id}/messages")).json()["items"]) == 4
@@ -113,6 +117,277 @@ async def test_http_mention_triggers_bounded_agent_chat_without_task(tmp_path: P
         assert connection.execute(
             "SELECT name FROM sqlite_master WHERE name = 'tasks'"
         ).fetchone() is None
+
+
+@pytest.mark.asyncio
+async def test_agent_proposal_is_saved_without_review_and_recalled_later(tmp_path: Path) -> None:
+    planner = FakeAgentAdapter(FakeAgentScenario(output={
+        "message": json.dumps({
+            "content": "收到，后续按这个规范执行", "handoff_to": [],
+            "memory_proposal": {"kind": "decision", "content": "我们决定 PR 标题必须带类型前缀"},
+        }, ensure_ascii=False),
+    }))
+    service, dispatcher, adapters = setup(tmp_path, planner=planner)
+    await dispatcher.startup()
+    room = service.create_room(title="记忆", idempotency_key=uuid4())
+    source = service.post_message(
+        room.room_id, content="@白金 我们决定 PR 标题必须带类型前缀",
+        idempotency_key=uuid4(), reply_to=None,
+    )
+    assert service.store.memory.list_active(room.room_id) == ()
+    assert service.store.memory.list_pending(room.room_id) == ()
+    dispatcher.enqueue(source)
+    await dispatcher.wait_idle()
+    (memory,) = service.store.memory.list_active(room.room_id)
+    assert memory.origin == "agent_auto"
+    assert memory.source_message_id == source.message.message_id
+    assert memory.content == "我们决定 PR 标题必须带类型前缀"
+    assert service.store.memory.list_pending(room.room_id) == ()
+    assert service.store.memory.capture_agent_proposal(
+        room.room_id, source.message.message_id,
+        AgentMemoryProposal(kind="decision", content="我们决定 PR 标题必须带类型前缀"),
+    ) == memory
+
+    later = service.post_message(
+        room.room_id, content="@白金 PR 标题前缀怎么写？",
+        idempotency_key=uuid4(), reply_to=None,
+    )
+    dispatcher.enqueue(later)
+    await dispatcher.wait_idle()
+    context = prompt_context(adapters[MemberRole.PLANNER].requests[-1].prompt)
+    assert context["room_memories"][0]["memory_id"] == str(memory.memory_id)
+    assert context["history"] == []
+
+
+@pytest.mark.asyncio
+async def test_agent_closes_open_loop_after_explicit_human_completion(tmp_path: Path) -> None:
+    service, dispatcher, adapters = setup(tmp_path)
+    await dispatcher.startup()
+    room = service.create_room(title="待办闭环", idempotency_key=uuid4())
+    initial = service.post_message(
+        room.room_id, content="@白金 下次发布前检查文档链接",
+        idempotency_key=uuid4(), reply_to=None,
+    )
+    memory = service.store.memory.capture_agent_proposal(
+        room.room_id, initial.message.message_id,
+        AgentMemoryProposal(kind="open_loop", content="下次发布前检查文档链接"),
+    )
+    assert memory is not None
+    adapters[MemberRole.PLANNER]._scenario = FakeAgentScenario(output={
+        "message": json.dumps({
+            "content": "收到，文档链接待办已完成", "handoff_to": [],
+            "memory_action": {
+                "action": "complete", "memory_id": str(memory.memory_id),
+                "evidence": "文档链接检查已经完成",
+            },
+        }, ensure_ascii=False),
+    })
+    statement = service.post_message(
+        room.room_id, content="@白金 文档链接检查已经完成",
+        idempotency_key=uuid4(), reply_to=None,
+    )
+    dispatcher.enqueue(statement)
+    await dispatcher.wait_idle()
+    closed = service.store.memory.list_closed_open_loops(room.room_id)
+    assert len(closed) == 1
+    assert closed[0].closed_by_message_id == statement.message.message_id
+    assert service.store.memory.list_active(room.room_id) == ()
+    assert "标记为已完成" in service.store.list_messages(room.room_id)[-1].message.content
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("action, state", [
+    ("complete", "已完成"), ("cancel", "已取消"),
+])
+async def test_closed_todo_status_after_restart_uses_sqlite_not_agent_guess(
+    tmp_path: Path, action: str, state: str,
+) -> None:
+    service, _, _ = setup(tmp_path)
+    room = service.create_room(title="状态查询", idempotency_key=uuid4())
+    source = service.post_message(
+        room.room_id, content="@白金 下次出门前要给相机电池充电",
+        idempotency_key=uuid4(), reply_to=None,
+    )
+    memory = service.store.memory.capture_agent_proposal(
+        room.room_id, source.message.message_id,
+        AgentMemoryProposal(kind="open_loop", content="下次出门前要给相机电池充电"),
+    )
+    assert memory is not None
+    service.store.memory.close_open_loop(room.room_id, memory.memory_id, action=action)
+
+    restarted = StandaloneChatStore(SQLiteDatabase(tmp_path / "chat.sqlite3"))
+    restarted.initialize()
+    planner = FakeAgentAdapter(FakeAgentScenario(output={
+        "message": json.dumps({
+            "content": "我猜这项待办仍开启", "handoff_to": [],
+            "memory_action": {
+                "action": "complete", "memory_id": str(memory.memory_id),
+                "evidence": "相机电池充电的待办还在吗？",
+            },
+            "memory_proposal": {
+                "kind": "open_loop", "content": "相机电池充电的待办还在吗？",
+            },
+        }, ensure_ascii=False),
+    }))
+    runtime = StandaloneChatAgentRuntime(
+        StandaloneChatWorkspaceManager(tmp_path / "fresh-workspaces", tmp_path / "fresh-runtime"),
+        {role: planner for role in (
+            MemberRole.PLANNER, MemberRole.IMPLEMENTER, MemberRole.REVIEWER,
+        )},
+    )
+    dispatcher = StandaloneChatDispatcher(restarted, runtime)
+    await dispatcher.startup()
+    try:
+        query = StandaloneChatService(restarted).post_message(
+            room.room_id, content="@白金 相机电池充电的待办还在吗？",
+            idempotency_key=uuid4(), reply_to=None,
+        )
+        dispatcher.enqueue(query)
+        await dispatcher.wait_idle()
+        assert planner.requests == []  # Authoritative status needs no model call.
+        context = json.loads(chat_context(restarted, query, restarted.get_room(room.room_id)))
+        assert context["room_memories"] == []
+        assert context["history"] == []
+        reply = restarted.list_messages(room.room_id)[-1].message.content
+        assert state in reply
+        assert "记忆记录" in reply
+        assert "不再属于未完成待办" in reply
+        assert "仍开启" not in reply
+        assert restarted.memory.list_active(room.room_id) == ()
+        assert restarted.memory.list_closed_open_loops(room.room_id)[0].memory_id == memory.memory_id
+    finally:
+        await dispatcher.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_closed_status_query_does_not_choose_between_similar_open_and_closed_todos(
+    tmp_path: Path,
+) -> None:
+    service, dispatcher, adapters = setup(tmp_path)
+    await dispatcher.startup()
+    room = service.create_room(title="相似待办", idempotency_key=uuid4())
+    memories = []
+    for text in ("下次出门前要给相机电池充电", "相机电池充电并清理镜头"):
+        source = service.post_message(
+            room.room_id, content=f"@白金 {text}",
+            idempotency_key=uuid4(), reply_to=None,
+        )
+        memory = service.store.memory.capture_agent_proposal(
+            room.room_id, source.message.message_id,
+            AgentMemoryProposal(kind="open_loop", content=text),
+        )
+        assert memory is not None
+        memories.append(memory)
+    service.store.memory.close_open_loop(room.room_id, memories[0].memory_id,
+                                         action="complete")
+    adapters[MemberRole.PLANNER]._scenario = FakeAgentScenario(output={
+        "message": '{"content":"我猜它已经完成","handoff_to":[]}',
+    })
+    try:
+        query = service.post_message(
+            room.room_id, content="@白金 下次出门前给相机电池充电的待办还在吗？",
+            idempotency_key=uuid4(), reply_to=None,
+        )
+        dispatcher.enqueue(query)
+        await dispatcher.wait_idle()
+        assert adapters[MemberRole.PLANNER].requests == []
+        reply = service.store.list_messages(room.room_id)[-1].message.content
+        assert "多条相似待办" in reply
+        assert "无法确定" in reply
+        assert {memory.memory_id for memory in service.store.memory.list_active(room.room_id)} == {
+            memories[1].memory_id
+        }
+    finally:
+        await dispatcher.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_open_loop_write_failure_never_claims_success(tmp_path: Path, monkeypatch) -> None:
+    service, dispatcher, adapters = setup(tmp_path)
+    await dispatcher.startup()
+    room = service.create_room(title="写入失败", idempotency_key=uuid4())
+    initial = service.post_message(
+        room.room_id, content="@白金 下次发布前检查文档链接",
+        idempotency_key=uuid4(), reply_to=None,
+    )
+    memory = service.store.memory.capture_agent_proposal(
+        room.room_id, initial.message.message_id,
+        AgentMemoryProposal(kind="open_loop", content="下次发布前检查文档链接"),
+    )
+    assert memory is not None
+    adapters[MemberRole.PLANNER]._scenario = FakeAgentScenario(output={
+        "message": json.dumps({
+            "content": "我把待办和提醒都关掉了", "handoff_to": [],
+            "memory_action": {
+                "action": "complete", "memory_id": str(memory.memory_id),
+                "evidence": "文档链接检查已经完成",
+            },
+        }, ensure_ascii=False),
+    })
+
+    def fail_closure(*_args, **_kwargs):
+        raise RuntimeError("simulated persistence failure")
+
+    monkeypatch.setattr(service.store.memory, "capture_agent_action", fail_closure)
+    statement = service.post_message(
+        room.room_id, content="@白金 文档链接检查已经完成",
+        idempotency_key=uuid4(), reply_to=None,
+    )
+    dispatcher.enqueue(statement)
+    await dispatcher.wait_idle()
+    reply = service.store.list_messages(room.room_id)[-1].message.content
+    assert "没有修改待办" in reply
+    assert "提醒" not in reply
+    assert service.store.memory.list_active(room.room_id)[0].memory_id == memory.memory_id
+
+
+@pytest.mark.asyncio
+async def test_invalid_memory_proposal_does_not_fail_chat_reply(tmp_path: Path) -> None:
+    planner = FakeAgentAdapter(FakeAgentScenario(output={
+        "message": json.dumps({
+            "content": "我会继续讨论", "handoff_to": [],
+            "memory_proposal": {"kind": "invented", "content": "不应保存"},
+        }, ensure_ascii=False),
+    }))
+    service, dispatcher, _ = setup(tmp_path, planner=planner)
+    await dispatcher.startup()
+    room = service.create_room(title="容错", idempotency_key=uuid4())
+    source = service.post_message(
+        room.room_id, content="@白金 我们决定使用 SQLite",
+        idempotency_key=uuid4(), reply_to=None,
+    )
+    dispatcher.enqueue(source)
+    await dispatcher.wait_idle()
+    assert [item.message.content for item in service.store.list_messages(room.room_id)] == [
+        source.message.content, "我会继续讨论",
+    ]
+    assert service.store.memory.list_active(room.room_id) == ()
+
+
+@pytest.mark.asyncio
+async def test_unsupported_memory_expansion_does_not_fail_chat_reply(tmp_path: Path) -> None:
+    planner = FakeAgentAdapter(FakeAgentScenario(output={
+        "message": json.dumps({
+            "content": "收到，命名规则是 test_ 前缀", "handoff_to": [],
+            "memory_proposal": {
+                "kind": "decision",
+                "content": "测试用例命名统一为 test_ 前缀，并迁移存量用例、更新 CI",
+            },
+        }, ensure_ascii=False),
+    }))
+    service, dispatcher, _ = setup(tmp_path, planner=planner)
+    await dispatcher.startup()
+    room = service.create_room(title="来源证据", idempotency_key=uuid4())
+    source = service.post_message(
+        room.room_id, content="@白金 我们决定测试用例命名统一为 test_ 前缀。",
+        idempotency_key=uuid4(), reply_to=None,
+    )
+    dispatcher.enqueue(source)
+    await dispatcher.wait_idle()
+    assert [item.message.content for item in service.store.list_messages(room.room_id)] == [
+        source.message.content, "收到，命名规则是 test_ 前缀",
+    ]
+    assert service.store.memory.list_active(room.room_id) == ()
 
 
 @pytest.mark.asyncio

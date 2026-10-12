@@ -9,11 +9,14 @@ CodeCrew 是一个本地运行的个人开源项目：你可以在独立聊天�
 | 场景 | 已验证范围 |
 | --- | --- |
 | 无仓库聊天室 | 创建房间、`@` 成员、关联回复、Agent 间邀请接话、消息持久化与实时状态；显式有界接话的真实三模型 HTTP/浏览器接话、真实 CLI 本地 HTTP 控制，以及慢速 Fake Agent 的网页暂停/继续/取消按钮均已验收。 |
+| 长期记忆（Agent 自动提炼） | 本地 Human 原文提议经服务端守卫自动落库，无需人工审核；支持同房间跨讨论召回、来源/沿革、纠正、撤销和待办完成/取消。云 embedding 默认关闭。24 条固定记忆配对 A/B 中，来源级 Recall@3 为词项 83.3%、混合 100%（12 个目标来源）；单 Kimi 端到端与故障回归已完成，不代表线上准确率。Fake 浏览器主旅程、来源查看与同库重启检查已验收，非真实模型 UI 质量证明。 |
 | Human 授权后改代码 | 只读预检 → 单次授权 → 独立 Worktree → Verifier → Reviewer → CompletionGuard → Patch；Fake 浏览器闭环已验收。 |
 | 飞书只读聊天入口 | 已实现白名单单聊、群内真实 @bot、有界 Agent 交接、外部身份与持久化收发。2026-10-06 在本地 Mac 上实测单聊长连接收发，以及白金 → 月见 → 鲸鲸的真实接力；群聊尚未实测，跨用户轮次的上下文续聊尚未实现。 |
 | 真实三 Agent 小修复 | 临时仓库的单次 HTTP 自动验收已通过：唯一变更 `src/app.py`，检查、审批、完成守卫与 Patch 均通过。真实浏览器手动代码演示仍待复测。 |
 
 CodeCrew 不把 Agent 的“已完成”当作成功证据。一次通过也**不是**任意任务成功率或正式可靠性评测。[当前路线与逐步进度](docs/portfolio-roadmap.md)记录了每项能力的验收边界。
+
+长期记忆与普通消息历史分开：Agent 在正常回复中提议，服务端校验本地 Human 来源后自动写入；每次最多召回 3 条，带原消息 ID，撤销或关闭待办后不再作为活跃记忆召回。飞书发起的讨论既不能创建，也不能读取本地记忆。可选混合检索使用可配置的 HTTPS embedding API，开启后会向服务商发送记忆和查询内容。[记忆模块 v1 交付与证据总览](docs/memory-v1-delivery.md)汇总实现、检索 A/B、延迟/用量、首次评测与修复回归；HTTP 接口与配置见[聊天室长期记忆](docs/chat-memory.md)。
 
 ## 5 分钟体验：无需密钥
 
@@ -63,6 +66,7 @@ python3.11 -m venv .venv
 飞书 Human 即使从网页选择也不能直接授权编码。本次 Windows 检查保留了原仓库的 Unix/macOS 平台限制，完整对比见[验收记录](docs/feishu-acceptance.md)。
 
 - 独立聊天室：SQLite 持久化房间、消息和回合；`@` 路由与有界上下文支持成员接话，默认只读。
+- 房间记忆：原始消息、有界上下文和长期记忆分层；SQLite 规范记忆与可重建索引分离。默认旧词项、可选 FTS5/BM25，均可与精确余弦结果经 RRF 融合；不依赖外部向量库，缺少 FTS5 可降级旧检索。真实四分支 A/B 中两关键词召回 10/12、两混合 12/12，缓存复跑一致；BM25 无额外收益证据，保持默认。
 - 受控编码：Human 的预检与单次授权绑定消息、仓库、Git 基线和允许路径；Implementer 在独立 Git Worktree 工作。
 - 证据判定：Verifier 执行静态/编译、公开和占位隐藏检查、路径与命令审计；独立 Reviewer 只读审批，CompletionGuard 复核必要条件并输出 Patch。
 - 可追溯性：结构化 A2A 消息、Artifact 引用、`trace_id` 与持久化事件支持检查和故障归因。
@@ -84,6 +88,25 @@ python3.11 -m venv .venv
 - [当前路线和进度](docs/portfolio-roadmap.md) · [项目状态与验收记录](docs/project-status.md)
 - [Fake 聊天到编码演示](docs/fake-chat-to-code-demo.md) · [真实小修复验收](docs/real-chat-to-code-acceptance.md)
 - [独立聊天室接口](docs/standalone-chat.md) · [团队人格](docs/personas.md)
+- [记忆模块 v1 交付与评测结论](docs/memory-v1-delivery.md) · [记忆接口、配置与实现边界](docs/chat-memory.md)
+- [无密钥记忆浏览器演示与截图](docs/memory-browser-acceptance.md)
+- [FTS5/BM25 升级进度与旧检索基线](docs/memory-fts-upgrade.md)
+- [FTS5 索引回填、生命周期同步与故障恢复](docs/memory-fts-index.md)
+- [可选 BM25 召回、向量 RRF 与降级规则](docs/memory-bm25-recall.md)
+- [FTS5/BM25 边界、故障与恢复验收矩阵](docs/memory-fts-acceptance.md)
+- [FTS 质量/延迟 A/B 工具、离线结果与剩余边界](docs/memory-fts-ab.md)
+- [向量存储第二阶段：接口、范围、一致性边界与进度](docs/memory-vector-upgrade.md)
+- [本机 Qdrant 存储接入、部署与真实验收](docs/memory-qdrant-storage.md)
+- [向量 outbox 可靠同步、重试/租约与版本/墓碑](docs/memory-vector-outbox.md)
+- [向量历史回填、断点审计与非破坏式重建](docs/memory-vector-maintenance.md)
+- [可选 Qdrant 混合召回、版本复验与故障降级](docs/memory-qdrant-recall.md)
+- [Qdrant 实际停服/恢复、生命周期矩阵与审计验收](docs/memory-qdrant-faults.md)
+- [SQLite/Qdrant 配对质量、延迟/规模与默认决策](docs/memory-qdrant-benchmark.md)
+- [Qdrant 读路径优化、六臂同期 A/B 与默认取舍（5/5）](docs/memory-qdrant-optimization.md)
+- [记忆后台同步与运行可观测性（5/5：隔离自动同步验收通过，用户 worker 未启用）](docs/memory-vector-worker.md)
+- [真实模型记忆运行验收（5/5：前序＋恢复＋补验＋同库重开，非重新12项全通过）](docs/memory-live-acceptance.md)
+- [第11/12条定点补验入口（最多1次Kimi启动，禁止embedding API）](docs/memory-persistent-followup.md)
+- [真实持久目标同库重开与不复活检查（新模型0/0，不重启容器或在用服务）](docs/memory-persistent-restart.md)
 - [飞书配置与烟雾测试](docs/feishu-setup.md) · [实现边界](docs/feishu-integration-development.md) · [验收结果](docs/feishu-acceptance.md)
 
 ## License

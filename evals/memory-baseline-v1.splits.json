@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "tuning": [
+    "dev_pr_prefix",
+    "dev_sqlite_semantic",
+    "dev_prefix_correction",
+    "dev_brainstorm_not_decision",
+    "dev_room_boundary",
+    "dev_external_source",
+    "personal_tea_preference",
+    "personal_chinese_preference",
+    "personal_time_correction",
+    "personal_quoted_friend",
+    "personal_room_boundary",
+    "personal_transient_weather"
+  ],
+  "holdout": [
+    "dev_type_hints",
+    "dev_docs_open_loop",
+    "dev_agent_claim_not_source",
+    "dev_same_discussion",
+    "personal_camera_open_loop",
+    "personal_cilantro_semantic",
+    "personal_dummy_password",
+    "personal_hobby_with_chatter"
+  ]
+}

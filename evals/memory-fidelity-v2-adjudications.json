@@ -1,0 +1,13 @@
+{
+  "version": 2,
+  "base_fixture_sha256": "2fbfe1720e5ba47f10f722844cbc04134f2d0da21ea1bcbf32e1d79887a95e75",
+  "adjudications": [
+    {
+      "case_id": "dev_unresolved_decision",
+      "live_expected_write": true,
+      "live_expected_kind": "open_loop",
+      "reason": "用户确认‘先比较两种方案’算待办，允许自动写入；仍不能写成已决定采用 SQLite。",
+      "decided_at": "2026-10-09"
+    }
+  ]
+}

@@ -6,6 +6,7 @@ const chatState = {
   boundedBusyIds: new Set(),
   codingCapability: {available: false, allowed_paths: []}, codingSource: null,
   codingPreview: null, codingCommand: null, codingBusy: false, codingVersion: 0,
+  memorySource: null, memoryBusy: false, activeMemories: [],
 };
 
 const byId = (id) => document.getElementById(id);
@@ -441,6 +442,7 @@ async function selectRoom(room) {
   chatState.boundedRuns = [];
   chatState.boundedAvailable = false;
   chatState.boundedBusyIds.clear();
+  chatState.activeMemories = [];
   byId('message-content').value = '';
   byId('bounded-mode').checked = false;
   byId('bounded-mode').disabled = true;
@@ -451,6 +453,7 @@ async function selectRoom(room) {
   clearError('send-error');
   byId('send-status').textContent = '提及 Agent 或回复其消息即可开始对话';
   closeCodingPanel();
+  closeMemoryEditor();
   byId('empty-room').hidden = true;
   byId('active-room').hidden = false;
   byId('conversation-title').textContent = room.title;
@@ -461,6 +464,7 @@ async function selectRoom(room) {
   renderRooms();
   byId('message-list').replaceChildren();
   byId('turn-list').replaceChildren();
+  byId('memory-list').replaceChildren();
   byId('bounded-run-list').replaceChildren();
   const next = new URL(window.location.href);
   next.searchParams.set('room', room.room_id);
@@ -562,6 +566,14 @@ function renderMessage(stored) {
       coding.addEventListener('click', () => chooseCodingSource(message));
       body.append(coding);
     }
+    if (!message.external_source) {
+      const remember = document.createElement('button');
+      remember.type = 'button';
+      remember.className = 'reply-action';
+      remember.textContent = '保存为记忆 ↗';
+      remember.addEventListener('click', () => chooseMemorySource(message));
+      body.append(remember);
+    }
     const anchor = document.createElement('button');
     anchor.type = 'button';
     anchor.className = 'reply-action';
@@ -578,6 +590,197 @@ function renderMessage(stored) {
   }
   row.append(avatar, body);
   return row;
+}
+
+function chooseMemorySource(message) {
+  if (!chatState.room || message.room_id !== chatState.room.room_id || message.external_source) return;
+  chatState.memorySource = message;
+  byId('memory-source').textContent = `来源：${message.content.slice(0, 100)}`;
+  byId('memory-content').value = message.content.replace(/@[\w\u4e00-\u9fff]+/gu, '').trim().slice(0, 500);
+  renderMemoryReplacementOptions();
+  byId('memory-form').hidden = false;
+  clearError('memory-error');
+  byId('memory-content').focus();
+}
+
+function renderMemoryReplacementOptions() {
+  const select = byId('memory-replaces');
+  const blank = document.createElement('option');
+  blank.value = '';
+  blank.textContent = '不替代，新增记忆';
+  const options = chatState.activeMemories.map((memory) => {
+    const option = document.createElement('option');
+    option.value = memory.memory_id;
+    option.textContent = memory.content.slice(0, 60);
+    return option;
+  });
+  select.replaceChildren(blank, ...options);
+  select.value = '';
+}
+
+function closeMemoryEditor() {
+  chatState.memorySource = null;
+  byId('memory-form').hidden = true;
+  byId('memory-content').value = '';
+  byId('memory-replaces').value = '';
+}
+
+async function saveMemory(event) {
+  event.preventDefault();
+  if (!chatState.room || !chatState.memorySource || chatState.memoryBusy) return;
+  const roomId = chatState.room.room_id;
+  const content = byId('memory-content').value.trim();
+  const replacesMemoryId = byId('memory-replaces').value || null;
+  if (!content || content.length > 500) {
+    showError('memory-error', new Error('记忆内容需要 1–500 个字符。'));
+    return;
+  }
+  chatState.memoryBusy = true;
+  byId('memory-save').disabled = true;
+  try {
+    await chatRequest(`${CHAT_API}/${roomId}/memories`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({source_message_id: chatState.memorySource.message_id, content,
+        replaces_memory_id: replacesMemoryId}),
+    });
+    if (chatState.room?.room_id === roomId) {
+      closeMemoryEditor();
+      await loadMemories(chatState.requestId, chatState.refreshId);
+    }
+  } catch (error) {
+    if (chatState.room?.room_id === roomId) showError('memory-error', error);
+  } finally {
+    chatState.memoryBusy = false;
+    byId('memory-save').disabled = false;
+  }
+}
+
+async function retireMemory(memoryId) {
+  if (!chatState.room || !window.confirm('撤销这条记忆？原始消息会保留。')) return;
+  const roomId = chatState.room.room_id;
+  try {
+    await chatRequest(`${CHAT_API}/${roomId}/memories/${memoryId}`, {method: 'DELETE'});
+    if (chatState.room?.room_id === roomId) {
+      await loadMemories(chatState.requestId, chatState.refreshId);
+    }
+  } catch (error) {
+    if (chatState.room?.room_id === roomId) showError('memory-error', error);
+  }
+}
+
+async function closeOpenLoop(memoryId, action) {
+  if (!chatState.room) return;
+  const label = action === 'complete' ? '标记完成' : '取消待办';
+  if (!window.confirm(`${label}？这条待办将不再被 Agent 召回，原始消息仍会保留。`)) return;
+  const roomId = chatState.room.room_id;
+  try {
+    await chatRequest(`${CHAT_API}/${roomId}/memories/${memoryId}/${action}`, {method: 'POST'});
+    if (chatState.room?.room_id === roomId) {
+      await loadMemories(chatState.requestId, chatState.refreshId);
+    }
+  } catch (error) {
+    if (chatState.room?.room_id === roomId) showError('memory-error', error);
+  }
+}
+
+async function loadMemories(requestId, refreshId) {
+  const roomId = chatState.room?.room_id;
+  if (!roomId) return;
+  const page = await chatRequest(`${CHAT_API}/${roomId}/memories?include_closed=true`);
+  if (!isCurrentRefresh(requestId, refreshId)) return;
+  chatState.activeMemories = page.items.filter((memory) => memory.status === 'active');
+  const list = byId('memory-list');
+  if (!page.items.length) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-hint';
+    empty.textContent = '还没有长期记忆。Agent 会在成功回复后自动提炼明确的长期信息。';
+    list.replaceChildren(empty);
+    return;
+  }
+  const cards = page.items.map((memory) => {
+    const card = document.createElement('div');
+    card.className = 'memory-item';
+    const content = document.createElement('p');
+    content.textContent = memory.content;
+    const source = document.createElement('small');
+    source.textContent = `${memory.origin === 'agent_auto' ? '自动提炼' : '手动保存'} · 来源消息 ${memory.source_message_id.slice(0, 8)}`
+      + (memory.replaces_memory_id ? ` · 替代 ${memory.replaces_memory_id.slice(0, 8)}` : '')
+      + (memory.open_loop_state === 'completed' ? ' · 已完成'
+        : memory.open_loop_state === 'cancelled' ? ' · 已取消' : '');
+    const drill = document.createElement('button');
+    drill.type = 'button';
+    drill.textContent = '查看来源';
+    drill.addEventListener('click', () => focusMemorySource(memory.source_message_id));
+    card.append(content, source);
+    if (memory.status === 'active') {
+      if (memory.kind === 'open_loop') {
+        for (const [action, label] of [['complete', '标记完成'], ['cancel', '取消待办']]) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = label;
+          button.addEventListener('click', () => closeOpenLoop(memory.memory_id, action));
+          card.append(button);
+        }
+      }
+      const retire = document.createElement('button');
+      retire.type = 'button';
+      retire.textContent = '撤销记忆';
+      retire.addEventListener('click', () => retireMemory(memory.memory_id));
+      card.append(retire);
+    }
+    card.append(drill);
+    if (memory.closed_by_message_id) {
+      const closure = document.createElement('button');
+      closure.type = 'button';
+      closure.textContent = '查看关闭依据';
+      closure.addEventListener('click', () => focusMemorySource(memory.closed_by_message_id));
+      card.append(closure);
+    }
+    if (memory.replaces_memory_id) {
+      const history = document.createElement('button');
+      history.type = 'button';
+      history.textContent = '查看沿革';
+      history.addEventListener('click', () => showMemoryHistory(memory, card));
+      card.append(history);
+    }
+    return card;
+  });
+  list.replaceChildren(...cards);
+}
+
+async function showMemoryHistory(memory, card) {
+  if (!chatState.room || card.querySelector('.memory-history')) return;
+  const roomId = chatState.room.room_id;
+  try {
+    const page = await chatRequest(`${CHAT_API}/${roomId}/memories/${memory.memory_id}/history`);
+    if (chatState.room?.room_id !== roomId) return;
+    const detail = document.createElement('div');
+    detail.className = 'memory-history';
+    for (const item of page.items) {
+      const entry = document.createElement('p');
+      entry.textContent = `${item.open_loop_state === 'completed' ? '已完成'
+        : item.open_loop_state === 'cancelled' ? '已取消'
+          : item.status === 'active' ? '当前' : '旧版'}：${item.content}`;
+      detail.append(entry);
+    }
+    if (page.truncated) {
+      const note = document.createElement('small');
+      note.textContent = '仅显示最近 20 个版本。';
+      detail.append(note);
+    }
+    card.append(detail);
+  } catch (error) {
+    if (chatState.room?.room_id === roomId) showError('memory-error', error);
+  }
+}
+
+function focusMemorySource(messageId) {
+  const row = Array.from(byId('message-list').children)
+    .find((item) => item.dataset?.messageId === messageId);
+  if (!row) { showError('memory-error', new Error('来源消息不在当前页面，请刷新后重试。')); return; }
+  row.setAttribute('tabindex', '-1');
+  row.focus();
+  row.scrollIntoView?.({block: 'center'});
 }
 
 function isCurrentRefresh(requestId, refreshId) {
@@ -686,6 +889,7 @@ async function refreshSelected(requestId = chatState.requestId) {
   const refreshId = ++chatState.refreshId;
   try {
     await loadMessages(requestId, refreshId);
+    if (isCurrentRefresh(requestId, refreshId)) await loadMemories(requestId, refreshId);
     if (isCurrentRefresh(requestId, refreshId)) await loadBoundedRuns(requestId, refreshId);
     if (isCurrentRefresh(requestId, refreshId)) await loadTurns(requestId, refreshId);
     if (isCurrentRefresh(requestId, refreshId)) syncBoundedRoomStatus();
@@ -817,6 +1021,9 @@ function initializeChat() {
   byId('room-title').addEventListener('input', () => { chatState.pendingCreateKey = null; clearError('create-room-error'); });
   byId('refresh-rooms').addEventListener('click', () => refreshRooms());
   byId('refresh-chat').addEventListener('click', () => refreshSelected());
+  byId('refresh-memories').addEventListener('click', () => refreshSelected());
+  byId('memory-form').addEventListener('submit', saveMemory);
+  byId('memory-cancel').addEventListener('click', closeMemoryEditor);
   byId('refresh-bounded').addEventListener('click', () => refreshSelected());
   byId('bounded-mode').addEventListener('change', () => {
     if (byId('bounded-mode').checked) { clearReply(); clearContextAnchor(); }

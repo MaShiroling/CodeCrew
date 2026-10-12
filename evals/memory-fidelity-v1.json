@@ -1,0 +1,133 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "dev_exact_decision",
+      "domain": "development",
+      "source": "@白金 我们决定测试用例统一使用 test_ 前缀。",
+      "proposal": {"kind": "decision", "content": "我们决定测试用例统一使用 test_ 前缀"},
+      "live_expected_write": true,
+      "expected_content": "我们决定测试用例统一使用 test_ 前缀"
+    },
+    {
+      "id": "dev_added_work",
+      "domain": "development",
+      "source": "@白金 我们决定测试用例统一使用 test_ 前缀。",
+      "proposal": {"kind": "decision", "content": "我们决定测试用例统一使用 test_ 前缀，并迁移存量测试"},
+      "live_expected_write": true,
+      "expected_content": null
+    },
+    {
+      "id": "dev_unresolved_decision",
+      "domain": "development",
+      "source": "@白金 我们还没决定采用 SQLite，先比较两种方案。",
+      "proposal": {"kind": "decision", "content": "我们还没决定采用 SQLite"},
+      "live_expected_write": false,
+      "expected_content": null
+    },
+    {
+      "id": "dev_scope_dropped",
+      "domain": "development",
+      "source": "@白金 我们决定使用 SQLite，仅限本地演示版。",
+      "proposal": {"kind": "decision", "content": "我们决定使用 SQLite"},
+      "live_expected_write": true,
+      "expected_content": null
+    },
+    {
+      "id": "dev_scope_preserved",
+      "domain": "development",
+      "source": "@白金 我们决定仅在本地演示版使用 SQLite。",
+      "proposal": {"kind": "decision", "content": "我们决定仅在本地演示版使用 SQLite"},
+      "live_expected_write": true,
+      "expected_content": "我们决定仅在本地演示版使用 SQLite"
+    },
+    {
+      "id": "dev_negation_dropped",
+      "domain": "development",
+      "source": "@白金 我们不采用 Redis。",
+      "proposal": {"kind": "decision", "content": "采用 Redis"},
+      "live_expected_write": true,
+      "expected_content": null
+    },
+    {
+      "id": "dev_relative_time_invented",
+      "domain": "development",
+      "source": "@白金 下次发布前检查文档里的所有链接。",
+      "proposal": {"kind": "open_loop", "content": "10 月 12 日前检查文档里的所有链接"},
+      "live_expected_write": true,
+      "expected_content": null
+    },
+    {
+      "id": "dev_relative_time_preserved",
+      "domain": "development",
+      "source": "@白金 下次发布前检查文档里的所有链接。",
+      "proposal": {"kind": "open_loop", "content": "下次发布前检查文档里的所有链接"},
+      "live_expected_write": true,
+      "expected_content": "下次发布前检查文档里的所有链接"
+    },
+    {
+      "id": "personal_third_party",
+      "domain": "personal",
+      "source": "@月见 我朋友喜欢香菜，但这不是我的偏好。",
+      "proposal": {"kind": "preference", "content": "我朋友喜欢香菜"},
+      "live_expected_write": false,
+      "expected_content": null
+    },
+    {
+      "id": "personal_self_in_mixed_message",
+      "domain": "personal",
+      "source": "@月见 我朋友喜欢香菜，但我自己不喜欢香菜。",
+      "proposal": {"kind": "preference", "content": "我自己不喜欢香菜"},
+      "live_expected_write": true,
+      "expected_content": "我自己不喜欢香菜"
+    },
+    {
+      "id": "personal_negation_dropped",
+      "domain": "personal",
+      "source": "@月见 我不喜欢香菜。",
+      "proposal": {"kind": "preference", "content": "喜欢香菜"},
+      "live_expected_write": true,
+      "expected_content": null
+    },
+    {
+      "id": "personal_condition_dropped",
+      "domain": "personal",
+      "source": "@月见 我喜欢拿铁，只喝无乳糖的。",
+      "proposal": {"kind": "preference", "content": "我喜欢拿铁"},
+      "live_expected_write": true,
+      "expected_content": null
+    },
+    {
+      "id": "personal_condition_preserved",
+      "domain": "personal",
+      "source": "@月见 我喜欢拿铁，只喝无乳糖的。",
+      "proposal": {"kind": "preference", "content": "我喜欢拿铁，只喝无乳糖的"},
+      "live_expected_write": true,
+      "expected_content": "我喜欢拿铁，只喝无乳糖的"
+    },
+    {
+      "id": "personal_relative_time_invented",
+      "domain": "personal",
+      "source": "@月见 下次周末出门前把相机电池充好。",
+      "proposal": {"kind": "open_loop", "content": "本周六出门前把相机电池充好"},
+      "live_expected_write": true,
+      "expected_content": null
+    },
+    {
+      "id": "personal_relative_time_preserved",
+      "domain": "personal",
+      "source": "@月见 下次周末出门前把相机电池充好。",
+      "proposal": {"kind": "open_loop", "content": "下次周末出门前把相机电池充好"},
+      "live_expected_write": true,
+      "expected_content": "下次周末出门前把相机电池充好"
+    },
+    {
+      "id": "personal_added_advice",
+      "domain": "personal",
+      "source": "@月见 我点餐不加香菜。",
+      "proposal": {"kind": "preference", "content": "我点餐不加香菜，提醒店员避免交叉接触"},
+      "live_expected_write": true,
+      "expected_content": null
+    }
+  ]
+}

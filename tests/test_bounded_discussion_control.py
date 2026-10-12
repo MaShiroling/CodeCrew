@@ -60,7 +60,8 @@ def _root(service: StandaloneChatService):
 async def _wait_running(service: StandaloneChatService, room_id: UUID) -> None:
     for _ in range(300):
         turns = service.store.list_turns(room_id)
-        if turns and turns[-1].status is ChatTurnStatus.RUNNING:
+        if (turns and turns[-1].status is ChatTurnStatus.RUNNING
+                and turns[-1].session_id is not None):
             return
         await asyncio.sleep(0.001)
     raise AssertionError("Agent turn did not start")

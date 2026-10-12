@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.chat.discussion_runs import DiscussionRun, DiscussionRunLimits
+from app.chat.memory import ChatMemory, ChatMemoryCandidate
 from app.chat.models import StandaloneChatRoom, StandaloneChatTurn, StoredStandaloneChatMessage
 from app.team.models import MAX_CHAT_CONTENT_CHARS, MemberRole
 
@@ -40,6 +41,47 @@ class ChatMessagePage(BaseModel):
     items: tuple[StoredStandaloneChatMessage, ...]
     after_sequence: int
     limit: int
+
+
+class CreateChatMemoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    source_message_id: UUID
+    content: str = Field(min_length=1, max_length=500)
+    replaces_memory_id: UUID | None = None
+
+
+class ChatMemoryPage(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    items: tuple[ChatMemory, ...]
+
+
+class ChatMemoryLineage(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    items: tuple[ChatMemory, ...]
+    truncated: bool
+
+
+class ChatMemoryCandidatePage(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    items: tuple[ChatMemoryCandidate, ...]
+
+
+class ApproveChatMemoryCandidateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    content: str = Field(min_length=1, max_length=500)
+    replaces_memory_id: UUID | None = None
+
+
+class ApprovedChatMemoryCandidate(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    candidate: ChatMemoryCandidate
+    memory: ChatMemory
 
 
 class ChatMessageReceipt(BaseModel):

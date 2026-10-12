@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "description": "Human-reviewable synthetic same-room irrelevant-memory probes; not part of the frozen 20-case gold set.",
+  "pairs": [
+    {"split": "tuning", "memory_case": "dev_pr_prefix", "query_case": "dev_sqlite_semantic", "reason": "PR title format does not answer storage choice."},
+    {"split": "tuning", "memory_case": "dev_sqlite_semantic", "query_case": "dev_pr_prefix", "reason": "SQLite persistence does not answer PR title format."},
+    {"split": "tuning", "memory_case": "dev_prefix_correction", "query_case": "dev_sqlite_semantic", "reason": "PR fix prefix does not answer storage choice."},
+    {"split": "tuning", "memory_case": "personal_tea_preference", "query_case": "personal_chinese_preference", "reason": "Tea sweetness does not answer preferred reply language."},
+    {"split": "tuning", "memory_case": "personal_chinese_preference", "query_case": "personal_time_correction", "reason": "Reply language does not answer reading time."},
+    {"split": "tuning", "memory_case": "personal_time_correction", "query_case": "personal_tea_preference", "reason": "Reading time does not answer tea sweetness."},
+    {"split": "holdout", "memory_case": "dev_type_hints", "query_case": "dev_docs_open_loop", "reason": "Python type annotations do not answer pending documentation checks."},
+    {"split": "holdout", "memory_case": "dev_docs_open_loop", "query_case": "dev_type_hints", "reason": "Pending documentation checks do not answer Python function style."},
+    {"split": "holdout", "memory_case": "personal_camera_open_loop", "query_case": "personal_cilantro_semantic", "reason": "Camera preparation does not answer meal ingredients."},
+    {"split": "holdout", "memory_case": "personal_cilantro_semantic", "query_case": "personal_hobby_with_chatter", "reason": "Cilantro preference does not answer movie genre."}
+  ]
+}

@@ -6,7 +6,16 @@ __pycache__/
 *.py[cod]
 *.db
 *.sqlite3
+*.db-wal
+*.db-shm
+*.sqlite3-wal
+*.sqlite3-shm
 .env
+# Local interview preparation material; do not publish.
+docs/memory-code-walkthrough.md
+docs/memory-interview-guide.md
+docs/memory-interview-metrics.md
+docs/memory-interview-practice.md
 dist/
 build/
 evals/results/*

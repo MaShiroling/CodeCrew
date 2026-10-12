@@ -17,6 +17,7 @@ from app.chat.discussion_runs import (
     DiscussionStopReason,
 )
 from app.chat.discussion_store import DiscussionRunStore
+from app.chat.memory import AgentMemoryProposal
 from app.chat.models import ChatTurnStatus, StandaloneChatMessage
 from app.chat.service import StandaloneChatService
 from app.chat.store import StandaloneChatConflictError, StandaloneChatStore
@@ -133,6 +134,76 @@ async def test_structured_handoffs_are_serial_and_persisted(tmp_path: Path) -> N
     assert fresh.start(root.message.message_id, opening_role=MemberRole.PLANNER) == saved
     await fresh.wait_idle()
     assert len(reopened.store.list_messages(room.room_id)) == 4
+
+
+@pytest.mark.asyncio
+async def test_bounded_discussion_saves_agent_memory_proposal(tmp_path: Path) -> None:
+    planner = FakeAgentAdapter(FakeAgentScenario(output={
+        "structured_output": {
+            "content": "已记录约定", "next_action": "finish", "handoff_to": [],
+            "memory_proposal": {"kind": "preference", "content": "以后请默认用中文回答"},
+        },
+    }))
+    service, dispatcher, _ = setup(tmp_path, {
+        MemberRole.PLANNER: planner,
+        MemberRole.IMPLEMENTER: fake("待命", "finish"),
+        MemberRole.REVIEWER: fake("待命", "finish"),
+    })
+    await dispatcher.startup()
+    room = service.create_room(title="记忆", idempotency_key=uuid4())
+    root = service.post_message(
+        room.room_id, content="@白金 以后请默认用中文回答",
+        idempotency_key=uuid4(), reply_to=None,
+    )
+    dispatcher.start(root.message.message_id, opening_role=MemberRole.PLANNER)
+    await dispatcher.wait_idle()
+    (memory,) = service.store.memory.list_active(room.room_id)
+    assert memory.origin == "agent_auto"
+    assert memory.content == "以后请默认用中文回答"
+    assert memory.source_message_id == root.message.message_id
+    assert "content 必须逐字出现在" in planner.requests[0].prompt
+    assert "‘还没完成’只表示未完成" in planner.requests[0].prompt
+    assert "不要承诺只回复‘完成了’" in planner.requests[0].prompt
+
+
+@pytest.mark.asyncio
+async def test_bounded_discussion_closes_open_loop_on_human_cancellation(tmp_path: Path) -> None:
+    service, dispatcher, adapters = setup(tmp_path, {
+        MemberRole.PLANNER: fake("收到", "finish"),
+        MemberRole.IMPLEMENTER: fake("待命", "finish"),
+        MemberRole.REVIEWER: fake("待命", "finish"),
+    })
+    await dispatcher.startup()
+    room = service.create_room(title="待办", idempotency_key=uuid4())
+    source = service.post_message(
+        room.room_id, content="@白金 下次要清理旧文档链接",
+        idempotency_key=uuid4(), reply_to=None,
+    )
+    memory = service.store.memory.capture_agent_proposal(
+        room.room_id, source.message.message_id,
+        AgentMemoryProposal(kind="open_loop", content="下次要清理旧文档链接"),
+    )
+    assert memory is not None
+    adapters[MemberRole.PLANNER]._scenario = FakeAgentScenario(output={
+        "structured_output": {
+            "content": "收到，已取消", "next_action": "finish", "handoff_to": [],
+            "memory_action": {
+                "action": "cancel", "memory_id": str(memory.memory_id),
+                "evidence": "旧文档链接清理取消了",
+            },
+        },
+    })
+    statement = service.post_message(
+        room.room_id, content="@白金 旧文档链接清理取消了",
+        idempotency_key=uuid4(), reply_to=None,
+    )
+    dispatcher.start(statement.message.message_id, opening_role=MemberRole.PLANNER)
+    await dispatcher.wait_idle()
+    closed = service.store.memory.list_closed_open_loops(room.room_id)
+    assert len(closed) == 1 and closed[0].open_loop_state == "cancelled"
+    assert closed[0].closed_by_message_id == statement.message.message_id
+    responses = service.store.list_messages(room.room_id)
+    assert "标记为已取消" in responses[-1].message.content
 
 
 @pytest.mark.asyncio

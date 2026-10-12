@@ -4,8 +4,9 @@ from datetime import timedelta
 from enum import Enum
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from app.chat.memory import AgentMemoryAction, AgentMemoryProposal
 from app.orchestration.models import utc_now
 from app.team.models import MAX_CHAT_CONTENT_CHARS, MemberRole
 
@@ -214,6 +215,28 @@ class DiscussionReply(BaseModel):
     content: str = Field(min_length=1, max_length=MAX_CHAT_CONTENT_CHARS)
     next_action: DiscussionNextAction
     handoff_to: tuple[MemberRole, ...] = Field(default=(), max_length=2)
+    memory_proposal: AgentMemoryProposal | None = None
+    memory_action: AgentMemoryAction | None = None
+
+    @field_validator("memory_proposal", mode="before")
+    @classmethod
+    def ignore_invalid_memory_proposal(cls, value: object) -> AgentMemoryProposal | None:
+        if value is None:
+            return None
+        try:
+            return AgentMemoryProposal.model_validate(value)
+        except (TypeError, ValueError):
+            return None
+
+    @field_validator("memory_action", mode="before")
+    @classmethod
+    def ignore_invalid_memory_action(cls, value: object) -> AgentMemoryAction | None:
+        if value is None:
+            return None
+        try:
+            return AgentMemoryAction.model_validate(value)
+        except (TypeError, ValueError):
+            return None
 
     @model_validator(mode="after")
     def validate_reply(self) -> "DiscussionReply":

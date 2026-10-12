@@ -34,6 +34,11 @@ from app.chat.bounded_dispatch import BoundedDiscussionDispatcher
 from app.chat.dispatch import StandaloneChatDispatcher
 from app.chat.service import StandaloneChatService
 from app.chat.store import StandaloneChatStore
+from app.chat.vector_backend_factory import build_memory_vector_index
+from app.chat.vector_memory import (
+    EmbeddingEndpoint,
+    OpenAICompatibleEmbedder,
+)
 from app.config import Settings, get_settings
 from app.main import create_app
 from app.storage import SQLiteDatabase
@@ -68,7 +73,20 @@ def _build_chat_service(settings: Settings) -> StandaloneChatService:
     database_path = settings.database_url.removeprefix("sqlite:///")
     if not database_path:
         raise ValueError("SQLite database path must not be empty")
-    chat_store = StandaloneChatStore(SQLiteDatabase(Path(database_path)))
+    database = SQLiteDatabase(Path(database_path))
+    vector_index = None
+    if settings.memory_embedding_mode == "on":
+        endpoint = EmbeddingEndpoint(
+            base_url=settings.memory_embedding_base_url,
+            model=settings.memory_embedding_model,
+            revision=settings.memory_embedding_revision,
+            api_key=settings.memory_embedding_api_key.get_secret_value(),
+            timeout_seconds=settings.memory_embedding_timeout_seconds,
+        )
+        vector_index = build_memory_vector_index(settings, database, OpenAICompatibleEmbedder(endpoint))
+    chat_store = StandaloneChatStore(
+        database, vector_index=vector_index, lexical_backend=settings.memory_lexical_backend,
+    )
     chat_store.initialize()
     return StandaloneChatService(chat_store)
 

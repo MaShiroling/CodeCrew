@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "dev_explicit_complete",
+      "domain": "development",
+      "seed": ["下次发布前检查文档链接"],
+      "statement": "文档链接检查已经完成。",
+      "expected_states": ["completed"]
+    },
+    {
+      "id": "personal_explicit_cancel",
+      "domain": "personal",
+      "seed": ["下次出门前要给相机电池充电"],
+      "statement": "出门前给相机电池充电这件事取消了。",
+      "expected_states": ["cancelled"]
+    },
+    {
+      "id": "dev_not_completed",
+      "domain": "development",
+      "seed": ["下次发布前检查文档链接"],
+      "statement": "文档链接检查还没完成。",
+      "expected_states": ["open"]
+    },
+    {
+      "id": "dev_conditional_complete",
+      "domain": "development",
+      "seed": ["下次发布前检查文档链接"],
+      "statement": "如果文档链接检查完成了，再准备发布。",
+      "expected_states": ["open"]
+    },
+    {
+      "id": "personal_question_complete",
+      "domain": "personal",
+      "seed": ["下次出门前要给相机电池充电"],
+      "statement": "出门前给相机电池充电完成了吗？",
+      "expected_states": ["open"]
+    },
+    {
+      "id": "personal_ambiguous_target",
+      "domain": "personal",
+      "seed": ["下次要整理旅行照片", "之后要整理旅行照片"],
+      "statement": "旅行照片整理已经完成。",
+      "expected_states": ["open", "open"]
+    }
+  ]
+}

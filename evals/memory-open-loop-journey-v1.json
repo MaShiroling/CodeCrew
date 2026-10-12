@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "dev_created_then_completed",
+      "domain": "development",
+      "source": "下次发布前还需要检查文档里的所有链接是否有效。",
+      "closure": "文档里的所有链接检查已经完成。",
+      "query": "发布前文档链接检查还在待办吗？",
+      "expected_state": "completed"
+    },
+    {
+      "id": "personal_created_then_cancelled",
+      "domain": "personal",
+      "source": "下次周末出门前还要把相机电池充好。",
+      "closure": "下次周末出门前给相机电池充电这件事取消了。",
+      "query": "相机电池充电的待办还在吗？",
+      "expected_state": "cancelled"
+    }
+  ]
+}

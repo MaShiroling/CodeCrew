@@ -7,6 +7,7 @@
   <title>CodeCrew · 团队聊天室</title>
   <link rel="stylesheet" href="/ui/assets/chat.css">
   <link rel="stylesheet" href="/ui/assets/chat_bounded.css">
+  <link rel="stylesheet" href="/ui/assets/chat_memory.css">
   <link rel="stylesheet" href="/ui/assets/avatars.css">
   <script src="/ui/assets/avatars.js" defer></script>
   <script src="/ui/assets/chat.js" defer></script>
@@ -80,6 +81,21 @@
           <div id="coding-result" class="coding-result" role="status" hidden><p id="coding-result-text"></p><a id="coding-task-link" href="/ui/">到任务工作台查看执行与证据 ↗</a></div>
         </section>
         <section class="activity-section bounded-section" aria-labelledby="bounded-title"><div class="activity-head"><h3 id="bounded-title">有界接话批次</h3><button id="refresh-bounded" type="button">刷新</button></div><div id="bounded-run-list" aria-live="polite"><p class="empty-hint">选择房间后显示批次和预算。</p></div></section>
+        <section class="activity-section" aria-labelledby="memory-title">
+          <div class="activity-head"><h3 id="memory-title">本房间记忆</h3><button id="refresh-memories" type="button">刷新</button></div>
+          <form id="memory-form" class="memory-editor" hidden>
+            <p id="memory-source" class="memory-source"></p>
+            <label for="memory-content">提炼为可复用的事实或偏好</label>
+            <textarea id="memory-content" maxlength="500" rows="3" required></textarea>
+            <label for="memory-replaces">替代旧记忆（更正时选择）</label>
+            <select id="memory-replaces"><option value="">不替代，新增记忆</option></select>
+            <p class="memory-hint">这条内容将跨话题提供给 Agent；请勿保存密钥。原消息保留作为来源。</p>
+            <div class="memory-actions"><button id="memory-save" type="submit">确认保存</button><button id="memory-cancel" type="button">取消</button></div>
+          </form>
+          <p id="memory-error" class="form-error" role="alert" hidden></p>
+          <div id="memory-list" aria-live="polite"><p class="empty-hint">Agent 会从明确的决定、纠正、偏好和待办中自动提炼记忆；也可从自己的消息手动保存。</p></div>
+          <p class="sidebar-note">仅从本地用户原消息自动提炼；跨话题按相关词限量引用，可查看来源并随时撤销。</p>
+        </section>
         <section class="activity-section" aria-labelledby="turn-title"><div class="activity-head"><h3 id="turn-title">Agent 回合</h3><button id="refresh-chat" type="button">刷新</button></div><div id="turn-list" aria-live="polite"><p class="empty-hint">选择房间后显示回合状态。</p></div></section>
         <p class="activity-footnote">实时事件提示页面读取持久化消息和回合；断线时每 10 秒兜底检查。运行中可请求取消；取消未确认时会显示中断，不会假装成功。</p>
       </aside>

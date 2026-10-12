@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "dataset": "memory-generalization-v1.jsonl",
+  "sha256": "57c5ed7e6e42b0e05516f5af7b61b2d6e96e11b5c214d7ed017a97143ee2c591",
+  "cases": 12,
+  "development": 6,
+  "personal": 6,
+  "label_provenance": "independently_human_reviewed",
+  "reviewer": "user",
+  "reviewed_at": "2026-10-10T06:53:41Z",
+  "review_note": "User confirmed all 12 labels in chat without requested changes."
+}

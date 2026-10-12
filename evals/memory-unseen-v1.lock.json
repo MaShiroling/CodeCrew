@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "dataset": "memory-unseen-v1.jsonl",
+  "sha256": "0155a7c8c724ab2ebd391a16fe0f163b13eaf79d56df282d6713d653c3187c2c",
+  "cases": 24,
+  "development": 12,
+  "personal": 12,
+  "label_provenance": "independently_human_reviewed",
+  "reviewer": "user",
+  "reviewed_at": "2026-10-10T01:42:08Z",
+  "review_note": "User confirmed all 24 labels in chat without requested changes."
+}

@@ -7,12 +7,18 @@ from fastapi import APIRouter, Depends, Query, Request, status
 
 from app.api.chat_events import stream_chat_activity
 from app.api.chat_models import (
+    ApproveChatMemoryCandidateRequest,
+    ApprovedChatMemoryCandidate,
     BoundedDiscussionPage,
     BoundedDiscussionReceipt,
+    ChatMemoryCandidatePage,
+    ChatMemoryLineage,
+    ChatMemoryPage,
     ChatMessagePage,
     ChatMessageReceipt,
     ChatRoomPage,
     ChatTurnPage,
+    CreateChatMemoryRequest,
     CreateChatRequest,
     PostChatMessageRequest,
     StartBoundedDiscussionRequest,
@@ -31,6 +37,7 @@ from app.chat.coding_intent import (
 )
 from app.chat.discussion_runs import DiscussionRun
 from app.chat.dispatch import StandaloneChatDispatcher
+from app.chat.memory import ChatMemory, ChatMemoryCandidate
 from app.chat.models import StandaloneChatRoom, StandaloneChatTurn
 from app.chat.service import (
     ChatConflict,
@@ -262,6 +269,88 @@ def list_chat_messages(
         items=service.list_messages(room_id, after_sequence=after_sequence, limit=limit),
         after_sequence=after_sequence, limit=limit,
     )
+
+
+@router.get("/{room_id}/memories", response_model=ChatMemoryPage,
+            responses=ERROR_RESPONSES)
+def list_chat_memories(
+    room_id: UUID, service: ChatServiceDependency,
+    include_closed: bool = False,
+) -> ChatMemoryPage:
+    return ChatMemoryPage(items=service.list_memories(room_id, include_closed=include_closed))
+
+
+@router.get("/{room_id}/memories/{memory_id}/history", response_model=ChatMemoryLineage,
+            responses=ERROR_RESPONSES)
+def chat_memory_history(
+    room_id: UUID, memory_id: UUID, service: ChatServiceDependency,
+) -> ChatMemoryLineage:
+    items, truncated = service.memory_lineage(room_id, memory_id)
+    return ChatMemoryLineage(items=items, truncated=truncated)
+
+
+@router.post("/{room_id}/memories", response_model=ChatMemory,
+             status_code=status.HTTP_201_CREATED, responses=ERROR_RESPONSES)
+def create_chat_memory(
+    room_id: UUID, request: CreateChatMemoryRequest, service: ChatServiceDependency,
+) -> ChatMemory:
+    return service.create_memory(
+        room_id, source_message_id=request.source_message_id, content=request.content,
+        replaces_memory_id=request.replaces_memory_id,
+    )
+
+
+@router.delete("/{room_id}/memories/{memory_id}", response_model=ChatMemory,
+               responses=ERROR_RESPONSES)
+def retire_chat_memory(
+    room_id: UUID, memory_id: UUID, service: ChatServiceDependency,
+) -> ChatMemory:
+    return service.retire_memory(room_id, memory_id)
+
+
+@router.post("/{room_id}/memories/{memory_id}/complete", response_model=ChatMemory,
+             responses=ERROR_RESPONSES)
+def complete_chat_open_loop(
+    room_id: UUID, memory_id: UUID, service: ChatServiceDependency,
+) -> ChatMemory:
+    return service.close_open_loop(room_id, memory_id, action="complete")
+
+
+@router.post("/{room_id}/memories/{memory_id}/cancel", response_model=ChatMemory,
+             responses=ERROR_RESPONSES)
+def cancel_chat_open_loop(
+    room_id: UUID, memory_id: UUID, service: ChatServiceDependency,
+) -> ChatMemory:
+    return service.close_open_loop(room_id, memory_id, action="cancel")
+
+
+@router.get("/{room_id}/memory-candidates", response_model=ChatMemoryCandidatePage,
+            responses=ERROR_RESPONSES)
+def list_chat_memory_candidates(
+    room_id: UUID, service: ChatServiceDependency,
+) -> ChatMemoryCandidatePage:
+    return ChatMemoryCandidatePage(items=service.list_memory_candidates(room_id))
+
+
+@router.post("/{room_id}/memory-candidates/{candidate_id}/approve",
+             response_model=ApprovedChatMemoryCandidate, responses=ERROR_RESPONSES)
+def approve_chat_memory_candidate(
+    room_id: UUID, candidate_id: UUID, request: ApproveChatMemoryCandidateRequest,
+    service: ChatServiceDependency,
+) -> ApprovedChatMemoryCandidate:
+    candidate, memory = service.approve_memory_candidate(
+        room_id, candidate_id, request.content,
+        replaces_memory_id=request.replaces_memory_id,
+    )
+    return ApprovedChatMemoryCandidate(candidate=candidate, memory=memory)
+
+
+@router.post("/{room_id}/memory-candidates/{candidate_id}/reject",
+             response_model=ChatMemoryCandidate, responses=ERROR_RESPONSES)
+def reject_chat_memory_candidate(
+    room_id: UUID, candidate_id: UUID, service: ChatServiceDependency,
+) -> ChatMemoryCandidate:
+    return service.reject_memory_candidate(room_id, candidate_id)
 
 
 @router.get("/{room_id}/turns", response_model=ChatTurnPage, responses=ERROR_RESPONSES)

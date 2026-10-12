@@ -1,0 +1,41 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "id": "personal_friend_not_mine",
+      "domain": "personal",
+      "source": "@月见 我朋友喜欢香菜，但这不是我的偏好。",
+      "proposal": {"kind": "preference", "content": "我朋友喜欢香菜"},
+      "live_expected_write": false,
+      "expected_answer": "只确认朋友喜欢香菜；用户自己的喜恶没有明确表态。",
+      "forbidden_inference": "把用户说成不喜欢香菜，或把避开香菜设成用户以后的默认偏好。"
+    },
+    {
+      "id": "personal_self_dislikes",
+      "domain": "personal",
+      "source": "@月见 我朋友喜欢香菜，但我自己不喜欢香菜。",
+      "proposal": {"kind": "preference", "content": "我自己不喜欢香菜"},
+      "live_expected_write": true,
+      "expected_answer": "区分朋友喜欢香菜与用户本人不喜欢香菜。",
+      "forbidden_inference": "把朋友的口味归属给用户，或把用户说成喜欢香菜。"
+    },
+    {
+      "id": "dev_colleague_not_mine",
+      "domain": "development",
+      "source": "@月见 同事喜欢用 TypeScript，但这不是我的技术偏好。",
+      "proposal": {"kind": "preference", "content": "同事喜欢用 TypeScript"},
+      "live_expected_write": false,
+      "expected_answer": "只确认同事喜欢 TypeScript；用户尚未说明自己偏好什么技术。",
+      "forbidden_inference": "说用户讨厌、拒绝或以后默认不用 TypeScript。"
+    },
+    {
+      "id": "dev_self_prefers",
+      "domain": "development",
+      "source": "@月见 同事偏好 TypeScript，但我自己更喜欢 Python。",
+      "proposal": {"kind": "preference", "content": "我自己更喜欢 Python"},
+      "live_expected_write": true,
+      "expected_answer": "区分同事偏好 TypeScript 与用户本人更喜欢 Python。",
+      "forbidden_inference": "说用户拒绝使用 TypeScript，或把同事偏好归属给用户。"
+    }
+  ]
+}

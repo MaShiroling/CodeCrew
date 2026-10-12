@@ -1,0 +1,13 @@
+name: codecrew-memory
+services:
+  qdrant:
+    image: qdrant/qdrant:v1.19.0
+    ports:
+      - "127.0.0.1:6333:6333"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    environment:
+      QDRANT__TELEMETRY_DISABLED: "true"
+    restart: "no"
+volumes:
+  qdrant-data:

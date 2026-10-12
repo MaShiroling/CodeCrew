@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "dataset": "memory-unseen-v1.jsonl",
+  "dataset_sha256": "0155a7c8c724ab2ebd391a16fe0f163b13eaf79d56df282d6713d653c3187c2c",
+  "label_lock_sha256": "b74e8ce1cc231c33dac0b561c1b084c560e457be43d4d618e16caa6d0b988782",
+  "frozen_on": "2026-10-11",
+  "code_sha256": {
+    "app/chat/memory.py": "9054de003a3a45bad8eb4e58d16bb6f652e6bda2d87f3e58adfcb637cbf23a15",
+    "app/chat/vector_memory.py": "516bc57a617b008d129e039c664f50886bbf9d00b929ff609b1afb0d61499d04",
+    "app/chat/dispatch.py": "7b5712b32f1560dbfa9231ff0656573da3419dada52716da04f73f4b52c56c40",
+    "evals/run_memory_retrieval_ab.py": "2515897695316132d3a81e44ffb0d4ff06c1d6084ca40b568f6f2f452e4fce58",
+    "evals/check_memory_fts_baseline.py": "bc84c27860ddee5499833774742a1d94943d605f5178be0125f6a02d17da684e"
+  },
+  "contract": {
+    "interface": "retrieve(room_id, query, *, limit=3, exclude_correlation_id=None)",
+    "result": "ordered tuple of canonical ChatMemory records",
+    "lexical": "casefold ASCII words and Chinese bigrams; set overlap count descending",
+    "lexical_tiebreak": "created_at descending; stable input order on ties",
+    "candidate_scope": "same room, active only, exclude source's current discussion",
+    "candidate_limit": 200,
+    "recall_limit": 3,
+    "allowed_limits": [1, 2, 3],
+    "external_discussion_boundary": "dispatcher skips recall; not a retrieve argument",
+    "seed": "human-approved gold original text via manual API; no Agent extraction",
+    "seed_kind": "fact; gold kinds are not evaluated by this retrieval baseline",
+    "hybrid_rrf_constant": 60,
+    "hybrid_threshold_for_later_comparison": 0.65,
+    "hybrid_measured_here": false,
+    "chinese_fts_tokenizer": "not selected in this step"
+  },
+  "runtime_at_freeze": {
+    "python_version": "3.11.16",
+    "sqlite_version": "3.53.4",
+    "compile_option_enable_fts5": true,
+    "fts5_supported": true,
+    "bm25_supported": true,
+    "error_stage": null,
+    "error_type": null
+  },
+  "legacy": {
+    "summary": {
+      "cases": 24, "tp": 10, "fp": 0, "fn": 2,
+      "recall_at_3": 0.8333333333333334, "precision_at_3": 1.0,
+      "false_positive_queries_with_empty_gold": 0
+    },
+    "results": [
+      {"case_id":"dev_gateway_timeout","sources":["m1"],"tp":1,"fp":0,"fn":0,"recall_at_3":1.0,"false_positive_on_empty_gold":false},
+      {"case_id":"dev_async_queue_distractor","sources":[],"tp":0,"fp":0,"fn":1,"recall_at_3":0.0,"false_positive_on_empty_gold":false},
+      {"case_id":"dev_sql_log_scope","sources":["m1"],"tp":1,"fp":0,"fn":0,"recall_at_3":1.0,"false_positive_on_empty_gold":false},
+      {"case_id":"dev_log_retention_correction","sources":["m2"],"tp":1,"fp":0,"fn":0,"recall_at_3":1.0,"false_positive_on_empty_gold":false},
+      {"case_id":"dev_loadtest_open_loop","sources":["m1"],"tp":1,"fp":0,"fn":0,"recall_at_3":1.0,"false_positive_on_empty_gold":false},
+      {"case_id":"dev_protocol_distractor","sources":["m1"],"tp":1,"fp":0,"fn":0,"recall_at_3":1.0,"false_positive_on_empty_gold":false},
+      {"case_id":"dev_consul_question_with_distractor","sources":[],"tp":0,"fp":0,"fn":0,"recall_at_3":null,"false_positive_on_empty_gold":false},
+      {"case_id":"dev_other_team_helm","sources":[],"tp":0,"fp":0,"fn":0,"recall_at_3":null,"false_positive_on_empty_gold":false},
+      {"case_id":"dev_agent_suggest_tracing","sources":[],"tp":0,"fp":0,"fn":0,"recall_at_3":null,"false_positive_on_empty_gold":false},
+      {"case_id":"dev_external_release_flag","sources":[],"tp":0,"fp":0,"fn":0,"recall_at_3":null,"false_positive_on_empty_gold":false},
+      {"case_id":"dev_other_room_linter","sources":[],"tp":0,"fp":0,"fn":0,"recall_at_3":null,"false_positive_on_empty_gold":false},
+      {"case_id":"dev_current_discussion_package","sources":[],"tp":0,"fp":0,"fn":0,"recall_at_3":null,"false_positive_on_empty_gold":false},
+      {"case_id":"personal_evening_walk","sources":["m1"],"tp":1,"fp":0,"fn":0,"recall_at_3":1.0,"false_positive_on_empty_gold":false},
+      {"case_id":"personal_weekday_spice","sources":["m1"],"tp":1,"fp":0,"fn":0,"recall_at_3":1.0,"false_positive_on_empty_gold":false},
+      {"case_id":"personal_hotel_budget_distractor","sources":["m1"],"tp":1,"fp":0,"fn":0,"recall_at_3":1.0,"false_positive_on_empty_gold":false},
+      {"case_id":"personal_breakfast_correction","sources":["m2"],"tp":1,"fp":0,"fn":0,"recall_at_3":1.0,"false_positive_on_empty_gold":false},
+      {"case_id":"personal_return_library_book","sources":[],"tp":0,"fp":0,"fn":1,"recall_at_3":0.0,"false_positive_on_empty_gold":false},
+      {"case_id":"personal_music_distractor","sources":["m1"],"tp":1,"fp":0,"fn":0,"recall_at_3":1.0,"false_positive_on_empty_gold":false},
+      {"case_id":"personal_sibling_food","sources":[],"tp":0,"fp":0,"fn":0,"recall_at_3":null,"false_positive_on_empty_gold":false},
+      {"case_id":"personal_coffee_machine_question","sources":[],"tp":0,"fp":0,"fn":0,"recall_at_3":null,"false_positive_on_empty_gold":false},
+      {"case_id":"personal_transient_bus","sources":[],"tp":0,"fp":0,"fn":0,"recall_at_3":null,"false_positive_on_empty_gold":false},
+      {"case_id":"personal_dummy_code","sources":[],"tp":0,"fp":0,"fn":0,"recall_at_3":null,"false_positive_on_empty_gold":false},
+      {"case_id":"personal_private_room_format","sources":[],"tp":0,"fp":0,"fn":0,"recall_at_3":null,"false_positive_on_empty_gold":false},
+      {"case_id":"personal_same_discussion_route","sources":[],"tp":0,"fp":0,"fn":0,"recall_at_3":null,"false_positive_on_empty_gold":false}
+    ]
+  }
+}

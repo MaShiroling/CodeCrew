@@ -11,6 +11,26 @@ EXAMPLE = Path(__file__).resolve().parents[1] / "examples/server-config.python.j
 CHAT_TEAM_EXAMPLE = Path(__file__).resolve().parents[1] / "examples/server-config.chat-team.json"
 
 
+def test_chat_memory_embedding_is_opt_in_and_requires_provider_config(tmp_path: Path) -> None:
+    base = {"database_url": f"sqlite:///{tmp_path / 'chat.sqlite3'}", "_env_file": None}
+    ordinary = cli._build_chat_service(Settings(**base, memory_embedding_mode="off"))
+    assert ordinary.store.memory.vector_index is None
+    with pytest.raises(ValueError, match="embedding model"):
+        cli._build_chat_service(Settings(
+            **base, memory_embedding_mode="on",
+            memory_embedding_base_url="https://example.test/v1",
+        ))
+    enabled = cli._build_chat_service(Settings(
+        **base,
+        memory_embedding_mode="on",
+        memory_embedding_base_url="https://example.test/v1",
+        memory_embedding_model="example-embed",
+        memory_embedding_revision="v1",
+        memory_embedding_api_key="test-only",
+    ))
+    assert enabled.store.memory.vector_index is not None
+
+
 def test_example_config_builds_runnable_api(tmp_path: Path) -> None:
     config = cli.load_server_config(EXAMPLE)
     app = cli.build_server_app(

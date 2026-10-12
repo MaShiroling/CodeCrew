@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CodeCrew memory baseline case v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "domain", "tags", "messages", "query", "gold"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^(dev|personal)_[a-z0-9_]+$"},
+    "domain": {"enum": ["development", "personal"]},
+    "tags": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+    "messages": {
+      "type": "array", "minItems": 1,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "room", "discussion", "role", "content"],
+        "properties": {
+          "id": {"type": "string", "pattern": "^m[1-9][0-9]*$"},
+          "room": {"type": "string", "minLength": 1},
+          "discussion": {"type": "string", "minLength": 1},
+          "role": {"enum": ["human", "agent"]},
+          "content": {"type": "string", "minLength": 1},
+          "external": {"type": "boolean"}
+        }
+      }
+    },
+    "query": {
+      "type": "object", "additionalProperties": false,
+      "required": ["room", "discussion", "content"],
+      "properties": {
+        "room": {"type": "string", "minLength": 1},
+        "discussion": {"type": "string", "minLength": 1},
+        "content": {"type": "string", "minLength": 1},
+        "external": {"type": "boolean"}
+      }
+    },
+    "gold": {
+      "type": "object", "additionalProperties": false,
+      "required": ["writes", "active_sources", "recall_sources", "answer_must_include", "answer_must_not_include"],
+      "properties": {
+        "writes": {
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": false,
+            "required": ["source", "kind", "fact"],
+            "properties": {
+              "source": {"type": "string"},
+              "kind": {"enum": ["decision", "correction", "preference", "open_loop"]},
+              "fact": {"type": "string", "minLength": 1, "maxLength": 500},
+              "replaces": {"type": "string"}
+            }
+          }
+        },
+        "active_sources": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "recall_sources": {"type": "array", "uniqueItems": true, "items": {"type": "string"}},
+        "answer_must_include": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}},
+        "answer_must_not_include": {"type": "array", "uniqueItems": true, "items": {"type": "string", "minLength": 1}}
+      }
+    }
+  }
+}

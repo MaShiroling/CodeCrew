@@ -39,6 +39,8 @@ get('coding-preview').hidden = true;
 get('coding-result').hidden = true;
 get('coding-error').hidden = true;
 get('bounded-options').hidden = true;
+get('memory-form').hidden = true;
+get('memory-error').hidden = true;
 get('bounded-mode').disabled = true;
 get('bounded-mode').checked = false;
 get('bounded-opening-role').value = 'planner';
@@ -69,6 +71,10 @@ const authorizationPosts = [];
 const boundedPosts = [];
 const boundedRuns = [];
 const boundedControls = [];
+const memories = [];
+const retiredMemories = [];
+const memoryCandidates = [];
+let nextMemoryId = 1;
 let nextKey = 1;
 let postMode = 'ok';
 let boundedPostMode = 'ok';
@@ -105,6 +111,8 @@ const fetch = async (url, options = {}) => {
     return response(201, room);
   }
   if (url.startsWith('/api/v1/chats/room-2/messages?')) return response(200, {items: []});
+  if (url.startsWith('/api/v1/chats/room-2/memories')) return response(200, {items: []});
+  if (url === '/api/v1/chats/room-2/memory-candidates') return response(200, {items: []});
   if (url === '/api/v1/chats/room-2/turns') return response(200, {items: []});
   if (url === '/api/v1/chats/room-2/discussion-runs') return response(503,
     {error: {message: 'bounded discussion is not configured'}});
@@ -132,6 +140,68 @@ const fetch = async (url, options = {}) => {
     return response(201, {run, root_message: messages.at(-1), execution_authorized: false});
   }
   if (url === `/api/v1/chats/${roomId}/discussion-runs`) return response(200, {items: [...boundedRuns]});
+  if (url === `/api/v1/chats/${roomId}/memories` && options.method === 'POST') {
+    const body = JSON.parse(options.body);
+    if (body.replaces_memory_id) {
+      const old = memories.findIndex((item) => item.memory_id === body.replaces_memory_id);
+      retiredMemories.push({...memories.splice(old, 1)[0], status: 'retired'});
+    }
+    const memory = {memory_id: `memory-${nextMemoryId++}`, room_id: roomId,
+      source_message_id: body.source_message_id, content: body.content, status: 'active',
+      replaces_memory_id: body.replaces_memory_id};
+    memories.push(memory);
+    return response(201, memory);
+  }
+  if (url === `/api/v1/chats/${roomId}/memories?include_closed=true`) {
+    return response(200, {items: [...memories, ...retiredMemories.filter(
+      (item) => item.kind === 'open_loop' && item.open_loop_state !== 'open')]});
+  }
+  if (url === `/api/v1/chats/${roomId}/memories`) return response(200, {items: [...memories]});
+  if (url === `/api/v1/chats/${roomId}/memory-candidates`) {
+    return response(200, {items: [...memoryCandidates]});
+  }
+  const candidateAction = url.match(/^\/api\/v1\/chats\/room-1\/memory-candidates\/([^/]+)\/(approve|reject)$/);
+  if (candidateAction && options.method === 'POST') {
+    const index = memoryCandidates.findIndex((item) => item.candidate_id === candidateAction[1]);
+    const candidate = memoryCandidates.splice(index, 1)[0];
+    if (candidateAction[2] === 'reject') return response(200, {...candidate, status: 'rejected'});
+    const body = JSON.parse(options.body);
+    if (body.replaces_memory_id) {
+      const old = memories.findIndex((item) => item.memory_id === body.replaces_memory_id);
+      retiredMemories.push({...memories.splice(old, 1)[0], status: 'retired'});
+    }
+    const memory = {memory_id: `memory-${nextMemoryId++}`, room_id: roomId,
+      source_message_id: candidate.source_message_id, content: body.content, status: 'active',
+      replaces_memory_id: body.replaces_memory_id};
+    memories.push(memory);
+    return response(200, {candidate: {...candidate, status: 'approved'}, memory});
+  }
+  if (url.startsWith(`/api/v1/chats/${roomId}/memories/`) && options.method === 'DELETE') {
+    const memory = memories.find((item) => url.endsWith(`/${item.memory_id}`));
+    memories.splice(memories.indexOf(memory), 1);
+    return response(200, {...memory, status: 'retired'});
+  }
+  const closeLoop = url.match(/^\/api\/v1\/chats\/room-1\/memories\/([^/]+)\/(complete|cancel)$/);
+  if (closeLoop && options.method === 'POST') {
+    const memory = memories.find((item) => item.memory_id === closeLoop[1]);
+    memories.splice(memories.indexOf(memory), 1);
+    const closed = {...memory, status: 'retired',
+      open_loop_state: closeLoop[2] === 'complete' ? 'completed' : 'cancelled'};
+    retiredMemories.push(closed);
+    return response(200, closed);
+  }
+  const memoryHistory = url.match(/^\/api\/v1\/chats\/room-1\/memories\/([^/]+)\/history$/);
+  if (memoryHistory) {
+    const items = [];
+    let current = [...memories, ...retiredMemories]
+      .find((item) => item.memory_id === memoryHistory[1]);
+    while (current) {
+      items.push(current);
+      current = [...memories, ...retiredMemories]
+        .find((item) => item.memory_id === current.replaces_memory_id);
+    }
+    return response(200, {items, truncated: false});
+  }
   const control = url.match(/^\/api\/v1\/chats\/room-1\/discussion-runs\/(run-\d+)\/(pause|resume|cancel)$/);
   if (control && options.method === 'POST') {
     const run = boundedRuns.find((item) => item.run_id === control[1]);
@@ -193,7 +263,8 @@ const fetch = async (url, options = {}) => {
 const location = {href: 'http://local/ui/chat/', search: ''};
 const window = {location, history: {replaceState(_state, _title, next) {
   location.href = String(next); location.search = new URL(location.href).search;
-}}, setInterval(callback, delay) { this.poll = callback; this.pollDelay = delay; }, addEventListener() {}};
+}}, setInterval(callback, delay) { this.poll = callback; this.pollDelay = delay; },
+  confirm() { return true; }, addEventListener() {}};
 class EventSource {
   constructor(url) { this.url = url; this.listeners = new Map(); this.closed = false; EventSource.instances.push(this); }
   addEventListener(type, callback) { this.listeners.set(type, callback); }
@@ -272,6 +343,51 @@ const tick = async () => { for (let i = 0; i < 10; i++) await new Promise((resol
   assert.match(get('turn-list').children[0].children[0].children[1].textContent, /正在回复/);
   assert.equal(get('message-content').value, '');
   assert.equal(authorizationPosts.length, 0, 'chat message must not authorize code');
+
+  const rememberAction = get('message-list').children[0].children[1].children[3];
+  assert.match(rememberAction.textContent, /保存为记忆/);
+  rememberAction.dispatch('click');
+  assert.equal(get('memory-form').hidden, false);
+  get('memory-content').value = '输入校验必须保留原行为';
+  await get('memory-form').dispatch('submit', {preventDefault() {}});
+  assert.equal(memories.length, 1);
+  assert.equal(memories[0].source_message_id, 'human-1');
+  assert.equal(get('memory-form').hidden, true);
+  assert.match(get('memory-list').children[0].children[0].textContent, /输入校验必须保留原行为/);
+  await get('memory-list').children[0].children[2].dispatch('click');
+  assert.equal(memories.length, 0);
+  assert.match(get('memory-list').children[0].textContent, /还没有/);
+
+  const todo = {memory_id: `memory-${nextMemoryId++}`, room_id: roomId,
+    source_message_id: 'human-1', content: '检查文档链接', kind: 'open_loop', status: 'active'};
+  memories.push(todo);
+  await get('refresh-memories').dispatch('click');
+  assert.match(get('memory-list').children[0].children[2].textContent, /标记完成/);
+  await get('memory-list').children[0].children[2].dispatch('click');
+  assert.equal(memories.length, 0);
+  assert.match(get('memory-list').children[0].children[1].textContent, /已完成/);
+  retiredMemories.splice(retiredMemories.findIndex((item) => item.memory_id === todo.memory_id), 1);
+  await get('refresh-memories').dispatch('click');
+
+  const oldMemory = {memory_id: `memory-${nextMemoryId++}`, room_id: roomId,
+    source_message_id: 'human-1', content: '旧接口不必兼容', status: 'active'};
+  memories.push(oldMemory);
+  await get('refresh-memories').dispatch('click');
+  rememberAction.dispatch('click');
+  assert.equal(get('memory-replaces').children[1].value, oldMemory.memory_id);
+  get('memory-replaces').value = oldMemory.memory_id;
+  get('memory-content').value = '旧接口必须保持兼容';
+  await get('memory-form').dispatch('submit', {preventDefault() {}});
+  assert.equal(memories.length, 1);
+  assert.equal(memories[0].content, '旧接口必须保持兼容');
+  assert.equal(memories[0].replaces_memory_id, oldMemory.memory_id);
+  assert.match(get('memory-list').children[0].children[1].textContent, /替代/);
+  await get('memory-list').children[0].children[3].dispatch('click');
+  assert.equal(get('message-list').children[0].focused, true);
+  await get('memory-list').children[0].children[4].dispatch('click');
+  assert.match(get('memory-list').children[0].children[5].children[1].textContent, /旧版：旧接口不必兼容/);
+  await get('memory-list').children[0].children[2].dispatch('click');
+  assert.equal(memories.length, 0);
 
   const codingAction = get('message-list').children[0].children[1].children[2];
   assert.match(codingAction.textContent, /受控编码任务/);

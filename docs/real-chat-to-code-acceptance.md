@@ -73,5 +73,12 @@ CODECREW_RUN_CHAT_TO_CODE_LIVE=1 .venv/bin/pytest -q -s tests/integration/test_c
 `faac33fe-5198-42e0-bbb5-d453eb9a1a0b` 对应 trace
 `9b01b794-65fb-428a-9bd3-53326a859468`；脱敏摘要为 `accepted`，任务
 `completed`。三角色、确定性检查、独立 Review、完成守卫、Patch 和原始仓库干净
-状态均符合本页判据。该结果仅是一次 HTTP 自动验收；真实浏览器手动演示、其它任务
-类型和统计成功率尚未验收。
+状态均符合本页判据。该结果仅是一次 HTTP 自动验收；其它任务类型和统计成功率
+尚未验收。
+
+2026-10-05 真实浏览器首轮复测未通过：只读聊天、Human 预检授权、方案、
+单文件 Diff、Verifier、Reviewer 与 CompletionGuard 均在页面出现且证据通过，
+但继续回合在最终提交时转为 `needs_human/execution_failed`，任务未完成。
+原因是首次 Human 输入被后续同角色接话重复消费并提前 ACK。已修复并补定向
+离线回归；运行中的旧服务不会热加载修复，须重启 `live-demo` 并用新临时任务
+重新跑到任务总状态 `completed`，才能将浏览器验收标记通过。

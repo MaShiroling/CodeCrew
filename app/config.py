@@ -1,5 +1,6 @@
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,6 +37,27 @@ class Settings(BaseSettings):
     claude_cli_path: str = Field(default="claude", min_length=1)
     codex_cli_path: str = Field(default="codex", min_length=1)
     kimi_cli_path: str = Field(default="kimi", min_length=1)
+    memory_lexical_backend: Literal["legacy", "bm25"] = "legacy"
+    # Qdrant recall is opt-in; remote initialization/subscription/delivery stay explicit.
+    memory_vector_store: Literal["sqlite", "qdrant"] = "sqlite"
+    memory_qdrant_url: str = "http://127.0.0.1:6333"
+    memory_qdrant_collection_prefix: str = "codecrew_memory"
+    memory_qdrant_api_key: SecretStr = Field(default_factory=lambda: SecretStr(""), repr=False)
+    memory_qdrant_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    # Explicit --watch also required; no chat startup hook or automatic target setup.
+    memory_vector_worker_enabled: bool = False
+    memory_vector_worker_batch_size: int = Field(default=32, ge=1, le=200)
+    memory_vector_worker_poll_interval_seconds: float = Field(default=2.0, ge=0.1, le=60, allow_inf_nan=False)
+    memory_vector_worker_shutdown_grace_seconds: float = Field(default=10.0, ge=0.1, le=60, allow_inf_nan=False)
+    memory_embedding_mode: Literal["off", "on"] = "off"
+    memory_embedding_base_url: str = ""
+    memory_embedding_model: str = ""
+    memory_embedding_revision: str = ""
+    memory_embedding_api_key: SecretStr = Field(
+        default_factory=lambda: SecretStr(""), repr=False,
+    )
+    memory_embedding_timeout_seconds: float = Field(default=5.0, gt=0, le=30)
+    memory_embedding_min_similarity: float = Field(default=0.65, ge=-1, le=1)
     agent_output_queue_maxsize: int = Field(default=256, gt=0)
     process_terminate_grace_seconds: float = Field(default=2.0, gt=0)
     max_conversation_agent_turns: int = Field(default=30, ge=0, le=1000)
@@ -53,6 +75,15 @@ class Settings(BaseSettings):
     feishu_max_outbox_attempts: int = Field(default=5, ge=1, le=10)
     feishu_retry_base_seconds: float = Field(default=2, ge=0.1, le=60)
     feishu_retry_cap_seconds: float = Field(default=60, ge=1, le=600)
+
+    @field_validator("memory_vector_worker_batch_size", "memory_vector_worker_poll_interval_seconds",
+                     "memory_vector_worker_shutdown_grace_seconds", mode="before")
+    @classmethod
+    def reject_vector_worker_numeric_bools(cls, value):
+        if isinstance(value, bool):
+            # Pydantic v2 wraps ValueError, not TypeError, as a settings validation error.
+            raise ValueError("worker numeric settings must not be bool")  # noqa: TRY004
+        return value
 
     @field_validator("feishu_allowed_chat_ids", "feishu_allowed_sender_open_ids")
     @classmethod

@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "base_fixture_sha256": "de1dbbcb2e75ec59bc612061a7512163de9c4c8d6f403dcf69bbcc84527c7cc3",
+  "adjudications": [
+    {
+      "case_id": "personal_friend_not_mine",
+      "forbidden_inference": "用户未表态前不能替其选择加、不加或另放香菜；即使称为稳妥或中性，也必须先询问本人。",
+      "reason": "用户明确要求替其点餐前先询问，不能预设不加。",
+      "decided_at": "2026-10-09"
+    }
+  ]
+}

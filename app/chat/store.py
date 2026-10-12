@@ -3,8 +3,10 @@
 import hashlib
 import json
 import sqlite3
+from typing import Literal
 from uuid import UUID
 
+from app.chat.memory import CHAT_MEMORY_MIGRATIONS, ChatMemoryStore
 from app.chat.models import (
     ChatTurnStatus,
     StandaloneChatMessage,
@@ -12,6 +14,8 @@ from app.chat.models import (
     StandaloneChatTurn,
     StoredStandaloneChatMessage,
 )
+from app.chat.vector_contracts import MemoryVectorIndexPort
+from app.chat.vector_worker_telemetry_schema import VECTOR_WORKER_TELEMETRY_MIGRATION
 from app.orchestration.models import utc_now
 from app.storage import Migration, SQLiteDatabase
 from app.team.models import (
@@ -162,11 +166,19 @@ STANDALONE_CHAT_MIGRATIONS = (
 class StandaloneChatStore:
     """Durable rooms, directed messages and ACKs; never dispatches an Agent."""
 
-    def __init__(self, database: SQLiteDatabase) -> None:
+    def __init__(
+        self, database: SQLiteDatabase, *, vector_index: MemoryVectorIndexPort | None = None,
+        lexical_backend: Literal["legacy", "bm25"] = "legacy",
+    ) -> None:
         self.database = database
+        self.memory = ChatMemoryStore(
+            database, vector_index=vector_index, lexical_backend=lexical_backend,
+        )
 
     def initialize(self) -> None:
-        self.database.initialize(STANDALONE_CHAT_MIGRATIONS)
+        self.database.initialize((*STANDALONE_CHAT_MIGRATIONS, *CHAT_MEMORY_MIGRATIONS,
+                                  VECTOR_WORKER_TELEMETRY_MIGRATION))
+        self.memory.fts_index.initialize()
 
     def create_room(self, room: StandaloneChatRoom) -> StandaloneChatRoom:
         # model_copy(update=...) bypasses Pydantic validation; validate at the storage edge.

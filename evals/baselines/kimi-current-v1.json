@@ -1,0 +1,38 @@
+{
+  "baseline_id": "kimi-current-v1-2026-10-08",
+  "run_id": "20261008T030716Z-23834075",
+  "agent": "kimi-code-cli/implementer",
+  "variant": "current-keyword",
+  "dataset_sha256": "ef12dd8a40d1b01fcf7fa5f3e61c3c93f8015e364f24a24b4638ece95ee818a0",
+  "metric_order": ["tp", "fp", "fn"],
+  "case_counts": {
+    "dev_pr_prefix": {"write": [1, 0, 0], "recall": [1, 0, 0]},
+    "dev_sqlite_semantic": {"write": [1, 0, 0], "recall": [1, 0, 0]},
+    "dev_prefix_correction": {"write": [2, 0, 0], "recall": [1, 0, 0]},
+    "dev_type_hints": {"write": [1, 0, 0], "recall": [1, 0, 0]},
+    "dev_docs_open_loop": {"write": [1, 0, 0], "recall": [1, 0, 0]},
+    "dev_brainstorm_not_decision": {"write": [0, 0, 0], "recall": [0, 0, 0]},
+    "dev_agent_claim_not_source": {"write": [0, 0, 0], "recall": [0, 0, 0]},
+    "dev_room_boundary": {"write": [1, 0, 0], "recall": [0, 0, 0]},
+    "dev_external_source": {"write": [0, 0, 0], "recall": [0, 0, 0]},
+    "dev_same_discussion": {"write": [1, 0, 0], "recall": [0, 0, 0]},
+    "personal_tea_preference": {"write": [1, 0, 0], "recall": [0, 0, 1]},
+    "personal_chinese_preference": {"write": [1, 0, 0], "recall": [0, 0, 1]},
+    "personal_time_correction": {"write": [2, 0, 0], "recall": [1, 0, 0]},
+    "personal_camera_open_loop": {"write": [1, 0, 0], "recall": [1, 0, 0]},
+    "personal_transient_weather": {"write": [0, 0, 0], "recall": [0, 0, 0]},
+    "personal_quoted_friend": {"write": [0, 1, 0], "recall": [0, 0, 0]},
+    "personal_cilantro_semantic": {"write": [1, 0, 0], "recall": [1, 0, 0]},
+    "personal_room_boundary": {"write": [1, 0, 0], "recall": [0, 0, 0]},
+    "personal_dummy_password": {"write": [0, 0, 0], "recall": [0, 0, 0]},
+    "personal_hobby_with_chatter": {"write": [1, 0, 0], "recall": [1, 0, 0]}
+  },
+  "answer_review": {
+    "reviewer": "assistant_pre_review",
+    "human_confirmed": false,
+    "semantic_pass": 19,
+    "semantic_fail": ["personal_tea_preference"],
+    "correct_but_unretrieved": ["personal_chinese_preference"],
+    "note": "Provisional semantic review; raw per-case answers remain in the ignored run directory."
+  }
+}

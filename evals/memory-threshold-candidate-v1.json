@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "threshold": 0.5,
+  "dataset_sha256": "ef12dd8a40d1b01fcf7fa5f3e61c3c93f8015e364f24a24b4638ece95ee818a0",
+  "controls_sha256": "b9fc62c21758598c4cededbae4390692636803669ba5c13a3eccc100e3f4b577",
+  "model_fingerprint": "adf175ddb7130227de6e1c4874a0d864097aa98620ffd261aeb3c5f9dc11e6cf",
+  "model": "text-embedding-v4",
+  "revision": "pilot-2026-10",
+  "tuning_run": "20261008T035513Z-7be7ea17",
+  "tuning_report": "20261008T162254Z-800941c0-tuning.json",
+  "tuning_report_sha256": "d9eaeea9deb19670b3665ecc4a88c6108b05caf0a7efcf31f87bbf77b97747bb",
+  "rationale": "Tuning replay: recall 6/6 and irrelevant controls 0/6 at 0.50. A separate live paraphrase scored 0.5554, leaving more margin than 0.55. Controls were initially reviewed by the agent and still need user review.",
+  "status": "provisional_holdout_candidate"
+}

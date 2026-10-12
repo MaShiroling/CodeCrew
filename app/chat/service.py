@@ -1,8 +1,10 @@
 """Local HTTP-facing operations for repository-free chat; no Agent execution."""
 
 import re
+from typing import Literal
 from uuid import UUID, uuid5
 
+from app.chat.memory import ChatMemory, ChatMemoryCandidate
 from app.chat.models import (
     ExternalChatSource,
     StandaloneChatMessage,
@@ -111,6 +113,97 @@ class StandaloneChatService:
             )
         except StandaloneChatRoomNotFoundError as exc:
             raise ChatNotFound("chat room not found") from exc
+
+    def create_memory(
+        self, room_id: UUID, *, source_message_id: UUID, content: str,
+        replaces_memory_id: UUID | None = None,
+    ) -> ChatMemory:
+        """Only a local Human message can be promoted to durable room memory."""
+        room = self.get_room(room_id)
+        try:
+            source = self.store.get_message(source_message_id).message
+        except StandaloneChatMessageNotFoundError as exc:
+            raise ChatMessageNotFound("memory source not found in this room") from exc
+        human = next(member for member in room.members if member.role is MemberRole.HUMAN)
+        if source.room_id != room_id:
+            raise ChatMessageNotFound("memory source not found in this room")
+        if (source.sender_id != human.member_id or source.external_source is not None
+                or self.store.is_external_discussion(source.correlation_id)):
+            raise ChatInvalid("memory source must be a local Human message")
+        try:
+            return self.store.memory.create(
+                room_id, source_message_id, content,
+                replaces_memory_id=replaces_memory_id,
+            )
+        except ValueError as exc:
+            raise ChatConflict(str(exc)) from exc
+
+    def list_memories(
+        self, room_id: UUID, *, include_closed: bool = False,
+    ) -> tuple[ChatMemory, ...]:
+        self.get_room(room_id)
+        active = self.store.memory.list_active(room_id)
+        return active + self.store.memory.list_closed_open_loops(room_id) if include_closed else active
+
+    def close_open_loop(
+        self, room_id: UUID, memory_id: UUID, *, action: Literal["complete", "cancel"],
+    ) -> ChatMemory:
+        self.get_room(room_id)
+        try:
+            memory = self.store.memory.close_open_loop(room_id, memory_id, action=action)
+        except ValueError as exc:
+            raise ChatConflict(str(exc)) from exc
+        if memory is None:
+            raise ChatNotFound("chat memory not found")
+        return memory
+
+    def memory_lineage(
+        self, room_id: UUID, memory_id: UUID,
+    ) -> tuple[tuple[ChatMemory, ...], bool]:
+        self.get_room(room_id)
+        result = self.store.memory.lineage(room_id, memory_id)
+        if result is None:
+            raise ChatNotFound("chat memory not found")
+        return result
+
+    def list_memory_candidates(self, room_id: UUID) -> tuple[ChatMemoryCandidate, ...]:
+        self.get_room(room_id)
+        return self.store.memory.list_pending(room_id)
+
+    def approve_memory_candidate(
+        self, room_id: UUID, candidate_id: UUID, content: str,
+        replaces_memory_id: UUID | None = None,
+    ) -> tuple[ChatMemoryCandidate, ChatMemory]:
+        self.get_room(room_id)
+        try:
+            approved = self.store.memory.approve_candidate(
+                room_id, candidate_id, content,
+                replaces_memory_id=replaces_memory_id,
+            )
+        except ValueError as exc:
+            raise ChatConflict(str(exc)) from exc
+        if approved is None:
+            raise ChatNotFound("memory candidate not found")
+        return approved
+
+    def reject_memory_candidate(
+        self, room_id: UUID, candidate_id: UUID,
+    ) -> ChatMemoryCandidate:
+        self.get_room(room_id)
+        try:
+            candidate = self.store.memory.reject_candidate(room_id, candidate_id)
+        except ValueError as exc:
+            raise ChatConflict(str(exc)) from exc
+        if candidate is None:
+            raise ChatNotFound("memory candidate not found")
+        return candidate
+
+    def retire_memory(self, room_id: UUID, memory_id: UUID) -> ChatMemory:
+        self.get_room(room_id)
+        memory = self.store.memory.retire(room_id, memory_id)
+        if memory is None:
+            raise ChatNotFound("chat memory not found")
+        return memory
 
     def post_message(
         self, room_id: UUID, *, content: str, idempotency_key: UUID,
