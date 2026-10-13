@@ -4,17 +4,20 @@ CodeCrew 是一个本地运行的个人开源项目：你可以在独立聊天�
 
 项目借鉴 [Clowder AI](https://github.com/MaShiroling/clowder-ai) 的异构 Agent 协作思路，但代码、Prompt 和 UI 独立实现，聚焦“聊天协作 + 按需编码”，不追求通用聊天平台或复刻猫咖全部功能。
 
+能力与验收说明更新于 **2026-10-13**；下文区分默认路径、可选能力、Fake 演示与真实模型验收。
+
 ## 现在能演示什么
 
 | 场景 | 已验证范围 |
 | --- | --- |
 | 无仓库聊天室 | 创建房间、`@` 成员、关联回复、Agent 间邀请接话、消息持久化与实时状态；显式有界接话的真实三模型 HTTP/浏览器接话、真实 CLI 本地 HTTP 控制，以及慢速 Fake Agent 的网页暂停/继续/取消按钮均已验收。 |
 | 长期记忆（Agent 自动提炼） | 本地 Human 原文提议经服务端守卫自动落库，无需人工审核；支持同房间跨讨论召回、来源/沿革、纠正、撤销和待办完成/取消。云 embedding 默认关闭。24 条固定记忆配对 A/B 中，来源级 Recall@3 为词项 83.3%、混合 100%（12 个目标来源）；单 Kimi 端到端与故障回归已完成，不代表线上准确率。Fake 浏览器主旅程、来源查看与同库重启检查已验收，非真实模型 UI 质量证明。 |
+| 可选向量存储与可靠同步 | 已实现 Qdrant 接入、事务 Outbox、独立同步 Worker、租约/有限重试、版本围栏与持久墓碑，以及回填和双向审计。已有专属目标停服恢复、实际 Worker 进程故障和持久库重开证据；不代表生产 SLA，也不默认启动 Worker 或迁移旧聊天库。 |
 | Human 授权后改代码 | 只读预检 → 单次授权 → 独立 Worktree → Verifier → Reviewer → CompletionGuard → Patch；Fake 浏览器闭环已验收。 |
 | 飞书只读聊天入口 | 已实现白名单单聊、群内真实 @bot、有界 Agent 交接、外部身份与持久化收发。2026-10-06 在本地 Mac 上实测单聊长连接收发，以及白金 → 月见 → 鲸鲸的真实接力；群聊尚未实测，跨用户轮次的上下文续聊尚未实现。 |
 | 真实三 Agent 小修复 | 临时仓库的单次 HTTP 自动验收已通过：唯一变更 `src/app.py`，检查、审批、完成守卫与 Patch 均通过。真实浏览器手动代码演示仍待复测。 |
 
-CodeCrew 不把 Agent 的“已完成”当作成功证据。一次通过也**不是**任意任务成功率或正式可靠性评测。[当前路线与逐步进度](docs/portfolio-roadmap.md)记录了每项能力的验收边界。
+CodeCrew 不把 Agent 的“已完成”当作成功证据。一次通过也**不是**任意任务成功率或正式可靠性评测。最新实现与逐次验收见[项目状态](docs/project-status.md)，记忆能力与实验口径见[记忆交付总览](docs/memory-v1-delivery.md)；[原产品路线 P0～P6](docs/portfolio-roadmap.md)记录截至 2026-10-05 的聊天室和编码阶段，不覆盖后续全部记忆开发。
 
 长期记忆与普通消息历史分开：Agent 在正常回复中提议，服务端校验本地 Human 来源后自动写入；每次最多召回 3 条，带原消息 ID，撤销或关闭待办后不再作为活跃记忆召回。飞书发起的讨论既不能创建，也不能读取本地记忆。可选混合检索使用可配置的 HTTPS embedding API，开启后会向服务商发送记忆和查询内容。[记忆模块 v1 交付与证据总览](docs/memory-v1-delivery.md)汇总实现、检索 A/B、延迟/用量、首次评测与修复回归；HTTP 接口与配置见[聊天室长期记忆](docs/chat-memory.md)。
 
@@ -66,26 +69,38 @@ python3.11 -m venv .venv
 飞书 Human 即使从网页选择也不能直接授权编码。本次 Windows 检查保留了原仓库的 Unix/macOS 平台限制，完整对比见[验收记录](docs/feishu-acceptance.md)。
 
 - 独立聊天室：SQLite 持久化房间、消息和回合；`@` 路由与有界上下文支持成员接话，默认只读。
-- 房间记忆：原始消息、有界上下文和长期记忆分层；SQLite 规范记忆与可重建索引分离。默认旧词项、可选 FTS5/BM25，均可与精确余弦结果经 RRF 融合；不依赖外部向量库，缺少 FTS5 可降级旧检索。真实四分支 A/B 中两关键词召回 10/12、两混合 12/12，缓存复跑一致；BM25 无额外收益证据，保持默认。
+- 异构接入与有界协作：统一 Adapter 管理 CLI 会话及执行结果；显式有界模式用持久化 FIFO 邀请队列顺序接话，启动前预留回合，最多 8 回合/600 秒。暂停在安全回合边界生效，恢复不重置原预算，未知取消或重启执行保守标为中断，不自动重派。
+- 房间记忆与混合检索：原始消息、有界上下文和长期记忆分层；SQLite 是规范事实来源，FTS5/BM25 与向量都是派生索引。默认旧词项，可选 BM25；向量默认本地缓存/精确余弦，可选 Qdrant，在最多 200 条规范候选内 exact 查询并复验当前状态，以 RRF 融合排名。缺少 FTS5 或云端/远端故障可降级本地分支；不宣称 ANN 或 BM25/Qdrant 的独有质量增益。
+- 派生索引可靠同步：规范记忆变更与版本化 Outbox 事件同 SQLite 事务提交；显式独立 Worker 将已有匹配向量缓存或墓碑投递到 Qdrant，通过租约/token、有限重试和 revision 围栏防止旧回执或旧向量覆盖新状态。支持回填、双向审计及显式恢复；这是至少一次投递，不是双库原子或 exactly-once。Worker 不替 writer 调用 embedding 模型。
 - 受控编码：Human 的预检与单次授权绑定消息、仓库、Git 基线和允许路径；Implementer 在独立 Git Worktree 工作。
 - 证据判定：Verifier 执行静态/编译、公开和占位隐藏检查、路径与命令审计；独立 Reviewer 只读审批，CompletionGuard 复核必要条件并输出 Patch。
-- 可追溯性：结构化 A2A 消息、Artifact 引用、`trace_id` 与持久化事件支持检查和故障归因。
+- 可追溯性：内部结构化 Agent 协作消息、Artifact 引用、`trace_id` 与持久化事件支持检查和故障归因；这里的角色通信不是标准 A2A 协议实现。
 
-技术栈：Python 3.11+、FastAPI、Pydantic、asyncio、SQLite、Git Worktree、SSE、pytest。[当前架构图与模块边界](docs/architecture.md)分别展示只读聊天和授权后的受控编码链路。
+技术栈：Python 3.11+、FastAPI、Pydantic、asyncio、SQLite、FTS5/BM25、Git Worktree、SSE、pytest；可选向量后端 Qdrant，本机验收使用 Docker。[当前架构图与模块边界](docs/architecture.md)分别展示只读聊天和授权后的受控编码链路。
+
+代码默认配置为 `memory_lexical_backend=legacy`、`memory_vector_store=sqlite`、`memory_embedding_mode=off`、`memory_vector_worker_enabled=false`。BM25、云 embedding、Qdrant 和后台同步均需显式配置；启用 Worker 还需单独运行同步 CLI，不会随聊天服务自动启动。默认 SQLite 演示不要求 Docker、Qdrant 或 embedding 密钥。代码默认不等于本机 `.env` 或已运行进程实际加载的配置，启动前请核对所选路径。[Qdrant 配置](docs/memory-qdrant-storage.md) · [Worker 运行说明](docs/memory-vector-worker.md)
 
 ## 验证与边界
+
+以下命令是无需真实模型的定向检查入口，不代表全仓测试验收：
 
 ```bash
 .venv/bin/pytest -q tests/test_standalone_chat_api.py tests/test_demo.py tests/test_chat_to_code_live_fixture.py
 .venv/bin/ruff check .
 ```
 
-真实模型集成测试默认跳过，只有显式设置对应 `CODECREW_RUN_*_LIVE=1` 才会调用模型并消耗额度。项目仅面向可信本机：尚无公网身份认证或通用不可信代码沙箱；示例“隐藏测试”不是对本机操作者保密的评测环境。正式多语言评测集、单/多 Agent 对照实验和可靠性指标报告均未完成，不作为本版已交付能力。[更多现状](docs/project-status.md)
+真实模型集成测试默认跳过，只有显式设置对应 `CODECREW_RUN_*_LIVE=1` 才会调用模型并消耗额度；真实模型 CLI 和标记为 `--live` 的评测入口也可能收费，需单独确认预算。
+
+已有记忆来源级检索 A/B、写入/召回/回答分层回放、延迟与 API 用量基准，以及 Qdrant/Worker 故障恢复和持久库重开报告。这些是小规模、本机、限定场景证据，不等于严格独立盲测、真实模型记忆浏览器旅程、生产 SLA 或任意任务准确率。[评测口径](docs/memory-v1-delivery.md) · [故障恢复](docs/memory-qdrant-faults.md) · [实际 Worker 进程检查](evals/baselines/memory-vector-worker-process-v1-2026-10-12.md)
+
+截至 2026-10-13 最近检查，仍有 **9 项续跑用例失败、7 项三 Agent 预检夹具初始化错误**，在本次记忆功能发布前的提交快照中也能复现，尚未修复；因此不宣称全仓全绿。本次 README 更新没有重新运行测试或改变既有结果。
+
+项目仅面向可信本机：尚无公网身份认证、分布式 Agent 派发或通用不可信代码沙箱；示例“隐藏测试”不是对本机操作者保密的评测环境。正式多语言编码评测集、单/多 Agent 对照实验和生产可靠性指标尚未完成，不作为本版已交付能力。[更多现状](docs/project-status.md)
 
 ## 文档
 
 - [本地演示指南与截图](docs/demo-guide.md) · [当前架构图](docs/architecture.md)
-- [当前路线和进度](docs/portfolio-roadmap.md) · [项目状态与验收记录](docs/project-status.md)
+- [最新项目状态与验收记录](docs/project-status.md) · [原产品路线 P0～P6（截至 2026-10-05）](docs/portfolio-roadmap.md)
 - [Fake 聊天到编码演示](docs/fake-chat-to-code-demo.md) · [真实小修复验收](docs/real-chat-to-code-acceptance.md)
 - [独立聊天室接口](docs/standalone-chat.md) · [团队人格](docs/personas.md)
 - [记忆模块 v1 交付与评测结论](docs/memory-v1-delivery.md) · [记忆接口、配置与实现边界](docs/chat-memory.md)
